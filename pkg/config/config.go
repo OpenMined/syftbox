@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 const (
@@ -14,8 +13,8 @@ const (
 
 var (
 	Home, _             = os.UserHomeDir()
-	DefaultConfigPath   = filepath.Join(Home, ".syftgo.json")
-	DefaultWorkspaceDir = filepath.Join(Home, "syftgo-data")
+	DefaultConfigPath   = ".data/config.json"
+	DefaultWorkspaceDir = ".data"
 	ErrInvalidDir       = fmt.Errorf("invalid directory")
 )
 

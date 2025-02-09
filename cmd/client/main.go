@@ -28,8 +28,11 @@ func main() {
 		Use:   "client",
 		Short: "SyftBox Client CLI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c := client.Default()
-			return c.Run()
+			c, err := client.Default()
+			if err != nil {
+				return err
+			}
+			return c.Run(cmd.Context())
 		},
 	}
 
