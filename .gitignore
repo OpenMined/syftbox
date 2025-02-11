@@ -24,3 +24,5 @@ go.work.sum
 # os garbage
 .DS_Store
 Thumbs.db
+
+**/certs
