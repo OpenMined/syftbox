@@ -1,4 +1,4 @@
-package config
+package client
 
 import (
 	"fmt"
@@ -24,7 +24,7 @@ func init() {
 	}
 }
 
-type Config struct {
+type ClientConfig struct {
 	DataDir   string `json:"data_dir"`
 	Email     string `json:"email"`
 	ServerURL string `json:"server_url"`
@@ -32,8 +32,8 @@ type Config struct {
 }
 
 // Create a new configuration with the given data directory and server URL
-func New(dataDir string, server string) *Config {
-	return &Config{
+func NewClientConfig(dataDir string, server string) *ClientConfig {
+	return &ClientConfig{
 		DataDir:   dataDir,
 		ServerURL: server,
 		Path:      DefaultConfigPath,
@@ -41,6 +41,6 @@ func New(dataDir string, server string) *Config {
 }
 
 // Return the default configuration
-func Default() *Config {
-	return New(DefaultWorkspaceDir, DefaultServerURL)
+func DefaultClientConfig() *ClientConfig {
+	return NewClientConfig(DefaultWorkspaceDir, DefaultServerURL)
 }

@@ -5,12 +5,11 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/yashgorana/syftbox-go/pkg/config"
 	"github.com/yashgorana/syftbox-go/pkg/fswatch"
 )
 
 type Client struct {
-	config    *config.Config
+	config    *ClientConfig
 	workspace *Workspace
 	watcher   *fswatch.Watcher
 
@@ -23,7 +22,7 @@ func Default() (*Client, error) {
 		return nil, err
 	}
 
-	config := config.Default()
+	config := DefaultClientConfig()
 	return &Client{
 		config:    config,
 		workspace: NewWorkspace(config.DataDir),
