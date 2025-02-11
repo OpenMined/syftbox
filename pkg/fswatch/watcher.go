@@ -62,7 +62,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	}
 }
 
-func (w *Watcher) Stop(ctx context.Context) error {
+func (w *Watcher) Stop() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 

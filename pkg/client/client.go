@@ -31,7 +31,7 @@ func Default() (*Client, error) {
 	}, nil
 }
 
-func (c *Client) Run(ctx context.Context) error {
+func (c *Client) Start(ctx context.Context) error {
 	slog.Info("Starting client", "data", c.workspace.Root, "config", c.config.Path)
 	err := c.workspace.CreateDirs()
 	if err != nil {
@@ -65,7 +65,7 @@ func (c *Client) Run(ctx context.Context) error {
 		defer c.wg.Done()
 		<-ctx.Done()
 		slog.Info("received shutdown signal")
-		if err := c.Stop(ctx); err != nil {
+		if err := c.Stop(); err != nil {
 			slog.Error("shutdown error", "error", err)
 		}
 	}()
@@ -75,8 +75,8 @@ func (c *Client) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) Stop(ctx context.Context) error {
-	return c.watcher.Stop(ctx)
+func (c *Client) Stop() error {
+	return c.watcher.Stop()
 }
 
 func (c *Client) processEvents(ctx context.Context) {

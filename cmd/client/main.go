@@ -32,7 +32,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			return c.Run(cmd.Context())
+			return c.Start(cmd.Context())
 		},
 	}
 
