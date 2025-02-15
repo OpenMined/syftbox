@@ -31,7 +31,20 @@ func main() {
 		Use:   "server",
 		Short: "SyftBox Server CLI",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			config := server.NewServerConfig(server.DefaultAddr, certFile, keyFile)
+			config := &server.Config{
+				Http: &server.HttpServerConfig{
+					Addr:     server.DefaultAddr,
+					CertFile: certFile,
+					KeyFile:  keyFile,
+				},
+				Blob: &server.BlobConfig{
+					ServerUrl:  "http://localhost:9000",
+					BucketName: "syftgo",
+					AccessKey:  "AbH4qZdboOLES93uUUb2",
+					SecretKey:  "Pz46w5OYIRO9pAB5urEfyRdSNwLpeQc9CvwguQzX",
+					Region:     "us-east-1",
+				},
+			}
 			c, err := server.New(config)
 			if err != nil {
 				return err

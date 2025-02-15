@@ -5,19 +5,36 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/yashgorana/syftbox-go/pkg/blob"
 )
 
 type Server struct {
-	config *ServerConfig
+	config *Config
 	server *http.Server
 }
 
-func New(config *ServerConfig) (*Server, error) {
+func New(config *Config) (*Server, error) {
+
+	cfg := aws.Config{
+		Credentials: credentials.NewStaticCredentialsProvider(config.Blob.AccessKey, config.Blob.SecretKey, ""),
+		Region:      config.Blob.Region,
+	}
+
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(config.Blob.ServerUrl)
+		o.UsePathStyle = true
+	})
+
+	blobService := blob.NewBlobService(client, config.Blob.BucketName)
 	return &Server{
 		config: config,
 		server: &http.Server{
-			Addr:    config.Addr,
-			Handler: SetupRoutes(),
+			Addr:    config.Http.Addr,
+			Handler: SetupRoutes(blobService),
 		},
 	}, nil
 }
@@ -53,11 +70,11 @@ func (s *Server) Stop(ctx context.Context) error {
 }
 
 func (s *Server) runHttpServer() error {
-	if s.config.CertFile != "" && s.config.KeyFile != "" {
-		slog.Info("server start tls", "addr", s.config.Addr, "cert", s.config.CertFile, "key", s.config.KeyFile)
-		return s.server.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
+	if s.config.Http.CertFile != "" && s.config.Http.KeyFile != "" {
+		slog.Info("server start tls", "addr", s.config.Http.Addr, "cert", s.config.Http.CertFile, "key", s.config.Http.KeyFile)
+		return s.server.ListenAndServeTLS(s.config.Http.CertFile, s.config.Http.KeyFile)
 	} else {
-		slog.Info("server start http", "addr", s.config.Addr)
+		slog.Info("server start http", "addr", s.config.Http.Addr)
 		return s.server.ListenAndServe()
 	}
 }
