@@ -38,6 +38,11 @@ func (s *AclService) AddRuleSet(path string, ruleset *RuleSet) error {
 	return s.tree.AddRuleSet(path, ruleset)
 }
 
+func (s *AclService) RemoveRuleSet(path string) bool {
+	s.cache.DeletePrefix(path)
+	return s.tree.RemoveRuleSet(path)
+}
+
 func (s *AclService) CanAccess(user string, file *FileInfo, action Action) bool {
 	cached := s.cache.Get(file.Path)   // O(1)
 	node := s.tree.FindNode(file.Path) // O(depth)

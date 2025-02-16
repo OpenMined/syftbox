@@ -46,8 +46,8 @@ func (t *aclTree) AddRuleSet(path string, ruleset *RuleSet) error {
 		}
 		child, exists := current.children[part]
 		if !exists {
-			p := strings.Join(parts[:depth], string(filepath.Separator))
-			child = newAclNode(p, false, depth)
+			fullpath := strings.Join(parts[:depth], string(filepath.Separator))
+			child = newAclNode(fullpath, false, depth)
 			current.children[part] = child
 		}
 		current.mu.Unlock()
@@ -80,4 +80,33 @@ func (t *aclTree) FindNode(path string) *aclNode {
 	}
 
 	return current
+}
+
+func (t *aclTree) RemoveRuleSet(path string) bool {
+	path = filepath.Clean(path)
+	parts := strings.Split(path, string(filepath.Separator))
+	current := t.root
+	parent := t.root
+
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+
+		current.mu.RLock()
+		if _, exists := current.children[part]; !exists {
+			current.mu.RUnlock()
+			return false
+		}
+		current.mu.RUnlock()
+		parent = current
+		current = current.children[part]
+	}
+
+	current.mu.Lock()
+	defer current.mu.Unlock()
+
+	delete(parent.children, parts[len(parts)-1])
+
+	return true
 }

@@ -33,23 +33,21 @@ func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if len(rules) == 0 {
-		panic("there must be atleast 1 rule!")
-	}
+	if len(rules) > 0 {
+		// pre-sort the rules by specificity
+		sorted := sortBySpecificity(rules)
 
-	// pre-sort the rules by specificity
-	sorted := sortBySpecificity(rules)
-
-	// convert the rules to aclRules
-	aclRules := make([]*aclRule, 0, len(sorted))
-	for _, rule := range sorted {
-		aclRules = append(aclRules, &aclRule{
-			rule:        rule,
-			node:        n,
-			fullPattern: filepath.Join(n.path, rule.Pattern),
-		})
+		// convert the rules to aclRules
+		aclRules := make([]*aclRule, 0, len(sorted))
+		for _, rule := range sorted {
+			aclRules = append(aclRules, &aclRule{
+				rule:        rule,
+				node:        n,
+				fullPattern: filepath.Join(n.path, rule.Pattern),
+			})
+		}
+		n.rules = aclRules
 	}
-	n.rules = aclRules
 
 	// set the rules and terminal flag
 	n.terminal = terminal
@@ -94,7 +92,7 @@ func globSpecificityScore(glob string) int {
 	}
 
 	// 2L + 10D - wildcard penalty
-	score := len(glob)*2 + strings.Count(glob, "/")*10
+	score := len(glob)*2 + strings.Count(glob, string(filepath.Separator))*10
 
 	for i, c := range glob {
 		switch c {

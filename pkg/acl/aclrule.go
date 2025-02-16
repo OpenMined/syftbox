@@ -1,5 +1,10 @@
 package acl
 
+import (
+	"path/filepath"
+	"strings"
+)
+
 type aclRule struct {
 	rule        *Rule
 	node        *aclNode // back reference to the node
@@ -32,7 +37,7 @@ func (r *aclRule) WithinLimts(info *FileInfo) bool {
 		return false
 	}
 
-	if !r.rule.Limits.AllowDirs && info.IsDir {
+	if !r.rule.Limits.AllowDirs && (info.IsDir || strings.Count(info.Path, string(filepath.Separator)) > 0) {
 		return false
 	}
 

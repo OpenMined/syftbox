@@ -1,6 +1,9 @@
 package acl
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 type aclRuleCache struct {
 	index map[string]*aclRule
@@ -23,6 +26,18 @@ func (c *aclRuleCache) Set(path string, entry *aclRule) {
 	defer c.mu.Unlock()
 
 	c.index[path] = entry
+}
+
+func (c *aclRuleCache) DeletePrefix(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// iterate over index keys and delete the entry
+	for k := range c.index {
+		if strings.HasPrefix(k, path) {
+			delete(c.index, k)
+		}
+	}
 }
 
 func newAclRuleCache() *aclRuleCache {
