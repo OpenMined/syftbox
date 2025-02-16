@@ -9,7 +9,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-type pCounter uint16
+type pCounter uint8
 
 type aclNode struct {
 	path     string
@@ -29,6 +29,8 @@ func newAclNode(path string, terminal bool, depth pCounter) *aclNode {
 	}
 }
 
+// Set the rules, terminal flag and depth for the node.
+// Increments the version counter for repeated operation.
 func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -54,9 +56,12 @@ func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
 
 	// set the depth and version
 	n.depth = depth
+
+	// increment the version. uint8 overflow will reset it to 0.
 	n.version++
 }
 
+// FindBestRule finds the best matching rule for the given path.
 func (n *aclNode) FindBestRule(path string) *aclRule {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
@@ -76,6 +81,7 @@ func (n *aclNode) FindBestRule(path string) *aclRule {
 	return nil
 }
 
+// Equal checks if the node is equal to another node.
 func (n *aclNode) Equal(other *aclNode) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()

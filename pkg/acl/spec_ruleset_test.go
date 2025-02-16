@@ -8,7 +8,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 )
 
-func TestLoad(t *testing.T) {
+func TestNewFromPath(t *testing.T) {
 	// Create temp dir
 	tmpDir, err := os.MkdirTemp("", "syft-test-*")
 	if err != nil {
@@ -20,7 +20,7 @@ func TestLoad(t *testing.T) {
 	validAcl := `
 terminal: true
 rules:
-  - path: "**/*"
+  - pattern: "**/*"
     access:
       admin: ["user1"]
       read: ["*"]
@@ -36,24 +36,24 @@ rules:
 		t.Fatal(err)
 	}
 
-	p, err := Load(tmpDir)
+	p, err := NewRuleSetFromPath(tmpDir)
 	if err != nil {
-		t.Errorf("Load() error = %v", err)
+		t.Errorf("NewRuleSetFromPath() error = %v", err)
 	}
 	if p == nil {
-		t.Fatal("Load() returned nil permissions")
+		t.Fatal("NewRuleSetFromPath() returned nil permissions")
 	}
 	if !p.Terminal {
-		t.Error("Load() didn't parse Terminal field correctly")
+		t.Error("NewRuleSetFromPath() didn't parse Terminal field correctly")
 	}
 	if len(p.Rules) != 1 {
-		t.Error("Load() didn't parse Rules correctly")
+		t.Error("NewRuleSetFromPath() didn't parse Rules correctly")
 	}
 
 	// Test case 2: Missing file
-	_, err = Load("/nonexistent")
+	_, err = NewRuleSetFromPath("/nonexistent")
 	if err == nil {
-		t.Error("Load() should fail with nonexistent file")
+		t.Error("NewRuleSetFromPath() should fail with nonexistent file")
 	}
 
 	// Test case 3: Invalid YAML
@@ -62,9 +62,9 @@ rules:
 		t.Fatal(err)
 	}
 
-	_, err = Load(invalidPath)
+	_, err = NewRuleSetFromPath(invalidPath)
 	if err == nil {
-		t.Error("Load() should fail with invalid YAML")
+		t.Error("NewRuleSetFromPath() should fail with invalid YAML")
 	}
 }
 
@@ -106,7 +106,7 @@ func TestSave(t *testing.T) {
 	}
 
 	// Verify contents by loading
-	loaded, err := Load(savePath)
+	loaded, err := NewRuleSetFromPath(savePath)
 	if err != nil {
 		t.Errorf("Couldn't load saved file: %v", err)
 	}
@@ -126,9 +126,9 @@ func TestResolvePath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := resolvePath(tt.input)
+		result := AsAclPath(tt.input)
 		if result != tt.expected {
-			t.Errorf("resolvePath(%q) = %q, want %q", tt.input, result, tt.expected)
+			t.Errorf("AsAclPath(%q) = %q, want %q", tt.input, result, tt.expected)
 		}
 	}
 }
@@ -145,9 +145,9 @@ func TestIsAclFile(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := isAclFile(tt.path)
+		result := IsAclFile(tt.path)
 		if result != tt.expected {
-			t.Errorf("isAclFile(%q) = %v, want %v", tt.path, result, tt.expected)
+			t.Errorf("IsAclFile(%q) = %v, want %v", tt.path, result, tt.expected)
 		}
 	}
 }

@@ -7,14 +7,6 @@ import (
 	"strings"
 )
 
-func (l *Limit) String() string {
-	return fmt.Sprintf("maxFiles:%d maxFileSize:%d allowDirs:%t allowSymlinks:%t", l.MaxFiles, l.MaxFileSize, l.AllowDirs, l.AllowSymlinks)
-}
-
-func (r *Rule) String() string {
-	return fmt.Sprintf("pattern:%s %s %s", r.Pattern, r.Access, r.Limits)
-}
-
 // String implements the Stringer interface for PTree
 func (t *aclTree) String() string {
 	if t.root == nil {
@@ -24,13 +16,6 @@ func (t *aclTree) String() string {
 	t.root.buildString(&sb, "", true, true)
 	return sb.String()
 }
-
-// // String implements the Stringer interface for PNode
-// func (n *PNode) String() string {
-// 	var sb strings.Builder
-// 	n.buildString(&sb, "", true, false)
-// 	return sb.String()
-// }
 
 // buildString recursively builds the string representation of the tree
 func (n *aclNode) buildString(sb *strings.Builder, prefix string, isLast bool, isRoot bool) {
