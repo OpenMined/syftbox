@@ -5,18 +5,11 @@ import (
 	"github.com/yashgorana/syftbox-go/pkg/blob"
 )
 
-const (
-	ErrBadRequest     = "ERR_BAD_REQUEST"
-	ErrUploadFailed   = "ERR_UPLOAD_FAILED"
-	ErrCompleteFailed = "ERR_COMPLETE"
-	ErrListFailed     = "ERR_LIST_FAILED"
-)
-
 type uploadHandler struct {
-	blob *blob.BlobService
+	blob *blob.BlobAPI
 }
 
-func NewBlobHandler(blob *blob.BlobService) *uploadHandler {
+func NewBlobHandler(blob *blob.BlobAPI) *uploadHandler {
 	return &uploadHandler{blob}
 }
 
@@ -26,12 +19,6 @@ type UploadRequest struct {
 
 type UploadAccept struct {
 	blob.FileUploadOutput
-}
-
-// Create consistent error types
-type ErrorResponse struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
 }
 
 func (h *uploadHandler) Upload(ctx *gin.Context) {

@@ -29,7 +29,7 @@ func New(config *Config) (*Server, error) {
 		o.UsePathStyle = true
 	})
 
-	blobService := blob.NewBlobService(client, config.Blob.BucketName)
+	blobService := blob.NewBlobAPI(client, config.Blob.BucketName)
 	return &Server{
 		config: config,
 		server: &http.Server{

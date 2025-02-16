@@ -14,6 +14,7 @@ import (
 func main() {
 	var certFile string
 	var keyFile string
+	var addr string
 
 	// Setup logger
 	opts := &slog.HandlerOptions{
@@ -33,7 +34,7 @@ func main() {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			config := &server.Config{
 				Http: &server.HttpServerConfig{
-					Addr:     server.DefaultAddr,
+					Addr:     addr,
 					CertFile: certFile,
 					KeyFile:  keyFile,
 				},
@@ -53,8 +54,9 @@ func main() {
 		},
 	}
 
-	rootCmd.Flags().StringVar(&certFile, "cert", "", "Path to the certificate file")
-	rootCmd.Flags().StringVar(&keyFile, "key", "", "Path to the key file")
+	rootCmd.Flags().StringVarP(&certFile, "cert", "c", "", "Path to the certificate file")
+	rootCmd.Flags().StringVarP(&keyFile, "key", "k", "", "Path to the key file")
+	rootCmd.Flags().StringVarP(&addr, "bind", "b", server.DefaultAddr, "Address to bind the server")
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
