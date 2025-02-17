@@ -7,33 +7,42 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/yashgorana/syftbox-go/pkg/acl"
 	"github.com/yashgorana/syftbox-go/pkg/blob"
+	"github.com/yashgorana/syftbox-go/pkg/datasite"
 )
 
 type Server struct {
 	config *Config
 	server *http.Server
 
-	blobSvc *blob.BlobStorageService
+	blobSvc     *blob.BlobStorageService
+	aclSvc      *acl.AclService
+	datasiteSvc *datasite.DatasiteService
 }
 
 func New(config *Config) (*Server, error) {
 	blobSvc := blob.NewBlobStorageService(config.Blob)
+	aclSvc := acl.NewAclService()
+	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
+
 	return &Server{
-		config:  config,
-		blobSvc: blobSvc,
+		config:      config,
+		blobSvc:     blobSvc,
+		aclSvc:      aclSvc,
+		datasiteSvc: datasiteSvc,
 		server: &http.Server{
 			Addr:    config.Http.Addr,
-			Handler: SetupRoutes(blobSvc),
+			Handler: SetupRoutes(datasiteSvc),
 		},
 	}, nil
 }
 
 func (s *Server) Start(ctx context.Context) error {
 
-	slog.Info("blob service start")
-	if err := s.blobSvc.Start(ctx); err != nil {
-		return fmt.Errorf("blob service init error: %w", err)
+	slog.Info("datasite service start")
+	if err := s.datasiteSvc.Init(ctx); err != nil {
+		return fmt.Errorf("datasite service start error: %w", err)
 	}
 
 	go func() error {

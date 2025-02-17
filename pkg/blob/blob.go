@@ -11,6 +11,8 @@ type BlobStorageService struct {
 	config  *BlobStorageConfig
 	api     *BlobStorageAPI
 	indexer *BlobStorageIndexer
+
+	initialized bool
 }
 
 func NewBlobStorageService(cfg *BlobStorageConfig) *BlobStorageService {
@@ -23,6 +25,10 @@ func NewBlobStorageService(cfg *BlobStorageConfig) *BlobStorageService {
 }
 
 func (b *BlobStorageService) Start(ctx context.Context) error {
+	if b.initialized {
+		return nil
+	}
+	b.initialized = true
 	return b.indexer.Start(ctx)
 }
 
