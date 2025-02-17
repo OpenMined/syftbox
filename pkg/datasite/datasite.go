@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -28,10 +29,12 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 		return fmt.Errorf("error starting blob service: %w", err)
 	}
 
+	// Fetch the ACL files
 	start := time.Now()
 	acls := d.blobSvc.ListAclFiles()
 	slog.Info("got acls", "acls", len(acls), "took", time.Since(start))
 
+	// Fetch the ACL rulesets
 	start = time.Now()
 	ruleSets, err := d.fetchAcls(ctx, acls)
 	if err != nil {
@@ -39,10 +42,12 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	}
 	slog.Info("ruleset fetched", "acls", len(ruleSets), "took", time.Since(start))
 
+	// Load the ACL rulesets
 	start = time.Now()
 	d.aclSvc.LoadRuleSets(ruleSets)
 	slog.Info("ruleset added", "acls", len(ruleSets), "took", time.Since(start))
 
+	// Warm up the ACL cache
 	start = time.Now()
 	for blob := range d.blobSvc.Iter() {
 		_, err := d.aclSvc.CanAccess(acl.Everyone, &acl.FileInfo{Path: blob.Key}, acl.ActionFileRead)
@@ -56,6 +61,7 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 }
 
 func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
+	// First collect all accessible blobs
 	view := make([]*blob.BlobInfo, 0)
 	for blob := range d.blobSvc.Iter() {
 		ok, err := d.aclSvc.CanAccess(user, &acl.FileInfo{Path: blob.Key}, acl.ActionFileRead)
@@ -63,6 +69,12 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 			view = append(view, blob)
 		}
 	}
+
+	// Sort the view
+	sort.Slice(view, func(i, j int) bool {
+		return view[i].Key < view[j].Key
+	})
+
 	return view
 }
 
@@ -70,7 +82,6 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Create work channel and results slice
 	workers := 8
 	jobs := make(chan *blob.BlobInfo)
 	results := make([]*acl.RuleSet, 0, len(aclBlobs))
@@ -82,18 +93,22 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 		go func() {
 			defer wg.Done()
 			for blob := range jobs {
+
+				// Pull the ACL file
 				obj, err := api.Download(ctx, blob.Key)
 				if err != nil {
 					slog.Error("ruleset fetch error", "path", blob.Key, "error", err)
 					continue
 				}
 
+				// Parse the ACL file
 				ruleset, err := acl.NewRuleSetFromReader(blob.Key, obj.Body)
 				if err != nil {
 					slog.Error("ruleset parse error", "path", blob.Key, "error", err)
 					continue
 				}
 
+				// Append the ruleset to the results
 				mu.Lock()
 				results = append(results, ruleset)
 				mu.Unlock()
