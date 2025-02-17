@@ -1,17 +1,17 @@
 package blob
 
-type FileUploadInput struct {
+type UploadRequest struct {
 	Name      string `json:"name" form:"name" binding:"required"`
 	TotalSize uint64 `json:"size" form:"size" binding:"required"`
 }
 
-type FileUploadOutput struct {
+type UploadResponse struct {
 	Name          string   `json:"name" binding:"required"`
 	UploadID      string   `json:"uploadId"`
 	PresignedURLs []string `json:"presignedUrls"`
 }
 
-type CompleteUploadInput struct {
+type CompleteUploadRequest struct {
 	Name     string           `json:"name"`
 	UploadId string           `json:"uploadId"`
 	Parts    []*CompletedPart `json:"parts"`

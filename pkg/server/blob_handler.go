@@ -6,19 +6,23 @@ import (
 )
 
 type uploadHandler struct {
-	blob *blob.BlobAPI
+	api *blob.BlobStorageAPI
+	svc *blob.BlobStorageService
 }
 
-func NewBlobHandler(blob *blob.BlobAPI) *uploadHandler {
-	return &uploadHandler{blob}
+func NewBlobHandler(svc *blob.BlobStorageService) *uploadHandler {
+	return &uploadHandler{
+		svc: svc,
+		api: svc.GetAPI(),
+	}
 }
 
 type UploadRequest struct {
-	blob.FileUploadInput
+	blob.UploadRequest
 }
 
 type UploadAccept struct {
-	blob.FileUploadOutput
+	blob.UploadResponse
 }
 
 func (h *uploadHandler) Upload(ctx *gin.Context) {
@@ -32,7 +36,7 @@ func (h *uploadHandler) Upload(ctx *gin.Context) {
 	}
 
 	// todo - validate the request
-	result, err := h.blob.PresignedUpload(ctx, &req.FileUploadInput)
+	result, err := h.api.PresignedUpload(ctx, &req.UploadRequest)
 	if err != nil {
 		ctx.JSON(400, ErrorResponse{
 			Code:    ErrUploadFailed,
@@ -41,14 +45,14 @@ func (h *uploadHandler) Upload(ctx *gin.Context) {
 		return
 	}
 
-	// responsd with UploadAccept
+	// response with UploadAccept
 	ctx.JSON(200, result)
 }
 
 // ----------------------------
 
 type CompleteRequest struct {
-	blob.CompleteUploadInput
+	blob.CompleteUploadRequest
 }
 
 func (h *uploadHandler) Complete(ctx *gin.Context) {
@@ -69,7 +73,7 @@ func (h *uploadHandler) Complete(ctx *gin.Context) {
 
 	// completing a multi-part upload
 	if req.UploadId != "" && req.Parts != nil {
-		if err := h.blob.CompleteUpload(ctx, &req.CompleteUploadInput); err != nil {
+		if err := h.api.CompleteUpload(ctx, &req.CompleteUploadRequest); err != nil {
 			ctx.JSON(400, ErrorResponse{
 				Code:    ErrCompleteFailed,
 				Message: err.Error(),
@@ -82,16 +86,17 @@ func (h *uploadHandler) Complete(ctx *gin.Context) {
 }
 
 func (h *uploadHandler) List(ctx *gin.Context) {
-	res, err := h.blob.ListObjects(ctx)
-	if err != nil {
-		ctx.JSON(400, ErrorResponse{
-			Code:    ErrListFailed,
-			Message: err.Error(),
-		})
-		return
-	}
-	if res == nil {
-		res = []*blob.BlobInfo{}
-	}
+	// res, err := h.api.ListObjects(ctx)
+	// if err != nil {
+	// 	ctx.JSON(400, ErrorResponse{
+	// 		Code:    ErrListFailed,
+	// 		Message: err.Error(),
+	// 	})
+	// 	return
+	// }
+	// if res == nil {
+	// 	res = []*blob.BlobInfo{}
+	// }
+	res := h.svc.ListFiles()
 	ctx.JSON(200, res)
 }

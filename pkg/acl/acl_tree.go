@@ -50,8 +50,8 @@ func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 
 		child, exists := current.children[part]
 		if !exists {
-			fullpath := strings.Join(parts[:depth], string(filepath.Separator))
-			child = newAclNode(fullpath, false, depth)
+			fullPath := strings.Join(parts[:depth], string(filepath.Separator))
+			child = newAclNode(fullPath, false, depth)
 			current.children[part] = child
 		}
 		current.mu.Unlock()

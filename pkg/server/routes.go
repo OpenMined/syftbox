@@ -9,7 +9,7 @@ import (
 	"github.com/yashgorana/syftbox-go/pkg/blob"
 )
 
-func SetupRoutes(blobSvc *blob.BlobAPI) http.Handler {
+func SetupRoutes(blobSvc *blob.BlobStorageService) http.Handler {
 	r := gin.Default()
 
 	r.Use(gin.Recovery())

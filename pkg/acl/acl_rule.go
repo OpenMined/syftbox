@@ -41,8 +41,8 @@ func (r *aclRule) CanAccess(user string, action Action) bool {
 	}
 }
 
-// WithinLimts checks if the file is within the limits specified by the rule.
-func (r *aclRule) WithinLimts(info *FileInfo) bool {
+// WithinLimits checks if the file is within the limits specified by the rule.
+func (r *aclRule) WithinLimits(info *FileInfo) bool {
 	limits := r.rule.Limits
 
 	if limits == nil {

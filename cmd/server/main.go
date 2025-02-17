@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/yashgorana/syftbox-go/pkg/blob"
 	"github.com/yashgorana/syftbox-go/pkg/server"
 )
 
@@ -38,12 +39,12 @@ func main() {
 					CertFile: certFile,
 					KeyFile:  keyFile,
 				},
-				Blob: &server.BlobConfig{
-					ServerUrl:  "http://localhost:9000",
+				Blob: &blob.BlobStorageConfig{
 					BucketName: "syftgo",
+					Region:     "us-east-1",
+					Endpoint:   "http://localhost:9000",
 					AccessKey:  "AbH4qZdboOLES93uUUb2",
 					SecretKey:  "Pz46w5OYIRO9pAB5urEfyRdSNwLpeQc9CvwguQzX",
-					Region:     "us-east-1",
 				},
 			}
 			c, err := server.New(config)

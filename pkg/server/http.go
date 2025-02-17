@@ -2,44 +2,40 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/yashgorana/syftbox-go/pkg/blob"
 )
 
 type Server struct {
 	config *Config
 	server *http.Server
+
+	blobSvc *blob.BlobStorageService
 }
 
 func New(config *Config) (*Server, error) {
-
-	cfg := aws.Config{
-		Credentials: credentials.NewStaticCredentialsProvider(config.Blob.AccessKey, config.Blob.SecretKey, ""),
-		Region:      config.Blob.Region,
-	}
-
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(config.Blob.ServerUrl)
-		o.UsePathStyle = true
-	})
-
-	blobService := blob.NewBlobAPI(client, config.Blob.BucketName)
+	blobSvc := blob.NewBlobStorageService(config.Blob)
 	return &Server{
-		config: config,
+		config:  config,
+		blobSvc: blobSvc,
 		server: &http.Server{
 			Addr:    config.Http.Addr,
-			Handler: SetupRoutes(blobService),
+			Handler: SetupRoutes(blobSvc),
 		},
 	}, nil
 }
 
 func (s *Server) Start(ctx context.Context) error {
+
+	slog.Info("blob service start")
+	if err := s.blobSvc.Start(ctx); err != nil {
+		return fmt.Errorf("blob service init error: %w", err)
+	}
+
 	go func() error {
 		if err := s.runHttpServer(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server start error", "error", err)

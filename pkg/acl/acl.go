@@ -42,6 +42,12 @@ func NewAclService() *AclService {
 	}
 }
 
+func (s *AclService) LoadRuleSets(ruleSets []*RuleSet) {
+	for _, ruleSet := range ruleSets {
+		s.AddRuleSet(ruleSet)
+	}
+}
+
 // AddRuleSet adds a new set of rules to the service.
 func (s *AclService) AddRuleSet(ruleset *RuleSet) error {
 	return s.tree.AddRuleSet(ruleset)
@@ -98,7 +104,7 @@ func (s *AclService) CanAccess(user string, file *FileInfo, action Action) (bool
 		action = ActionFileWriteACL
 	} else if action == ActionFileWrite {
 		// writes need to be checked against the file limits
-		fileLimits = rule.WithinLimts(file)
+		fileLimits = rule.WithinLimits(file)
 	}
 
 	return rule.CanAccess(user, action) && fileLimits, nil
