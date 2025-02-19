@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const IndexUpdatePeriod = 1 * time.Minute
+const IndexUpdatePeriod = 15 * time.Minute
 
 type BlobStorageIndexer struct {
 	api   *BlobStorageAPI

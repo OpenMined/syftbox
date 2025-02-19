@@ -15,6 +15,7 @@ import (
 type Server struct {
 	config *Config
 	server *http.Server
+	hub    *WebsocketHub
 
 	blobSvc     *blob.BlobStorageService
 	aclSvc      *acl.AclService
@@ -26,47 +27,55 @@ func New(config *Config) (*Server, error) {
 	aclSvc := acl.NewAclService()
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
+	hub := NewWebsocketHub()
+
 	return &Server{
 		config:      config,
 		blobSvc:     blobSvc,
 		aclSvc:      aclSvc,
 		datasiteSvc: datasiteSvc,
+		hub:         hub,
 		server: &http.Server{
 			Addr:    config.Http.Addr,
-			Handler: SetupRoutes(datasiteSvc),
+			Handler: SetupRoutes(hub, datasiteSvc),
 		},
 	}, nil
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	slog.Info("syftgo server start")
+	defer slog.Info("syftgo server stop")
 
 	slog.Info("datasite service start")
 	if err := s.datasiteSvc.Init(ctx); err != nil {
 		return fmt.Errorf("datasite service start error: %w", err)
 	}
 
+	go s.hub.Run(ctx)
+
 	go func() error {
 		if err := s.runHttpServer(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server start error", "error", err)
 			return err
 		}
-		slog.Debug("http server stopped")
+		slog.Info("http server stopped")
 		return nil
 	}()
 
 	<-ctx.Done()
-	slog.Info("server shutdown signal")
+	slog.Info("syftgo shutdown signal")
 	if err := s.Stop(ctx); err != nil {
-		slog.Error("server shutdown error", "error", err)
+		slog.Error("syftgo shutdown error", "error", err)
 		return err
 	}
-	slog.Info("stopped")
 	return nil
 }
 
 func (s *Server) Stop(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+
+	s.hub.Shutdown(ctx)
 
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
 		return err

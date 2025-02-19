@@ -9,7 +9,7 @@ import (
 	"github.com/yashgorana/syftbox-go/pkg/datasite"
 )
 
-func SetupRoutes(datasiteSvc *datasite.DatasiteService) http.Handler {
+func SetupRoutes(hub *WebsocketHub, datasiteSvc *datasite.DatasiteService) http.Handler {
 	r := gin.Default()
 
 	r.Use(gin.Recovery())
@@ -18,6 +18,7 @@ func SetupRoutes(datasiteSvc *datasite.DatasiteService) http.Handler {
 
 	r.GET("/", IndexHandler)
 	r.GET("/health", HealthHandler)
+	r.GET("/events", hub.WebsocketHandler)
 
 	// blob := NewBlobHandler(blobSvc)
 	// r.GET("/blob/list", blob.List)

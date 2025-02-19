@@ -51,6 +51,7 @@ func main() {
 			if err != nil {
 				return err
 			}
+			defer slog.Info("Bye!")
 			return c.Start(cmd.Context())
 		},
 	}
