@@ -9,8 +9,6 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-type pCounter uint8
-
 type aclNode struct {
 	path     string
 	rules    []*aclRule // rules for this part of the path. key is rule.Pattern
@@ -98,7 +96,7 @@ func globSpecificityScore(glob string) int {
 	}
 
 	// 2L + 10D - wildcard penalty
-	score := len(glob)*2 + strings.Count(glob, string(filepath.Separator))*10
+	score := len(glob)*2 + strings.Count(glob, PathSep)*10
 
 	for i, c := range glob {
 		switch c {

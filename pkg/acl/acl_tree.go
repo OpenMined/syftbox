@@ -6,15 +6,13 @@ import (
 	"strings"
 )
 
-const Terminal = true
-
 type aclTree struct {
 	root *aclNode
 }
 
 func newAclTree() *aclTree {
 	return &aclTree{
-		root: newAclNode(string(filepath.Separator), false, 0),
+		root: newAclNode(PathSep, false, 0),
 	}
 }
 
@@ -24,8 +22,8 @@ func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 		return nil
 	}
 
-	parts := strings.Split(filepath.Clean(ruleset.path), string(filepath.Separator))
-	pathDepth := strings.Count(ruleset.path, string(filepath.Separator))
+	parts := strings.Split(filepath.Clean(ruleset.path), PathSep)
+	pathDepth := strings.Count(ruleset.path, PathSep)
 
 	if pathDepth > 255 {
 		return fmt.Errorf("path exceeds maximum depth of 255")
@@ -50,7 +48,7 @@ func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 
 		child, exists := current.children[part]
 		if !exists {
-			fullPath := strings.Join(parts[:depth], string(filepath.Separator))
+			fullPath := strings.Join(parts[:depth], PathSep)
 			child = newAclNode(fullPath, false, depth)
 			current.children[part] = child
 		}
@@ -65,7 +63,7 @@ func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 
 // FindNearestNodeWithRules finds the most specific node with rules applicable to the given path.
 func (t *aclTree) FindNearestNodeWithRules(path string) (*aclNode, error) {
-	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	parts := strings.Split(filepath.Clean(path), PathSep)
 
 	current := t.root
 	lastNodeWithRules := current
@@ -105,7 +103,7 @@ func (t *aclTree) FindNearestNodeWithRules(path string) (*aclNode, error) {
 
 // GetNearestNode finds the most specific node applicable to the given path.
 func (t *aclTree) GetNearestNode(path string) *aclNode {
-	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	parts := strings.Split(filepath.Clean(path), PathSep)
 	current := t.root
 
 	for _, part := range parts {
@@ -135,7 +133,7 @@ func (t *aclTree) RemoveRuleSet(path string) bool {
 	var parent *aclNode
 	var lastPart string
 
-	parts := strings.Split(filepath.Clean(path), string(filepath.Separator))
+	parts := strings.Split(filepath.Clean(path), PathSep)
 	current := t.root
 
 	for _, part := range parts {

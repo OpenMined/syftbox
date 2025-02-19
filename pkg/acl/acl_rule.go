@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"path/filepath"
 	"strings"
 )
 
@@ -9,6 +8,10 @@ type aclRule struct {
 	rule        *Rule
 	node        *aclNode // back reference to the node
 	fullPattern string
+}
+
+func (r *aclRule) Rule() *Rule {
+	return r.rule
 }
 
 // CanAccess checks if the user has permission to perform the specified action on the node.
@@ -49,11 +52,11 @@ func (r *aclRule) WithinLimits(info *FileInfo) bool {
 		return true
 	}
 
-	if info.Size > limits.MaxFileSize {
+	if limits.MaxFileSize > 0 && info.Size > limits.MaxFileSize {
 		return false
 	}
 
-	if !limits.AllowDirs && (info.IsDir || strings.Count(info.Path, string(filepath.Separator)) > 0) {
+	if !limits.AllowDirs && (info.IsDir || strings.Count(info.Path, PathSep) > 0) {
 		return false
 	}
 

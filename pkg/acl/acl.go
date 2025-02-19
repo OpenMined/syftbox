@@ -3,6 +3,8 @@ package acl
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -11,7 +13,7 @@ type FileInfo struct {
 	Path      string
 	IsDir     bool
 	IsSymlink bool
-	Size      uint64
+	Size      int64
 	ModTime   time.Time
 	Crc32     uint32
 	Hash      string
@@ -19,6 +21,21 @@ type FileInfo struct {
 
 // Action represents a permission bit flag for different file operations.
 type Action uint8
+
+func (a Action) String() string {
+	switch a {
+	case ActionFileRead:
+		return "read"
+	case ActionFileWrite:
+		return "write"
+	case ActionFileReadACL:
+		return "read_acl"
+	case ActionFileWriteACL:
+		return "write_acl"
+	default:
+		return "unknown"
+	}
+}
 
 // Action constants define different types of file permissions
 const (
@@ -44,13 +61,13 @@ func NewAclService() *AclService {
 
 func (s *AclService) LoadRuleSets(ruleSets []*RuleSet) {
 	for _, ruleSet := range ruleSets {
-		s.AddRuleSet(ruleSet)
+		s.tree.AddRuleSet(ruleSet)
 	}
 }
 
 // AddRuleSet adds a new set of rules to the service.
-func (s *AclService) AddRuleSet(ruleset *RuleSet) error {
-	return s.tree.AddRuleSet(ruleset)
+func (s *AclService) AddRuleSet(ruleSet *RuleSet) error {
+	return s.tree.AddRuleSet(ruleSet)
 }
 
 // RemoveRuleSet removes a ruleset at the specified path.
@@ -65,6 +82,7 @@ func (s *AclService) RemoveRuleSet(path string) bool {
 func (s *AclService) GetNearestRule(path string) (*aclRule, error) {
 	var rule *aclRule
 
+	path = strings.TrimLeft(filepath.Clean(path), PathSep)
 	cached := s.cache.Get(path)                        // O(1)
 	node, err := s.tree.FindNearestNodeWithRules(path) // O(depth)
 	if err != nil {
@@ -86,10 +104,13 @@ func (s *AclService) GetNearestRule(path string) (*aclRule, error) {
 
 // CanAccess checks if a user has the specified access permission for a file.
 func (s *AclService) CanAccess(user string, file *FileInfo, action Action) (bool, error) {
-	fileLimits := true
-	isAcl := IsAclFile(file.Path)
 
-	rule, err := s.GetNearestRule(file.Path)
+	path := strings.TrimLeft(filepath.Clean(file.Path), PathSep)
+	if IsOwner(path, user) {
+		return true, nil
+	}
+
+	rule, err := s.GetNearestRule(path)
 	if err != nil {
 		return false, err
 	} else if rule == nil {
@@ -97,6 +118,8 @@ func (s *AclService) CanAccess(user string, file *FileInfo, action Action) (bool
 		return false, nil
 	}
 
+	fileLimits := true
+	isAcl := IsAclFile(path)
 	// elevate action for ACL files
 	if isAcl && action == ActionFileRead {
 		action = ActionFileReadACL

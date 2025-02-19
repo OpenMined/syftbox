@@ -3,14 +3,14 @@ package acl
 import "fmt"
 
 type Limit struct {
-	MaxFileSize   uint64 `json:"maxFileSize"   yaml:"maxFileSize"`
+	MaxFileSize   int64  `json:"maxFileSize"   yaml:"maxFileSize"`
 	MaxFiles      uint32 `json:"maxFiles"      yaml:"maxFiles"`
 	AllowDirs     bool   `json:"allowDirs"     yaml:"allowDirs"`
 	AllowSymlinks bool   `json:"allowSymlinks" yaml:"allowSymlinks"`
 }
 
 // NewLimits returns a new Limit object with the specified values.
-func NewLimits(maxFiles uint32, maxFileSize uint64, allowDirs, allowSymlinks bool) *Limit {
+func NewLimits(maxFiles uint32, maxFileSize int64, allowDirs, allowSymlinks bool) *Limit {
 	return &Limit{
 		MaxFiles:      maxFiles,
 		MaxFileSize:   maxFileSize,
