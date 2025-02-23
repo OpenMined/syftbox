@@ -59,10 +59,13 @@ func NewAclService() *AclService {
 	}
 }
 
-func (s *AclService) LoadRuleSets(ruleSets []*RuleSet) {
+func (s *AclService) LoadRuleSets(ruleSets []*RuleSet) error {
 	for _, ruleSet := range ruleSets {
-		s.tree.AddRuleSet(ruleSet)
+		if err := s.tree.AddRuleSet(ruleSet); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // AddRuleSet adds a new set of rules to the service.
@@ -80,24 +83,27 @@ func (s *AclService) RemoveRuleSet(path string) bool {
 // GetNearestRule finds the most specific rule applicable to the given path.
 // Returns nil if no rule is found.
 func (s *AclService) GetNearestRule(path string) (*aclRule, error) {
-	var rule *aclRule
-
 	path = strings.TrimLeft(filepath.Clean(path), PathSep)
-	cached := s.cache.Get(path)                        // O(1)
+
+	cachedRule := s.cache.Get(path)                    // O(1)
 	node, err := s.tree.FindNearestNodeWithRules(path) // O(depth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find node with rules: %w", err)
 	}
 
-	if cached != nil && node.Equal(cached.node) {
-		// cache hit
-		rule = cached
-	} else {
-		// cache miss
-		//! this can be nil - and it's likely because the schema load is buggy
-		rule = node.FindBestRule(path) // O(rules|node)
-		s.cache.Set(path, rule)        // O(1)
+	// validate cache hit
+	if cachedRule != nil && node.Equal(cachedRule.node) {
+		return cachedRule, nil
 	}
+
+	// cache miss
+	rule, err := node.FindBestRule(path) // O(rules|node)
+	if err != nil {
+		return nil, err
+	}
+
+	// cache the result
+	s.cache.Set(path, rule) // O(1)
 
 	return rule, nil
 }
@@ -114,8 +120,7 @@ func (s *AclService) CanAccess(user string, file *FileInfo, action Action) (bool
 	if err != nil {
 		return false, err
 	} else if rule == nil {
-		//! this was because node.FindBestRule returned nil.
-		return false, nil
+		return false, fmt.Errorf("no rule found for path %s", path)
 	}
 
 	fileLimits := true

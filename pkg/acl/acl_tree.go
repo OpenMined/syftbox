@@ -19,12 +19,13 @@ func newAclTree() *aclTree {
 // AddRuleSet adds a new set of rules to the tree.
 func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 	if ruleset == nil || len(ruleset.Rules) == 0 {
-		return nil
+		return fmt.Errorf("ruleset must have at least one rule")
 	}
 
 	parts := strings.Split(filepath.Clean(ruleset.path), PathSep)
 	pathDepth := strings.Count(ruleset.path, PathSep)
 
+	// depth is u8
 	if pathDepth > 255 {
 		return fmt.Errorf("path exceeds maximum depth of 255")
 	}

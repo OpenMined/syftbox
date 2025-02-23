@@ -5,9 +5,9 @@ import (
 )
 
 type aclRule struct {
+	fullPattern string
 	rule        *Rule
 	node        *aclNode // back reference to the node
-	fullPattern string
 }
 
 func (r *aclRule) Rule() *Rule {

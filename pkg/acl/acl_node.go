@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -10,13 +11,13 @@ import (
 )
 
 type aclNode struct {
-	path     string
+	mu       sync.RWMutex
 	rules    []*aclRule // rules for this part of the path. key is rule.Pattern
+	path     string
 	children map[string]*aclNode
 	terminal bool
 	depth    pCounter
 	version  pCounter
-	mu       sync.RWMutex
 }
 
 func newAclNode(path string, terminal bool, depth pCounter) *aclNode {
@@ -60,23 +61,23 @@ func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
 }
 
 // FindBestRule finds the best matching rule for the given path.
-func (n *aclNode) FindBestRule(path string) *aclRule {
+func (n *aclNode) FindBestRule(path string) (*aclRule, error) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
 	if n.rules == nil {
-		return nil
+		return nil, fmt.Errorf("no rules found for path %s", path)
 	}
 
 	// find the best matching rule
 	for _, aclRule := range n.rules {
 		ok, _ := doublestar.Match(aclRule.fullPattern, path)
 		if ok {
-			return aclRule
+			return aclRule, nil
 		}
 	}
 
-	return nil
+	return nil, fmt.Errorf("no matching rule found for path %s", path)
 }
 
 // Equal checks if the node is equal to another node.
