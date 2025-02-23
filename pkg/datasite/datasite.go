@@ -32,7 +32,7 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	// Fetch the ACL files
 	start := time.Now()
 	acls := d.blobSvc.ListAclFiles()
-	slog.Info("got acls", "acls", len(acls), "took", time.Since(start))
+	slog.Debug("acl list", "count", len(acls), "took", time.Since(start))
 
 	// Fetch the ACL rulesets
 	start = time.Now()
@@ -40,12 +40,12 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error fetching acls: %w", err)
 	}
-	slog.Info("ruleset fetched", "acls", len(ruleSets), "took", time.Since(start))
+	slog.Debug("acl read", "count", len(ruleSets), "took", time.Since(start))
 
 	// Load the ACL rulesets
 	start = time.Now()
 	d.aclSvc.LoadRuleSets(ruleSets)
-	slog.Info("ruleset added", "acls", len(ruleSets), "took", time.Since(start))
+	slog.Debug("acl build", "count", len(ruleSets), "took", time.Since(start))
 
 	// Warm up the ACL cache
 	start = time.Now()
@@ -55,7 +55,7 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 			slog.Error("acl cache warm error", "path", blob.Key, "error", err)
 		}
 	}
-	slog.Info("acl cache warmed", "took", time.Since(start))
+	slog.Debug("acl cache warm", "took", time.Since(start))
 
 	return nil
 }

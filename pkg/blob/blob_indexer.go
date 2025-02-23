@@ -35,14 +35,14 @@ func (bi *BlobStorageIndexer) Start(ctx context.Context) error {
 
 	// Start periodic updates
 	go func() {
-		slog.Info("blob index updater started")
+		slog.Debug("blob indexer started")
 		ticker := time.NewTicker(IndexUpdatePeriod)
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
-				slog.Info("blob index updater stopped")
+				slog.Debug("blob indexer stopped")
 				return
 			case <-ticker.C:
 				if err := bi.buildIndex(ctx); err != nil {
@@ -109,7 +109,7 @@ func (bi *BlobStorageIndexer) buildIndex(ctx context.Context) error {
 		bi.index[blob.Key] = blob
 	}
 
-	slog.Debug("blob index build", "files", len(blobs), "took", time.Since(start))
+	slog.Debug("blob indexer rebuild", "blbos", len(blobs), "took", time.Since(start))
 
 	return nil
 }

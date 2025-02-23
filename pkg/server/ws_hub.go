@@ -40,7 +40,7 @@ func (h *WebsocketHub) Run(ctx context.Context) {
 
 			h.mu.Lock()
 			h.clients[client.id] = client
-			slog.Info("wshub registered", "id", client.id, "connected", len(h.clients))
+			slog.Debug("wshub registered", "id", client.id, "connected", len(h.clients))
 			h.mu.Unlock()
 
 			h.wg.Add(1)
@@ -53,7 +53,7 @@ func (h *WebsocketHub) Run(ctx context.Context) {
 				defer h.mu.Unlock()
 
 				delete(h.clients, client.id)
-				slog.Info("wshub removed", "id", client.id, "connected", len(h.clients))
+				slog.Debug("wshub removed", "id", client.id, "connected", len(h.clients))
 				h.wg.Done()
 			}()
 		case <-ctx.Done():
@@ -69,7 +69,7 @@ func (h *WebsocketHub) Shutdown(ctx context.Context) {
 		go func() {
 			// will automatically remove client from hub using the Closed channel
 			client.Close()
-			slog.Info("wshub killed", "id", client.id)
+			slog.Debug("wshub killed", "id", client.id)
 		}()
 	}
 
