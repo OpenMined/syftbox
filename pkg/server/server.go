@@ -10,24 +10,26 @@ import (
 	"github.com/yashgorana/syftbox-go/pkg/acl"
 	"github.com/yashgorana/syftbox-go/pkg/blob"
 	"github.com/yashgorana/syftbox-go/pkg/datasite"
+	"github.com/yashgorana/syftbox-go/pkg/server/v1/ws"
 )
 
 type Server struct {
 	config *Config
 	server *http.Server
-	hub    *WebsocketHub
+	hub    *ws.WebsocketHub
 
-	blobSvc     *blob.BlobStorageService
+	blobSvc     *blob.BlobService
 	aclSvc      *acl.AclService
 	datasiteSvc *datasite.DatasiteService
 }
 
 func New(config *Config) (*Server, error) {
-	blobSvc := blob.NewBlobStorageService(config.Blob)
 	aclSvc := acl.NewAclService()
+	blobSvc := blob.NewBlobService(config.Blob)
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
-	hub := NewWebsocketHub()
+	hub := ws.NewHub()
+	httpHandler := SetupRoutes(hub, blobSvc, datasiteSvc)
 
 	return &Server{
 		config:      config,
@@ -37,7 +39,7 @@ func New(config *Config) (*Server, error) {
 		hub:         hub,
 		server: &http.Server{
 			Addr:    config.Http.Addr,
-			Handler: SetupRoutes(hub, datasiteSvc),
+			Handler: httpHandler,
 		},
 	}, nil
 }

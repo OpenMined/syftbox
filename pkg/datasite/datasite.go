@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 
@@ -13,11 +12,11 @@ import (
 )
 
 type DatasiteService struct {
-	blobSvc *blob.BlobStorageService
+	blobSvc *blob.BlobService
 	aclSvc  *acl.AclService
 }
 
-func NewDatasiteService(blobSvc *blob.BlobStorageService, aclSvc *acl.AclService) *DatasiteService {
+func NewDatasiteService(blobSvc *blob.BlobService, aclSvc *acl.AclService) *DatasiteService {
 	return &DatasiteService{
 		blobSvc: blobSvc,
 		aclSvc:  aclSvc,
@@ -62,18 +61,16 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 
 func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 	// First collect all accessible blobs
-	view := make([]*blob.BlobInfo, 0)
-	for blob := range d.blobSvc.Iter() {
+	blobs := d.blobSvc.List()
+	view := make([]*blob.BlobInfo, 0, len(blobs))
+
+	// Filter blobs based on ACL
+	for _, blob := range blobs {
 		ok, err := d.aclSvc.CanAccess(user, &acl.FileInfo{Path: blob.Key}, acl.ActionFileRead)
 		if ok && err == nil {
 			view = append(view, blob)
 		}
 	}
-
-	// Sort the view
-	sort.Slice(view, func(i, j int) bool {
-		return view[i].Key < view[j].Key
-	})
 
 	return view
 }
@@ -85,7 +82,7 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 	workers := 8
 	jobs := make(chan *blob.BlobInfo)
 	results := make([]*acl.RuleSet, 0, len(aclBlobs))
-	api := d.blobSvc.GetAPI()
+	blobClient := d.blobSvc.GetClient()
 
 	// Start workers
 	for i := 0; i < workers; i++ {
@@ -95,7 +92,7 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 			for blob := range jobs {
 
 				// Pull the ACL file
-				obj, err := api.Download(ctx, blob.Key)
+				obj, err := blobClient.Download(ctx, blob.Key)
 				if err != nil {
 					slog.Error("ruleset fetch error", "path", blob.Key, "error", err)
 					continue

@@ -25,6 +25,6 @@ type CompletedPart struct {
 type BlobInfo struct {
 	Key          string `json:"key"`
 	ETag         string `json:"etag"`
-	Size         uint64 `json:"size"`
+	Size         int64  `json:"size"`
 	LastModified string `json:"lastModified"`
 }

@@ -7,27 +7,26 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 )
 
 const IndexUpdatePeriod = 15 * time.Minute
 
-type BlobStorageIndexer struct {
-	api   *BlobStorageAPI
+type BlobIndexer struct {
+	api   *BlobClient
 	index map[string]*BlobInfo
 	mu    sync.RWMutex
 }
 
-func NewBlobIndexer(api *BlobStorageAPI) *BlobStorageIndexer {
-	return &BlobStorageIndexer{
+func NewBlobIndexer(api *BlobClient) *BlobIndexer {
+	return &BlobIndexer{
 		api:   api,
 		index: make(map[string]*BlobInfo),
 	}
 }
 
-func (bi *BlobStorageIndexer) Start(ctx context.Context) error {
+func (bi *BlobIndexer) Start(ctx context.Context) error {
 	// Initial build of the index
 	if err := bi.buildIndex(ctx); err != nil {
 		return err
@@ -55,42 +54,43 @@ func (bi *BlobStorageIndexer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (bi *BlobStorageIndexer) Get(key string) *BlobInfo {
+func (bi *BlobIndexer) Get(key string) *BlobInfo {
 	bi.mu.RLock()
 	defer bi.mu.RUnlock()
 
 	return bi.index[key]
 }
 
-func (bi *BlobStorageIndexer) Set(blob *BlobInfo) {
+func (bi *BlobIndexer) Set(blob *BlobInfo) {
 	bi.mu.Lock()
 	defer bi.mu.Unlock()
 
 	bi.index[blob.Key] = blob
 }
 
-func (bi *BlobStorageIndexer) Remove(key string) {
+func (bi *BlobIndexer) Remove(key string) {
 	bi.mu.Lock()
 	defer bi.mu.Unlock()
 
 	delete(bi.index, key)
 }
 
-func (bi *BlobStorageIndexer) List() []*BlobInfo {
+func (bi *BlobIndexer) List() []*BlobInfo {
+	// return slices.SortedFunc(bi.Iter(), func(a, b *BlobInfo) int {
+	// 	return strings.Compare(a.Key, b.Key)
+	// })
 	// return blobs
-	return slices.SortedFunc(bi.Iter(), func(a, b *BlobInfo) int {
-		return strings.Compare(a.Key, b.Key)
-	})
+	return slices.Collect(bi.Iter())
 }
 
-func (bi *BlobStorageIndexer) Iter() iter.Seq[*BlobInfo] {
+func (bi *BlobIndexer) Iter() iter.Seq[*BlobInfo] {
 	bi.mu.RLock()
 	defer bi.mu.RUnlock()
 
 	return maps.Values(bi.index)
 }
 
-func (bi *BlobStorageIndexer) buildIndex(ctx context.Context) error {
+func (bi *BlobIndexer) buildIndex(ctx context.Context) error {
 	start := time.Now()
 
 	blobs, err := bi.api.ListObjects(ctx)

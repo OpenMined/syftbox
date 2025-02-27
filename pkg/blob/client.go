@@ -13,27 +13,27 @@ import (
 )
 
 const (
-	chunkSize          = 8 * 1024 * 1024   // 8MB
-	multipartThreshold = 128 * 1024 * 1024 // 64MB
+	chunkSize          = 8 * 1024 * 1024 // 8MB
+	multipartThreshold = 8 * 1024 * 1024
 	uploadExpiry       = 15 * time.Minute
 )
 
-type BlobStorageAPI struct {
+type BlobClient struct {
 	s3Client    *s3.Client
 	s3Presigner *s3.PresignClient
 	bucketName  string
 }
 
-func NewBlobStorageAPI(s3Client *s3.Client, bucketName string) *BlobStorageAPI {
+func NewBlobClient(s3Client *s3.Client, bucketName string) *BlobClient {
 	s3Presigner := s3.NewPresignClient(s3Client)
-	return &BlobStorageAPI{
+	return &BlobClient{
 		s3Client:    s3Client,
 		s3Presigner: s3Presigner,
 		bucketName:  bucketName,
 	}
 }
 
-func NewBlobStorageAPIFromConfig(cfg *BlobStorageConfig) *BlobStorageAPI {
+func NewBlobClientWithConfig(cfg *BlobConfig) *BlobClient {
 	awsCfg := aws.Config{
 		Credentials: credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, ""),
 		Region:      cfg.Region,
@@ -46,51 +46,48 @@ func NewBlobStorageAPIFromConfig(cfg *BlobStorageConfig) *BlobStorageAPI {
 		}
 	})
 
-	return NewBlobStorageAPI(awsClient, cfg.BucketName)
+	return NewBlobClient(awsClient, cfg.BucketName)
 }
 
-func (s *BlobStorageAPI) Download(ctx context.Context, key string) (*s3.GetObjectOutput, error) {
+func (s *BlobClient) Download(ctx context.Context, key string) (*s3.GetObjectOutput, error) {
 	return s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.bucketName,
 		Key:    &key,
 	})
 }
 
-func (s *BlobStorageAPI) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
+func (s *BlobClient) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
 	var objects []*BlobInfo
-	var continuationToken *string
 
-	for {
-		input := &s3.ListObjectsV2Input{
-			Bucket:            &s.bucketName,
-			ContinuationToken: continuationToken,
-		}
+	input := &s3.ListObjectsV2Input{
+		Bucket: &s.bucketName,
+	}
 
-		result, err := s.s3Client.ListObjectsV2(ctx, input)
+	// Create a paginator from the ListObjectsV2 API
+	paginator := s3.NewListObjectsV2Paginator(s.s3Client, input)
+
+	// Iterate through all pages
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
 		if err != nil {
 			return nil, err
 		}
 
-		for _, obj := range result.Contents {
+		for _, obj := range page.Contents {
 			objects = append(objects, &BlobInfo{
-				Key:          *obj.Key,
-				ETag:         strings.ReplaceAll(*obj.ETag, "\"", ""),
-				Size:         uint64(*obj.Size),
+				Key:          aws.ToString(obj.Key),
+				ETag:         strings.ReplaceAll(aws.ToString(obj.ETag), "\"", ""),
+				Size:         aws.ToInt64(obj.Size),
 				LastModified: obj.LastModified.Format(time.RFC3339),
 			})
 		}
-
-		if !(*result.IsTruncated) {
-			break
-		}
-		continuationToken = result.NextContinuationToken
 	}
 
 	return objects, nil
 }
 
-func (s *BlobStorageAPI) PresignedUpload(ctx context.Context, req *UploadRequest) (*UploadResponse, error) {
-	if req.TotalSize < multipartThreshold {
+func (s *BlobClient) PresignedUpload(ctx context.Context, req *UploadRequest) (*UploadResponse, error) {
+	if req.TotalSize <= multipartThreshold {
 		url, err := s.generateSingleUploadURL(ctx, req.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate upload URL: %w", err)
@@ -119,15 +116,15 @@ func (s *BlobStorageAPI) PresignedUpload(ctx context.Context, req *UploadRequest
 	}, nil
 }
 
-func (s *BlobStorageAPI) CompleteUpload(ctx context.Context, req *CompleteUploadRequest) error {
+func (s *BlobClient) CompleteUpload(ctx context.Context, req *CompleteUploadRequest) error {
 	return s.completeMultipartUpload(ctx, req.Name, req.UploadId, req.Parts)
 }
 
-func (s *BlobStorageAPI) PresignedDownload(ctx context.Context, key string) (string, error) {
+func (s *BlobClient) PresignedDownload(ctx context.Context, key string) (string, error) {
 	return s.generatePresignedDownloadURL(ctx, key)
 }
 
-func (s *BlobStorageAPI) PresignedBatchUpload(ctx context.Context, requests []*UploadRequest) ([]*UploadResponse, error) {
+func (s *BlobClient) PresignedBatchUpload(ctx context.Context, requests []*UploadRequest) ([]*UploadResponse, error) {
 	uploads := make([]*UploadResponse, 0, len(requests))
 	for _, req := range requests {
 		upload, err := s.PresignedUpload(ctx, req)
@@ -139,7 +136,7 @@ func (s *BlobStorageAPI) PresignedBatchUpload(ctx context.Context, requests []*U
 	return uploads, nil
 }
 
-func (s *BlobStorageAPI) PresignedBatchDownload(ctx context.Context, keys []string) ([]string, error) {
+func (s *BlobClient) PresignedBatchDownload(ctx context.Context, keys []string) ([]string, error) {
 	downloads := make([]string, 0, len(keys))
 	for _, filename := range keys {
 		download, err := s.PresignedDownload(ctx, filename)
@@ -151,7 +148,7 @@ func (s *BlobStorageAPI) PresignedBatchDownload(ctx context.Context, keys []stri
 	return downloads, nil
 }
 
-func (s *BlobStorageAPI) createMultipartUpload(ctx context.Context, key string) (string, error) {
+func (s *BlobClient) createMultipartUpload(ctx context.Context, key string) (string, error) {
 	result, err := s.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: &s.bucketName,
 		Key:    &key,
@@ -162,7 +159,7 @@ func (s *BlobStorageAPI) createMultipartUpload(ctx context.Context, key string) 
 	return *result.UploadId, nil
 }
 
-func (s *BlobStorageAPI) generateSingleUploadURL(ctx context.Context, key string) (string, error) {
+func (s *BlobClient) generateSingleUploadURL(ctx context.Context, key string) (string, error) {
 	url, err := s.s3Presigner.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: &s.bucketName,
 		Key:    &key,
@@ -175,7 +172,7 @@ func (s *BlobStorageAPI) generateSingleUploadURL(ctx context.Context, key string
 	return url.URL, nil
 }
 
-func (s *BlobStorageAPI) generatePartUploadURLs(ctx context.Context, key string, uploadID string, totalSize uint64) ([]string, error) {
+func (s *BlobClient) generatePartUploadURLs(ctx context.Context, key string, uploadID string, totalSize uint64) ([]string, error) {
 	numParts := uint16((totalSize + chunkSize - 1) / chunkSize)
 	if numParts > 10000 {
 		return nil, fmt.Errorf("total parts %d exceeds maximum allowed (10000)", numParts)
@@ -200,7 +197,7 @@ func (s *BlobStorageAPI) generatePartUploadURLs(ctx context.Context, key string,
 	return urls, nil
 }
 
-func (s *BlobStorageAPI) generatePresignedDownloadURL(ctx context.Context, key string) (string, error) {
+func (s *BlobClient) generatePresignedDownloadURL(ctx context.Context, key string) (string, error) {
 	url, err := s.s3Presigner.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.bucketName,
 		Key:    &key,
@@ -213,7 +210,7 @@ func (s *BlobStorageAPI) generatePresignedDownloadURL(ctx context.Context, key s
 	return url.URL, nil
 }
 
-func (s *BlobStorageAPI) completeMultipartUpload(ctx context.Context, key string, uploadID string, parts []*CompletedPart) error {
+func (s *BlobClient) completeMultipartUpload(ctx context.Context, key string, uploadID string, parts []*CompletedPart) error {
 	completedParts := make([]types.CompletedPart, len(parts))
 	for i, part := range parts {
 		completedParts[i] = types.CompletedPart{

@@ -1,4 +1,4 @@
-package server
+package ws
 
 import (
 	"context"
@@ -23,7 +23,7 @@ type WebsocketHub struct {
 	mu sync.RWMutex
 }
 
-func NewWebsocketHub() *WebsocketHub {
+func NewHub() *WebsocketHub {
 	return &WebsocketHub{
 		clients:  make(map[string]*WsClient),
 		register: make(chan *WsClient),
@@ -81,9 +81,8 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	// Upgrade HTTP connection to WebSocket
 	conn, err := websocket.Accept(ctx.Writer, ctx.Request, nil)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, ErrorResponse{
-			Code:    ErrBadRequest,
-			Message: "websocket accept failed: " + err.Error(),
+		ctx.PureJSON(http.StatusBadRequest, gin.H{
+			"error": "websocket accept failed: " + err.Error(),
 		})
 		return
 	}

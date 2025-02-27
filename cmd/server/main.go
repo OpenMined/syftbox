@@ -39,10 +39,10 @@ func main() {
 					CertFile: certFile,
 					KeyFile:  keyFile,
 				},
-				Blob: &blob.BlobStorageConfig{
+				Blob: &blob.BlobConfig{
 					BucketName: "syftgo",
 					Region:     "us-east-1",
-					Endpoint:   "http://localhost:9000",
+					Endpoint:   "http://20.193.159.142:9000",
 					AccessKey:  "AbH4qZdboOLES93uUUb2",
 					SecretKey:  "Pz46w5OYIRO9pAB5urEfyRdSNwLpeQc9CvwguQzX",
 				},

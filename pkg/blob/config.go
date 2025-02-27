@@ -1,6 +1,6 @@
 package blob
 
-type BlobStorageConfig struct {
+type BlobConfig struct {
 	BucketName string
 	Region     string
 	AccessKey  string
