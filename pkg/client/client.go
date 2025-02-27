@@ -2,97 +2,162 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
-	"github.com/yashgorana/syftbox-go/pkg/fswatch"
+	"github.com/radovskyb/watcher"
+	"github.com/rjeczalik/notify"
 )
 
 type Client struct {
-	config    *ClientConfig
-	workspace *Workspace
-	watcher   *fswatch.Watcher
-
-	wg sync.WaitGroup
+	config   *Config
+	datasite *LocalDatasite
 }
 
-func Default() (*Client, error) {
-	watcher, err := fswatch.New()
+func New(config *Config) (*Client, error) {
+	ds, err := NewLocalDatasite(config.DataDir, config.Email)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create datasite: %w", err)
 	}
-
-	config := DefaultClientConfig()
 	return &Client{
-		config:    config,
-		workspace: NewWorkspace(config.DataDir),
-		watcher:   watcher,
+		config:   config,
+		datasite: ds,
 	}, nil
 }
 
 func (c *Client) Start(ctx context.Context) error {
-	slog.Info("Starting client", "data", c.workspace.Root, "config", c.config.Path)
-	err := c.workspace.CreateDirs()
-	if err != nil {
-		return err
+	slog.Info("syftgo client start", "datadir", c.config.DataDir, "email", c.config.Email, "server", c.config.ServerURL)
+	// Setup local datasite first
+	if err := c.datasite.Bootstrap(); err != nil {
+		return fmt.Errorf("failed to bootstrap datasite: %w", err)
 	}
 
-	err = c.watcher.Add(c.workspace.DatasitesDir)
-	if err != nil {
-		return err
+	if err := c.startFileWatcher(ctx); err != nil {
+		return fmt.Errorf("fs notify error: %w", err)
 	}
 
-	// Start file watcher
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		if err := c.watcher.Start(ctx); err != nil {
-			slog.Error("watcher error", "error", err)
-		}
-	}()
+	if err := c.startPollWatcher(ctx); err != nil {
+		return fmt.Errorf("fs poll error: %w", err)
+	}
 
-	// Process events
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		c.processEvents(ctx)
-	}()
-
-	// Handle shutdown
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		<-ctx.Done()
-		slog.Info("received shutdown signal")
-		if err := c.Stop(); err != nil {
-			slog.Error("shutdown error", "error", err)
-		}
-	}()
-
-	c.wg.Wait()
-	slog.Info("client shutdown completed")
+	<-ctx.Done()
+	slog.Info("syftgo client stop")
 	return nil
 }
 
-func (c *Client) Stop() error {
-	return c.watcher.Stop()
+func (c *Client) startFileWatcher(ctx context.Context) error {
+	recursivePath := c.datasite.DatasitesDir + "/..."
+	chanEvents := make(chan notify.EventInfo, 16)
+	slog.Info("fs notify start", "dir", c.datasite.DatasitesDir)
+	if err := notify.Watch(recursivePath, chanEvents, notify.Create, notify.Write); err != nil {
+		return fmt.Errorf("fs notify error: %w", err)
+	}
+
+	// Event deduplication map with mutex
+	var (
+		mu              sync.RWMutex
+		lastEvent       = make(map[string]string)
+		cleanupInterval = 100 * time.Millisecond
+	)
+
+	// instead of stalling the main event loop
+	// lets events in the last 50ms and ignore in the main loop
+	// this is a simple way to avoid duplicate events
+	go func() {
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				mu.Lock()
+				clear(lastEvent)
+				mu.Unlock()
+
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-chanEvents:
+				if !ok {
+					return
+				}
+
+				mu.RLock()
+				_, ok = lastEvent[event.Path()]
+				mu.RUnlock()
+				if ok {
+					continue
+				}
+
+				mu.Lock()
+				lastEvent[event.Path()] = event.Path()
+				mu.Unlock()
+
+				slog.Info("fs notify event", "event", event)
+
+			case <-ctx.Done():
+				slog.Info("fs notify stop")
+				notify.Stop(chanEvents)
+				return
+			}
+		}
+	}()
+
+	return nil
 }
 
-func (c *Client) processEvents(ctx context.Context) {
-	for {
-		select {
-		case event, ok := <-c.watcher.Events:
-			if !ok {
-				return
-			}
-			slog.Info("fs event", "event", event.Op.String(), "path", event.Name)
-		case err, ok := <-c.watcher.Errors:
-			if !ok {
-				return
-			}
-			slog.Warn("fs error", "error", err)
-		case <-ctx.Done():
-			return
-		}
+func (c *Client) startPollWatcher(ctx context.Context) error {
+	w := watcher.New()
+	w.FilterOps(watcher.Move, watcher.Rename, watcher.Remove)
+
+	// Watch this folder for changes.
+	if err := w.AddRecursive(c.datasite.DatasitesDir); err != nil {
+		return fmt.Errorf("fs poll add error: %w", err)
 	}
+
+	go func() {
+		defer slog.Info("fs poll event loop stop")
+		for {
+			select {
+			case event, ok := <-w.Event:
+				if !ok {
+					return
+				} else if event.IsDir() {
+					continue
+				}
+				slog.Info("fs poll event", "event", event.Op, "path", event.Path)
+
+			case err := <-w.Error:
+				slog.Error("fs poll error", "error", err)
+
+			case <-w.Closed:
+				return
+
+			case <-ctx.Done():
+				w.Close()
+				return
+			}
+		}
+	}()
+
+	go func() {
+		slog.Info("fs poll start", "dir", c.datasite.DatasitesDir)
+
+		//! Todo - On SIGINT this function is stuck for duration of the poll interval
+		//! hence keeping this in a goroutine for fast exit, but it may leak
+		if err := w.Start(time.Millisecond * 2000); err != nil {
+			slog.Error("fs poll start error", "error", err)
+		}
+		slog.Info("fs poll stop")
+	}()
+
+	return nil
 }

@@ -20,7 +20,15 @@ type RuleSet struct {
 }
 
 // NewRuleSet creates a new RuleSet instance with the given path, terminal flag, and initial rules.
-func NewRuleSet(path string, terminal bool, rules ...*Rule) *RuleSet {
+func NewRuleSet(terminal bool, rules ...*Rule) *RuleSet {
+	return &RuleSet{
+		Terminal: terminal,
+		Rules:    rules,
+	}
+}
+
+// NewRuleSet creates a new RuleSet instance with the given path, terminal flag, and initial rules.
+func NewRuleSetWithPath(path string, terminal bool, rules ...*Rule) *RuleSet {
 	return &RuleSet{
 		path:     PathWithoutAclFileName(path),
 		Terminal: terminal,
@@ -62,6 +70,10 @@ func NewRuleSetFromReader(path string, reader io.ReadCloser) (*RuleSet, error) {
 // Save the RuleSet as a YAML file at the specified path.
 // It creates any necessary parent directories and sets appropriate file permissions.
 func (p *RuleSet) Save(path string) error {
+	if !IsAclFile(path) {
+		path = AsAclPath(path)
+	}
+
 	if err := utils.EnsureDir(filepath.Dir(path)); err != nil {
 		return err
 	}

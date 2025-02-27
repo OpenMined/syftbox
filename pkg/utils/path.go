@@ -30,13 +30,18 @@ func ResolvePath(path string) (string, error) {
 	return filepath.Clean(absPath), nil
 }
 
-func EnsureParent(file string) error {
-	dir := filepath.Dir(file)
-	return os.MkdirAll(dir, 0755)
+func EnsureParent(path string) error {
+	dir := filepath.Dir(path)
+	return EnsureDir(dir)
 }
 
-func EnsureDir(dir string) error {
-	return os.MkdirAll(dir, 0755)
+func EnsureDir(path string) error {
+	// already exists
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+
+	return os.MkdirAll(path, 0755)
 }
 
 func DirExists(path string) bool {
