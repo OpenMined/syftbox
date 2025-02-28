@@ -8,16 +8,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yashgorana/syftbox-go/pkg/blob"
 	"github.com/yashgorana/syftbox-go/pkg/datasite"
-	blobV1 "github.com/yashgorana/syftbox-go/pkg/server/v1/blob"
-	datasiteV1 "github.com/yashgorana/syftbox-go/pkg/server/v1/datasite"
+	"github.com/yashgorana/syftbox-go/pkg/server/middlewares"
+	blobHandler "github.com/yashgorana/syftbox-go/pkg/server/v1/blob"
+	datasiteHandler "github.com/yashgorana/syftbox-go/pkg/server/v1/datasite"
 	wsV1 "github.com/yashgorana/syftbox-go/pkg/server/v1/ws"
 )
 
 func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService) http.Handler {
 	r := gin.Default()
 
-	blob := blobV1.NewHandler(svcBlob)
-	ds := datasiteV1.NewHandler(svcDatasite)
+	blob := blobHandler.New(svcBlob)
+	ds := datasiteHandler.New(svcDatasite)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
@@ -26,6 +27,7 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 	r.GET("/healthz", HealthHandler)
 
 	v1 := r.Group("/api/v1")
+	v1.Use(middlewares.Auth())
 	{
 		// blob
 		v1.Any("/blob/list", blob.List)
@@ -34,7 +36,8 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 		v1.Any("/blob/complete", blob.Complete)
 
 		// datasite
-		v1.Any("/datasite/view", ds.GetView)
+		v1.GET("/datasite/view", ds.GetView)
+		v1.POST("/datasite/download", ds.DownloadFiles)
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)

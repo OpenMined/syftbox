@@ -13,6 +13,14 @@ import (
 
 const IndexUpdatePeriod = 15 * time.Minute
 
+type BlobIndex interface {
+	Get(key string) (*BlobInfo, bool)
+	Set(blob *BlobInfo)
+	Remove(key string)
+	List() []*BlobInfo
+	Iter() iter.Seq[*BlobInfo]
+}
+
 type BlobIndexer struct {
 	api   *BlobClient
 	index map[string]*BlobInfo
@@ -54,11 +62,12 @@ func (bi *BlobIndexer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (bi *BlobIndexer) Get(key string) *BlobInfo {
+func (bi *BlobIndexer) Get(key string) (*BlobInfo, bool) {
 	bi.mu.RLock()
 	defer bi.mu.RUnlock()
 
-	return bi.index[key]
+	val, ok := bi.index[key]
+	return val, ok
 }
 
 func (bi *BlobIndexer) Set(blob *BlobInfo) {
@@ -109,7 +118,7 @@ func (bi *BlobIndexer) buildIndex(ctx context.Context) error {
 		bi.index[blob.Key] = blob
 	}
 
-	slog.Debug("blob indexer rebuild", "blbos", len(blobs), "took", time.Since(start))
+	slog.Debug("blob indexer rebuild", "blobs", len(blobs), "took", time.Since(start))
 
 	return nil
 }

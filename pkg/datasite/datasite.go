@@ -30,7 +30,7 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 
 	// Fetch the ACL files
 	start := time.Now()
-	acls := d.blobSvc.ListAclFiles()
+	acls := d.ListAclFiles()
 	slog.Debug("acl list", "count", len(acls), "took", time.Since(start))
 
 	// Fetch the ACL rulesets
@@ -47,8 +47,9 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	slog.Debug("acl build", "count", len(ruleSets), "took", time.Since(start))
 
 	// Warm up the ACL cache
+	index := d.blobSvc.Index()
 	start = time.Now()
-	for blob := range d.blobSvc.Iter() {
+	for blob := range index.Iter() {
 		_, err := d.aclSvc.CanAccess(acl.Everyone, &acl.FileInfo{Path: blob.Key}, acl.ActionFileRead)
 		if err != nil {
 			slog.Error("acl cache warm error", "path", blob.Key, "error", err)
@@ -61,7 +62,8 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 
 func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 	// First collect all accessible blobs
-	blobs := d.blobSvc.List()
+	index := d.blobSvc.Index()
+	blobs := index.List()
 	view := make([]*blob.BlobInfo, 0, len(blobs))
 
 	// Filter blobs based on ACL
@@ -75,6 +77,39 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 	return view
 }
 
+func (d *DatasiteService) DownloadFiles(ctx context.Context, user string, keys []string) ([]BlobUrl, []BlobError, error) {
+	index := d.blobSvc.Index()
+	client := d.blobSvc.Client()
+
+	urls := make([]BlobUrl, 0, len(keys))
+	errs := make([]BlobError, 0, len(keys))
+
+	for _, key := range keys {
+
+		_, ok := index.Get(key)
+		if !ok {
+			errs = append(errs, BlobError{Key: key, Error: "not found"})
+			continue
+		}
+
+		ok, err := d.aclSvc.CanAccess(user, &acl.FileInfo{Path: key}, acl.ActionFileRead)
+		if !ok || err != nil {
+			errs = append(errs, BlobError{Key: key, Error: "access denied"})
+			continue
+		}
+
+		url, err := client.PresignedDownload(ctx, key)
+		if err != nil {
+			errs = append(errs, BlobError{Key: key, Error: err.Error()})
+			continue
+		}
+
+		urls = append(urls, BlobUrl{Key: key, Url: url})
+	}
+
+	return urls, errs, nil
+}
+
 func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobInfo) ([]*acl.RuleSet, error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -82,7 +117,7 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 	workers := 8
 	jobs := make(chan *blob.BlobInfo)
 	results := make([]*acl.RuleSet, 0, len(aclBlobs))
-	blobClient := d.blobSvc.GetClient()
+	blobClient := d.blobSvc.Client()
 
 	// Start workers
 	for i := 0; i < workers; i++ {
@@ -121,4 +156,16 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 	wg.Wait()
 
 	return results, nil
+}
+
+func (d *DatasiteService) ListAclFiles() []*blob.BlobInfo {
+	index := d.blobSvc.Index()
+
+	acls := make([]*blob.BlobInfo, 0)
+	for blob := range index.Iter() {
+		if acl.IsAclFile(blob.Key) {
+			acls = append(acls, blob)
+		}
+	}
+	return acls
 }

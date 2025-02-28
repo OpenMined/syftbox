@@ -12,19 +12,15 @@ const (
 	errCompleteFailed = "BLOB_COMPLETE_FAILED"
 )
 
-type UploadHandler struct {
-	c   *blob.BlobClient
+type BlobHandler struct {
 	svc *blob.BlobService
 }
 
-func NewHandler(svc *blob.BlobService) *UploadHandler {
-	return &UploadHandler{
-		svc: svc,
-		c:   svc.GetClient(),
-	}
+func New(svc *blob.BlobService) *BlobHandler {
+	return &BlobHandler{svc: svc}
 }
 
-func (h *UploadHandler) Upload(ctx *gin.Context) {
+func (h *BlobHandler) Upload(ctx *gin.Context) {
 	var req UploadRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
@@ -34,7 +30,8 @@ func (h *UploadHandler) Upload(ctx *gin.Context) {
 	}
 
 	// todo - validate the request
-	result, err := h.c.PresignedUpload(ctx, &req.UploadRequest)
+	client := h.svc.Client()
+	result, err := client.PresignedUpload(ctx, &req.UploadRequest)
 	if err != nil {
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{
 			"code":  errPresignFailed,
@@ -47,7 +44,7 @@ func (h *UploadHandler) Upload(ctx *gin.Context) {
 	ctx.PureJSON(http.StatusOK, result)
 }
 
-func (h *UploadHandler) Download(ctx *gin.Context) {
+func (h *BlobHandler) Download(ctx *gin.Context) {
 	key := ctx.Query("key")
 	if key == "" {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
@@ -57,7 +54,8 @@ func (h *UploadHandler) Download(ctx *gin.Context) {
 	}
 
 	// todo - validate the request
-	result, err := h.c.PresignedDownload(ctx, key)
+	client := h.svc.Client()
+	result, err := client.PresignedDownload(ctx, key)
 	if err != nil {
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
@@ -70,7 +68,7 @@ func (h *UploadHandler) Download(ctx *gin.Context) {
 	})
 }
 
-func (h *UploadHandler) Complete(ctx *gin.Context) {
+func (h *BlobHandler) Complete(ctx *gin.Context) {
 	var req CompleteRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
@@ -87,7 +85,8 @@ func (h *UploadHandler) Complete(ctx *gin.Context) {
 
 	// completing a multi-part upload
 	if req.UploadId != "" && req.Parts != nil {
-		if err := h.c.CompleteUpload(ctx, &req.CompleteUploadRequest); err != nil {
+		client := h.svc.Client()
+		if err := client.CompleteUpload(ctx, &req.CompleteUploadRequest); err != nil {
 			ctx.PureJSON(http.StatusInternalServerError, gin.H{
 				"code":  errCompleteFailed,
 				"error": err.Error(),
@@ -99,7 +98,7 @@ func (h *UploadHandler) Complete(ctx *gin.Context) {
 	ctx.PureJSON(http.StatusOK, req)
 }
 
-func (h *UploadHandler) List(ctx *gin.Context) {
-	res := h.svc.List()
+func (h *BlobHandler) List(ctx *gin.Context) {
+	res := h.svc.Index().List()
 	ctx.PureJSON(http.StatusOK, res)
 }
