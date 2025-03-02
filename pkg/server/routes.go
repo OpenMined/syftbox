@@ -30,10 +30,10 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 	v1.Use(middlewares.Auth())
 	{
 		// blob
-		v1.Any("/blob/list", blob.List)
-		v1.Any("/blob/upload", blob.Upload)
-		v1.Any("/blob/download", blob.Download)
-		v1.Any("/blob/complete", blob.Complete)
+		v1.GET("/blob/list", blob.List)
+		v1.GET("/blob/upload", blob.Upload)
+		v1.GET("/blob/download", blob.Download)
+		v1.POST("/blob/complete", blob.Complete)
 
 		// datasite
 		v1.GET("/datasite/view", ds.GetView)

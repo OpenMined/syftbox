@@ -7,17 +7,24 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/gin-gonic/gin"
+	"github.com/yashgorana/syftbox-go/pkg/message"
 )
 
 const (
 	maxMessageSize = 1024 * 1024 // 1MB
 )
 
+type ClientMessage struct {
+	ClientId string
+	Info     *ClientInfo
+	Message  *message.Message
+}
+
 type WebsocketHub struct {
-	clients  map[string]*WsClient
-	register chan *WsClient
+	clients  map[string]*WebsocketClient
+	register chan *WebsocketClient
+	msgs     chan *ClientMessage
 
 	wg sync.WaitGroup
 	mu sync.RWMutex
@@ -25,8 +32,9 @@ type WebsocketHub struct {
 
 func NewHub() *WebsocketHub {
 	return &WebsocketHub{
-		clients:  make(map[string]*WsClient),
-		register: make(chan *WsClient),
+		clients:  make(map[string]*WebsocketClient),
+		register: make(chan *WebsocketClient),
+		msgs:     make(chan *ClientMessage, 128),
 	}
 }
 
@@ -39,12 +47,13 @@ func (h *WebsocketHub) Run(ctx context.Context) {
 		case client := <-h.register:
 
 			h.mu.Lock()
-			h.clients[client.id] = client
-			slog.Debug("wshub registered", "id", client.id, "connected", len(h.clients))
+			h.clients[client.Id] = client
+			slog.Debug("wshub registered", "id", client.Id, "connected", len(h.clients))
 			h.mu.Unlock()
 
 			h.wg.Add(1)
 			go client.Start(context.Background())
+			go h.handleClientMessages(client)
 			go func() {
 				// if client closes, we just remove it from the hub
 				<-client.Closed
@@ -52,14 +61,19 @@ func (h *WebsocketHub) Run(ctx context.Context) {
 				h.mu.Lock()
 				defer h.mu.Unlock()
 
-				delete(h.clients, client.id)
-				slog.Debug("wshub removed", "id", client.id, "connected", len(h.clients))
+				delete(h.clients, client.Id)
+				slog.Debug("wshub removed", "id", client.Id, "connected", len(h.clients))
 				h.wg.Done()
 			}()
 		case <-ctx.Done():
 			return
 		}
 	}
+}
+
+// OnMessage registers a handler function that gets called when a client sends a message
+func (h *WebsocketHub) Messages() <-chan *ClientMessage {
+	return h.msgs
 }
 
 func (h *WebsocketHub) Shutdown(ctx context.Context) {
@@ -69,11 +83,12 @@ func (h *WebsocketHub) Shutdown(ctx context.Context) {
 		go func() {
 			// will automatically remove client from hub using the Closed channel
 			client.Close()
-			slog.Debug("wshub killed", "id", client.id)
+			slog.Debug("wshub killed", "id", client.Id)
 		}()
 	}
 
 	h.wg.Wait()
+	h.clients = nil
 	slog.Info("wshub shutdown")
 }
 
@@ -88,23 +103,92 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	}
 	conn.SetReadLimit(maxMessageSize)
 
-	client := NewWsClient(conn)
-
-	wsjson.Write(ctx, conn, gin.H{
-		"typ": "HELLO",
-		"msg": "syftgo",
-		"ver": "0.5.0",
-		"cid": client.id,
+	client := NewWebsocketClient(conn, &ClientInfo{
+		User:    ctx.GetString("user"),
+		Headers: ctx.Request.Header.Clone(),
 	})
+
+	client.MsgTx <- message.NewSystemMessage("0.5.0", "connected")
 
 	h.register <- client
 }
 
-func (h *WebsocketHub) Broadcast(msg interface{}) {
+func (h *WebsocketHub) SendMessage(clientId string, msg *message.Message) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	if client, ok := h.clients[clientId]; ok {
+		select {
+		case client.MsgTx <- msg:
+			// *message.Message sent successfully
+		default:
+			slog.Warn("wshub send buffer full", "id", client.Id)
+		}
+	}
+}
+
+// SendMessageUser sends a message to all clients with the specified username
+func (h *WebsocketHub) SendMessageUser(user string, msg *message.Message) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	sent := false
+
+	for _, client := range h.clients {
+		if client.Info.User == user {
+			select {
+			case client.MsgTx <- msg:
+				sent = true
+			default:
+				slog.Warn("wshub send buffer full", "id", client.Id, "user", user)
+			}
+		}
+	}
+
+	return sent
+}
+
+func (h *WebsocketHub) Broadcast(msg *message.Message) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, client := range h.clients {
-		client.send <- msg
+		client.MsgTx <- msg
+	}
+}
+
+// BroadcastFiltered sends a message to all clients that match the filter
+func (h *WebsocketHub) BroadcastFiltered(msg *message.Message, filter func(*ClientInfo) bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for _, client := range h.clients {
+		if filter(client.Info) {
+			select {
+			case client.MsgTx <- msg:
+				// Message sent successfully
+			default:
+				slog.Warn("wshub broadcast filtered buffer full", "id", client.Id)
+			}
+		}
+	}
+}
+
+// handleClientMessages processes incoming messages from a client and calls registered handlers
+func (h *WebsocketHub) handleClientMessages(client *WebsocketClient) {
+	for {
+		select {
+		case <-client.Closed:
+			return
+		case msg, ok := <-client.MsgRx:
+			if !ok {
+				return
+			}
+			h.msgs <- &ClientMessage{
+				ClientId: client.Id,
+				Info:     client.Info,
+				Message:  msg,
+			}
+		}
 	}
 }

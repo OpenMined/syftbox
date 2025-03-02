@@ -8,26 +8,30 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
+	"time"
 
+	"github.com/fatih/color"
+	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/pkg/client"
+	"github.com/yashgorana/syftbox-go/pkg/utils"
 )
 
 var (
 	home, _          = os.UserHomeDir()
 	defaultDataDir   = filepath.Join(home, "SyftBox")
-	defaultServerURL = "http://localhost:8080"
+	defaultServerURL = "https://syftboxdev.openmined.org"
 	configFileName   = "config"
 )
 
 func main() {
-	// Setup logger
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}
-	handler := slog.NewTextHandler(os.Stdout, opts)
+	handler := tint.NewHandler(os.Stdout, &tint.Options{
+		Level:      slog.LevelDebug,
+		TimeFormat: time.Kitchen,
+	})
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
@@ -39,9 +43,11 @@ func main() {
 		Use:   "client",
 		Short: "SyftBox Client CLI",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			showSyftBoxHeader()
 			return loadConfig(cmd)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+
 			c, err := client.New(&client.Config{
 				Email:     viper.GetString("email"),
 				DataDir:   viper.GetString("data_dir"),
@@ -68,7 +74,7 @@ func main() {
 func loadConfig(cmd *cobra.Command) error {
 	// config path
 	viper.AddConfigPath(".")                                    // First check current directory
-	viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .config/syftbox
+	viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
 	viper.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
 	viper.SetConfigName(configFileName)                         // Name of config file (without extension)
 	viper.SetConfigType("json")
@@ -94,6 +100,11 @@ func loadConfig(cmd *cobra.Command) error {
 		return err
 	}
 
+	// override server url if remote url is set
+	if strings.Contains(viper.GetString("server_url"), "openmined.org") {
+		viper.Set("server_url", defaultServerURL)
+	}
+
 	return nil
 }
 
@@ -105,4 +116,9 @@ func validateEmail(email string) error {
 		return fmt.Errorf("invalid email")
 	}
 	return nil
+}
+
+func showSyftBoxHeader() {
+	color.New(color.FgHiCyan, color.Bold).
+		Print(utils.SyftBoxArt + "\n")
 }

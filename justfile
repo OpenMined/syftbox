@@ -27,6 +27,9 @@ clear-builds:
 
 build-all: clear-builds
     {{ GOX }} -arch "{{ GOX_ARCH }}" -os "{{ GOX_OS }}" -ldflags "{{ GO_LDFLAGS }}" -output "{{ GOX_OUT }}" ./cmd/server ./cmd/client
+    codesign --verbose --force --deep --verify --timestamp --sign "Developer ID Application: OpenMined Foundation (28PJ5N8D9X)" .out/syft_server_darwin_arm64 .out/syft_server_darwin_amd64
+    codesign -dv --verbose=4 .out/syft_server_darwin_arm64
+    codesign -dv --verbose=4 .out/syft_server_darwin_amd64
 
 install-gox:
     go install github.com/mitchellh/gox@latest

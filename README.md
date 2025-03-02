@@ -1,5 +1,11 @@
 # SyftBox Go
 
+## Sync Client
+
+On start, sync client builds a local index of the files and directories in the sync directory.
+1. On first time it will be empty
+
+
 
 ## Permissions System
 
@@ -121,3 +127,21 @@ func (p *PermissionsSystem) FilterAccessible(user string, paths []string, minAct
 
 ```
 
+
+## Problems with watching files
+
+When using fs-based watch,
+* Usually there's a latency of <20ms for the event to be triggered after the file is created/modified.
+* On macOS, `ulimit` maybe limited to 512 which triggers "Too Many Open Files"
+* On macOS, DELETEs are reported as RENAME until you clear the trash
+* The events are not guaranteed to be in order. So we need to both debounce and deduplicate the events which will increase the latency.
+* On Linux, if a directory is deleted, the watch just dies for that directory, even if it is re-created later.
+* On Linux, inotify is known to be unreliable + rapid changes can cause the watch to be dropped.
+
+Since they are os-specific in nature, they are presetn in rust-based solutions too - https://docs.rs/notify/latest/notify/#known-problems
+
+When using polling,
+* No ulimit issues
+* Move/Rename may or may not have previous path.
+* Latency is a little higher than the polling interval
+* Faster latency <1s results incurs heavy CPU usage (30% M3 Pro CPU for 100ms)
