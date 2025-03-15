@@ -15,6 +15,7 @@ import (
 const (
 	reconnectInitialDelay = 1 * time.Second
 	reconnectMaxDelay     = 30 * time.Second
+	maxMessageSize        = 1024 * 1024 // 1MB
 )
 
 // WebSocketManager handles WebSocket connections and message distribution
@@ -228,6 +229,7 @@ func (m *WebSocketManager) connectLocked(ctx context.Context) (*WebsocketClient,
 		return nil, err
 	}
 
+	conn.SetReadLimit(maxMessageSize)
 	wsClient := NewWebsocketClient(conn)
 	wsClient.Start(m.ctx)
 

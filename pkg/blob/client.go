@@ -16,6 +16,7 @@ const (
 	chunkSize          = 8 * 1024 * 1024 // 8MB
 	multipartThreshold = 8 * 1024 * 1024
 	uploadExpiry       = 15 * time.Minute
+	downloadExpiry     = 15 * time.Minute
 )
 
 type BlobClient struct {
@@ -202,7 +203,7 @@ func (s *BlobClient) generatePresignedDownloadURL(ctx context.Context, key strin
 		Bucket: &s.bucketName,
 		Key:    &key,
 	}, func(opts *s3.PresignOptions) {
-		opts.Expires = time.Hour
+		opts.Expires = downloadExpiry
 	})
 	if err != nil {
 		return "", err
