@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,10 +142,16 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	data, _ := msg.Message.Data.(message.FileWrite)
 
 	from := msg.Info.User
+	isRpc := false
+
+	// todo workaround for new rpc
+	if strings.HasSuffix(data.Path, ".request") || strings.HasSuffix(data.Path, ".response") {
+		isRpc = true
+	}
 
 	// check permissions
 	ok, err := s.aclSvc.CanAccess(from, &acl.FileInfo{Path: data.Path, Size: data.Length}, acl.ActionFileWrite)
-	if !ok || err != nil {
+	if !isRpc && (!ok || err != nil) {
 		slog.Warn("FILE_WRITE permissions error", "msgId", msg.Message.Id, "from", from, "path", data.Path, "err", err)
 		errMsg := message.NewError(http.StatusForbidden, data.Path, "no permissions to write the file")
 		s.hub.SendMessage(msg.ClientId, errMsg)
@@ -157,7 +164,10 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 		to := info.User
 		if to == from {
 			return false
+		} else if isRpc {
+			return true
 		}
+
 		ok, err := s.aclSvc.CanAccess(to, &acl.FileInfo{Path: data.Path, Size: data.Length}, acl.ActionFileRead)
 		if !ok || err != nil {
 			return false

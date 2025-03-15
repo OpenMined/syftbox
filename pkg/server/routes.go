@@ -68,3 +68,7 @@ func HealthHandler(ctx *gin.Context) {
 		"status": "ok",
 	})
 }
+
+func init() {
+	gin.SetMode(gin.ReleaseMode)
+}
