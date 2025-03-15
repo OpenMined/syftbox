@@ -1,4 +1,4 @@
-package client
+package syftapi
 
 type SyftAPIError struct {
 	Error string `json:"error"`

@@ -1,4 +1,4 @@
-package client
+package syftapi
 
 import (
 	"context"
@@ -21,8 +21,8 @@ const (
 	shutdownReason = "shutdown"
 )
 
-// WebsocketClient represents a connected WebSocket client.
-type WebsocketClient struct {
+// websocketClient represents a connected WebSocket client.
+type websocketClient struct {
 	Id     string
 	MsgRx  chan *message.Message
 	MsgTx  chan *message.Message
@@ -34,8 +34,8 @@ type WebsocketClient struct {
 	wg        sync.WaitGroup
 }
 
-func NewWebsocketClient(conn *websocket.Conn) *WebsocketClient {
-	return &WebsocketClient{
+func newWebsocketClient(conn *websocket.Conn) *websocketClient {
+	return &websocketClient{
 		Id:     utils.TokenHex(3),
 		MsgRx:  make(chan *message.Message, 8),
 		MsgTx:  make(chan *message.Message, 8),
@@ -45,20 +45,20 @@ func NewWebsocketClient(conn *websocket.Conn) *WebsocketClient {
 	}
 }
 
-func (c *WebsocketClient) Start(ctx context.Context) {
+func (c *websocketClient) Start(ctx context.Context) {
 	slog.Debug("wsclient start", "id", c.Id)
 	c.wg.Add(2)
 	go c.writeLoop(ctx)
 	go c.readLoop(ctx)
 }
 
-func (c *WebsocketClient) Close() {
+func (c *websocketClient) Close() {
 	c.closeConnection(websocket.StatusNormalClosure, shutdownReason)
 	// wait for both read and write loops to finish
 	c.wg.Wait()
 }
 
-func (c *WebsocketClient) closeConnection(status websocket.StatusCode, reason string) {
+func (c *websocketClient) closeConnection(status websocket.StatusCode, reason string) {
 	c.closeOnce.Do(func() {
 		// trigger internal close
 		close(c.wsDone)
@@ -75,7 +75,7 @@ func (c *WebsocketClient) closeConnection(status websocket.StatusCode, reason st
 	})
 }
 
-func (c *WebsocketClient) readLoop(ctx context.Context) {
+func (c *websocketClient) readLoop(ctx context.Context) {
 	defer func() {
 		slog.Debug("wsclient reader shutdown", "id", c.Id)
 		c.wg.Done()
@@ -110,7 +110,7 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 	}
 }
 
-func (c *WebsocketClient) writeLoop(ctx context.Context) {
+func (c *websocketClient) writeLoop(ctx context.Context) {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		slog.Debug("wsclient writer shutdown", "id", c.Id)

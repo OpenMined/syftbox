@@ -1,4 +1,4 @@
-package client
+package syftapi
 
 import (
 	"context"
@@ -18,10 +18,10 @@ const (
 	maxMessageSize        = 1024 * 1024 // 1MB
 )
 
-// WebSocketManager handles WebSocket connections and message distribution
-type WebSocketManager struct {
+// websocketManager handles WebSocket connections and message distribution
+type websocketManager struct {
 	url         string
-	wsClient    *WebsocketClient
+	wsClient    *websocketClient
 	subscribers map[chan *message.Message]bool
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -32,12 +32,12 @@ type WebSocketManager struct {
 	authHeaders map[string]string
 }
 
-// NewWebSocketManager creates a new WebSocket manager with the given URL
-func NewWebSocketManager(wsURL string) *WebSocketManager {
+// newWebsocketManager creates a new WebSocket manager with the given URL
+func newWebsocketManager(wsURL string) *websocketManager {
 	url := convertToWebsocketURL(wsURL)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &WebSocketManager{
+	return &websocketManager{
 		url:         url,
 		subscribers: make(map[chan *message.Message]bool),
 		ctx:         ctx,
@@ -47,7 +47,7 @@ func NewWebSocketManager(wsURL string) *WebSocketManager {
 }
 
 // SetUser sets the user ID for authentication via query parameter
-func (m *WebSocketManager) SetUser(userID string) {
+func (m *websocketManager) SetUser(userID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -73,7 +73,7 @@ func (m *WebSocketManager) SetUser(userID string) {
 }
 
 // SetAuthHeader sets an authorization header for future JWT implementation
-func (m *WebSocketManager) SetAuthHeader(key, value string) {
+func (m *websocketManager) SetAuthHeader(key, value string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -99,7 +99,7 @@ func (m *WebSocketManager) SetAuthHeader(key, value string) {
 }
 
 // Connect initiates a WebSocket connection
-func (m *WebSocketManager) Connect(ctx context.Context) error {
+func (m *websocketManager) Connect(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -117,14 +117,14 @@ func (m *WebSocketManager) Connect(ctx context.Context) error {
 }
 
 // IsConnected returns the current connection status
-func (m *WebSocketManager) IsConnected() bool {
+func (m *websocketManager) IsConnected() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.connected
 }
 
 // Subscribe creates a new message subscription channel
-func (m *WebSocketManager) Subscribe() chan *message.Message {
+func (m *websocketManager) Subscribe() chan *message.Message {
 	ch := make(chan *message.Message, 10) // Buffered channel to prevent drops
 
 	m.mu.Lock()
@@ -147,7 +147,7 @@ func (m *WebSocketManager) Subscribe() chan *message.Message {
 }
 
 // Unsubscribe removes and closes a subscription channel
-func (m *WebSocketManager) Unsubscribe(ch chan *message.Message) {
+func (m *websocketManager) Unsubscribe(ch chan *message.Message) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -158,7 +158,7 @@ func (m *WebSocketManager) Unsubscribe(ch chan *message.Message) {
 }
 
 // SendMessage sends a message through the WebSocket
-func (m *WebSocketManager) SendMessage(message *message.Message) error {
+func (m *websocketManager) SendMessage(message *message.Message) error {
 	m.mu.RLock()
 	wsClient := m.wsClient
 	connected := m.connected
@@ -177,7 +177,7 @@ func (m *WebSocketManager) SendMessage(message *message.Message) error {
 }
 
 // Close terminates the WebSocket connection and cleans up
-func (m *WebSocketManager) Close() {
+func (m *websocketManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -198,7 +198,7 @@ func (m *WebSocketManager) Close() {
 }
 
 // connectLocked creates a new WebSocket connection (must be called with lock held)
-func (m *WebSocketManager) connectLocked(ctx context.Context) (*WebsocketClient, error) {
+func (m *websocketManager) connectLocked(ctx context.Context) (*websocketClient, error) {
 	if m.wsClient != nil {
 		m.wsClient.Close()
 		m.wsClient = nil
@@ -230,7 +230,7 @@ func (m *WebSocketManager) connectLocked(ctx context.Context) (*WebsocketClient,
 	}
 
 	conn.SetReadLimit(maxMessageSize)
-	wsClient := NewWebsocketClient(conn)
+	wsClient := newWebsocketClient(conn)
 	wsClient.Start(m.ctx)
 
 	m.wsClient = wsClient
@@ -241,7 +241,7 @@ func (m *WebSocketManager) connectLocked(ctx context.Context) (*WebsocketClient,
 }
 
 // manageConnection handles the WebSocket connection lifecycle
-func (m *WebSocketManager) manageConnection(wsClient *WebsocketClient) {
+func (m *websocketManager) manageConnection(wsClient *websocketClient) {
 	go m.distributeMessages(wsClient)
 
 	select {
@@ -268,7 +268,7 @@ func (m *WebSocketManager) manageConnection(wsClient *WebsocketClient) {
 }
 
 // distributeMessages sends messages to all subscribers
-func (m *WebSocketManager) distributeMessages(wsClient *WebsocketClient) {
+func (m *websocketManager) distributeMessages(wsClient *websocketClient) {
 	for {
 		select {
 		case msg, ok := <-wsClient.MsgRx:
@@ -297,7 +297,7 @@ func (m *WebSocketManager) distributeMessages(wsClient *WebsocketClient) {
 }
 
 // reconnectWithBackoff attempts to reconnect with exponential backoff
-func (m *WebSocketManager) reconnectWithBackoff() {
+func (m *websocketManager) reconnectWithBackoff() {
 	delay := reconnectInitialDelay
 
 	for attempt := 1; ; attempt++ {

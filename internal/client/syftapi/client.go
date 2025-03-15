@@ -1,4 +1,4 @@
-package client
+package syftapi
 
 import (
 	"context"
@@ -18,19 +18,19 @@ const (
 
 type SyftAPI struct {
 	client    *resty.Client
-	wsManager *WebSocketManager
+	wsManager *websocketManager
 	baseUrl   string
 	auth      string
 }
 
-func NewSyftAPI(baseUrl string) (*SyftAPI, error) {
+func New(baseUrl string) (*SyftAPI, error) {
 	client := resty.New().
 		SetBaseURL(baseUrl).
 		SetRetryCount(3).
 		SetRetryWaitTime(2 * time.Second).
 		SetRetryMaxWaitTime(5 * time.Second)
 
-	wsManager := NewWebSocketManager(baseUrl + v1Events)
+	wsManager := newWebsocketManager(baseUrl + v1Events)
 
 	return &SyftAPI{
 		client:    client,

@@ -1,4 +1,4 @@
-package client
+package sync
 
 import (
 	"bytes"
@@ -13,12 +13,14 @@ import (
 
 	"github.com/radovskyb/watcher"
 	"github.com/rjeczalik/notify"
+	"github.com/yashgorana/syftbox-go/internal/client/datasite"
+	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
 	"github.com/yashgorana/syftbox-go/internal/message"
 )
 
 type SyncManager struct {
-	api      *SyftAPI
-	datasite *LocalDatasite
+	api      *syftapi.SyftAPI
+	datasite *datasite.LocalDatasite
 
 	watchedEvents chan notify.EventInfo
 	pollEvents    chan watcher.Event
@@ -29,7 +31,7 @@ type SyncManager struct {
 	wg    sync.WaitGroup
 }
 
-func NewSyncManager(api *SyftAPI, datasite *LocalDatasite) *SyncManager {
+func NewManager(api *syftapi.SyftAPI, datasite *datasite.LocalDatasite) *SyncManager {
 	return &SyncManager{
 		api:           api,
 		datasite:      datasite,

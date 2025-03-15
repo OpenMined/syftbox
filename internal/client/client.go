@@ -4,27 +4,31 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"github.com/yashgorana/syftbox-go/internal/client/datasite"
+	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
+	"github.com/yashgorana/syftbox-go/internal/client/sync"
 )
 
 type Client struct {
 	config   *Config
-	datasite *LocalDatasite
-	api      *SyftAPI
-	sync     *SyncManager
+	datasite *datasite.LocalDatasite
+	api      *syftapi.SyftAPI
+	sync     *sync.SyncManager
 }
 
 func New(config *Config) (*Client, error) {
-	ds, err := NewLocalDatasite(config.DataDir, config.Email)
+	ds, err := datasite.NewLocalDatasite(config.DataDir, config.Email)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datasite: %w", err)
 	}
 
-	api, err := NewSyftAPI(config.ServerURL)
+	api, err := syftapi.New(config.ServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create api: %w", err)
 	}
 
-	sync := NewSyncManager(api, ds)
+	sync := sync.NewManager(api, ds)
 
 	return &Client{
 		config:   config,
