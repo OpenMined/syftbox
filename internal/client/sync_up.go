@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/pkg/message"
+	"github.com/yashgorana/syftbox-go/internal/message"
 )
 
 func (sm *SyncManager) handleFileEvents(ctx context.Context) {

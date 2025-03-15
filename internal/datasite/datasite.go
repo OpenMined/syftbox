@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/pkg/acl"
-	"github.com/yashgorana/syftbox-go/pkg/blob"
+	"github.com/yashgorana/syftbox-go/internal/acl"
+	"github.com/yashgorana/syftbox-go/internal/blob"
 )
 
 type DatasiteService struct {

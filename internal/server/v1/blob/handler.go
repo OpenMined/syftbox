@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/pkg/blob"
+	"github.com/yashgorana/syftbox-go/internal/blob"
 )
 
 const (

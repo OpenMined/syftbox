@@ -15,9 +15,9 @@ package main
 // 	"syscall"
 // 	"time"
 
-// 	"github.com/yashgorana/syftbox-go/pkg/client"
-// 	"github.com/yashgorana/syftbox-go/pkg/queue"
-// 	"github.com/yashgorana/syftbox-go/pkg/utils"
+// 	"github.com/yashgorana/syftbox-go/internal/client"
+// 	"github.com/yashgorana/syftbox-go/internal/queue"
+// 	"github.com/yashgorana/syftbox-go/internal/utils"
 // )
 
 // func main() {

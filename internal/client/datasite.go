@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yashgorana/syftbox-go/pkg/acl"
-	"github.com/yashgorana/syftbox-go/pkg/utils"
+	"github.com/yashgorana/syftbox-go/internal/acl"
+	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 const (

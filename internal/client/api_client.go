@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/pkg/message"
+	"github.com/yashgorana/syftbox-go/internal/message"
 	"resty.dev/v3"
 )
 

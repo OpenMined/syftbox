@@ -13,7 +13,7 @@ import (
 
 	"github.com/radovskyb/watcher"
 	"github.com/rjeczalik/notify"
-	"github.com/yashgorana/syftbox-go/pkg/message"
+	"github.com/yashgorana/syftbox-go/internal/message"
 )
 
 type SyncManager struct {

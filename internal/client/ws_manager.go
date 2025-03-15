@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yashgorana/syftbox-go/pkg/message"
+	"github.com/yashgorana/syftbox-go/internal/message"
 )
 
 const (

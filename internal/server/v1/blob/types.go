@@ -1,6 +1,6 @@
 package blob
 
-import "github.com/yashgorana/syftbox-go/pkg/blob"
+import "github.com/yashgorana/syftbox-go/internal/blob"
 
 type CompleteRequest struct {
 	blob.CompleteUploadRequest

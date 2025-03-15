@@ -6,12 +6,12 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/pkg/blob"
-	"github.com/yashgorana/syftbox-go/pkg/datasite"
-	"github.com/yashgorana/syftbox-go/pkg/server/middlewares"
-	blobHandler "github.com/yashgorana/syftbox-go/pkg/server/v1/blob"
-	datasiteHandler "github.com/yashgorana/syftbox-go/pkg/server/v1/datasite"
-	wsV1 "github.com/yashgorana/syftbox-go/pkg/server/v1/ws"
+	"github.com/yashgorana/syftbox-go/internal/blob"
+	"github.com/yashgorana/syftbox-go/internal/datasite"
+	"github.com/yashgorana/syftbox-go/internal/server/middlewares"
+	blobHandler "github.com/yashgorana/syftbox-go/internal/server/v1/blob"
+	datasiteHandler "github.com/yashgorana/syftbox-go/internal/server/v1/datasite"
+	wsV1 "github.com/yashgorana/syftbox-go/internal/server/v1/ws"
 )
 
 func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService) http.Handler {

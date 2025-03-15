@@ -1,6 +1,6 @@
 package message
 
-import "github.com/yashgorana/syftbox-go/pkg/utils"
+import "github.com/yashgorana/syftbox-go/internal/utils"
 
 const IdSize = 3
 

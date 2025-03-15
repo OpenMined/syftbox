@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/yashgorana/syftbox-go/pkg/message"
+	"github.com/yashgorana/syftbox-go/internal/message"
 )
 
 func (sm *SyncManager) handleSocketEvents(ctx context.Context) {

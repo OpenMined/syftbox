@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	yaml "github.com/goccy/go-yaml"
-	"github.com/yashgorana/syftbox-go/pkg/utils"
+	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 // RuleSet represents a collection of access control rules that can be applied to a path.

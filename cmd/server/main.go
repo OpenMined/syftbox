@@ -8,8 +8,8 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/yashgorana/syftbox-go/pkg/blob"
-	"github.com/yashgorana/syftbox-go/pkg/server"
+	"github.com/yashgorana/syftbox-go/internal/blob"
+	"github.com/yashgorana/syftbox-go/internal/server"
 )
 
 func main() {

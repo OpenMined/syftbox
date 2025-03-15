@@ -1,6 +1,6 @@
 package datasite
 
-import "github.com/yashgorana/syftbox-go/pkg/datasite"
+import "github.com/yashgorana/syftbox-go/internal/datasite"
 
 type DownloadRequest struct {
 	Keys []string `json:"keys"`

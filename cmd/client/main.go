@@ -16,8 +16,8 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/yashgorana/syftbox-go/pkg/client"
-	"github.com/yashgorana/syftbox-go/pkg/utils"
+	"github.com/yashgorana/syftbox-go/internal/client"
+	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 var (

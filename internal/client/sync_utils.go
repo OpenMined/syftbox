@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yashgorana/syftbox-go/pkg/utils"
+	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 func (sm *SyncManager) ignorePath(path string) {

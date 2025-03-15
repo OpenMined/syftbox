@@ -1,4 +1,4 @@
-package client
+package ws
 
 import (
 	"context"
@@ -6,13 +6,14 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/yashgorana/syftbox-go/pkg/message"
-	"github.com/yashgorana/syftbox-go/pkg/utils"
+	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 const (
@@ -21,9 +22,15 @@ const (
 	shutdownReason = "shutdown"
 )
 
+type ClientInfo struct {
+	User    string
+	Headers http.Header
+}
+
 // WebsocketClient represents a connected WebSocket client.
 type WebsocketClient struct {
 	Id     string
+	Info   *ClientInfo
 	MsgRx  chan *message.Message
 	MsgTx  chan *message.Message
 	Closed chan struct{}
@@ -34,9 +41,10 @@ type WebsocketClient struct {
 	wg        sync.WaitGroup
 }
 
-func NewWebsocketClient(conn *websocket.Conn) *WebsocketClient {
+func NewWebsocketClient(conn *websocket.Conn, info *ClientInfo) *WebsocketClient {
 	return &WebsocketClient{
 		Id:     utils.TokenHex(3),
+		Info:   info,
 		MsgRx:  make(chan *message.Message, 8),
 		MsgTx:  make(chan *message.Message, 8),
 		Closed: make(chan struct{}),

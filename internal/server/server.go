@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/pkg/acl"
-	"github.com/yashgorana/syftbox-go/pkg/blob"
-	"github.com/yashgorana/syftbox-go/pkg/datasite"
-	"github.com/yashgorana/syftbox-go/pkg/message"
-	"github.com/yashgorana/syftbox-go/pkg/server/v1/ws"
+	"github.com/yashgorana/syftbox-go/internal/acl"
+	"github.com/yashgorana/syftbox-go/internal/blob"
+	"github.com/yashgorana/syftbox-go/internal/datasite"
+	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/server/v1/ws"
 )
 
 type Server struct {
