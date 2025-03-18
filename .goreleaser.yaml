@@ -1,0 +1,63 @@
+version: 2
+
+dist: .out
+
+before:
+  hooks:
+  - go mod tidy
+
+builds:
+- id: syftgo_client
+  binary: syftgo_client
+  main: ./cmd/client
+  flags:
+  - -trimpath
+  ldflags:
+  - -s
+  - -w
+  env:
+  - CGO_ENABLED=0
+  goos:
+  - linux
+  - darwin
+  - windows
+  goarch:
+  - amd64
+  - arm64
+
+- id: syftgo_server
+  binary: syftgo_server
+  main: ./cmd/server
+  flags:
+  - -trimpath
+  ldflags:
+  - -s
+  - -w
+  env:
+  - CGO_ENABLED=0
+  goos:
+  - linux
+  goarch:
+  - amd64
+  - arm64
+
+archives:
+- id: client
+  name_template: "syftgo_client_{{ .Os }}_{{ .Arch }}"
+  wrap_in_directory: true
+  ids:
+  - syftgo_client
+  format_overrides:
+  - goos: windows
+    formats: [ zip ]
+
+- id: server
+  name_template: "syftgo_server_{{ .Os }}_{{ .Arch }}"
+  wrap_in_directory: true
+  ids:
+  - syftgo_server
+
+checksum:
+  name_template: 'checksums.txt'
+
+report_sizes: true
