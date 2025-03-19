@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/internal/client"
 	"github.com/yashgorana/syftbox-go/internal/utils"
+	"github.com/yashgorana/syftbox-go/internal/version"
 )
 
 var (
@@ -40,14 +41,14 @@ func main() {
 	defer stop()
 
 	var rootCmd = &cobra.Command{
-		Use:   "client",
-		Short: "SyftBox Client CLI",
+		Use:     "SyftBox",
+		Short:   "SyftBox Client CLI",
+		Version: version.Detailed(),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			showSyftBoxHeader()
 			return loadConfig(cmd)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-
 			c, err := client.New(&client.Config{
 				Email:     viper.GetString("email"),
 				DataDir:   viper.GetString("data_dir"),

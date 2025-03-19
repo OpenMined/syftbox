@@ -15,6 +15,8 @@ builds:
   ldflags:
   - -s
   - -w
+  - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
   env:
   - CGO_ENABLED=0
   goos:
@@ -33,6 +35,8 @@ builds:
   ldflags:
   - -s
   - -w
+  - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.Version={{.Date}}
   env:
   - CGO_ENABLED=0
   goos:
