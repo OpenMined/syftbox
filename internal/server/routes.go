@@ -12,6 +12,7 @@ import (
 	blobHandler "github.com/yashgorana/syftbox-go/internal/server/v1/blob"
 	datasiteHandler "github.com/yashgorana/syftbox-go/internal/server/v1/datasite"
 	wsV1 "github.com/yashgorana/syftbox-go/internal/server/v1/ws"
+	"github.com/yashgorana/syftbox-go/internal/version"
 )
 
 func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService) http.Handler {
@@ -60,7 +61,7 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 
 func IndexHandler(ctx *gin.Context) {
 	// return a plaintext
-	ctx.String(http.StatusOK, "SyftBox GO")
+	ctx.String(http.StatusOK, version.DetailedWithApp())
 }
 
 func HealthHandler(ctx *gin.Context) {

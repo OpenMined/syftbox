@@ -17,6 +17,9 @@ builds:
   - -w
   - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
   - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
+  tags:
+  - sonic avx # for gin+sonic
   env:
   - CGO_ENABLED=0
   goos:
@@ -36,7 +39,10 @@ builds:
   - -s
   - -w
   - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.Version={{.Date}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
+  tags:
+  - sonic avx # for gin+sonic
   env:
   - CGO_ENABLED=0
   goos:

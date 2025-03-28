@@ -1,0 +1,9 @@
+- [ ] Sync system
+    - [ ] Conflict Detection
+    - [ ] Rejection
+    - [ ] Reporting
+- [ ] Updating perms
+    - [ ] asd
+- [ ] ACL File support
+- [ ] CI/CD
+- [ ] Tests

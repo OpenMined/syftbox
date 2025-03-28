@@ -40,7 +40,7 @@ func main() {
 					KeyFile:  keyFile,
 				},
 				Blob: &blob.BlobConfig{
-					BucketName: "syftgo",
+					BucketName: "syftbox",
 					Region:     "us-east-1",
 					Endpoint:   "http://syftboxdev.openmined.org:9000",
 					AccessKey:  "AbH4qZdboOLES93uUUb2",

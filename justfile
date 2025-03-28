@@ -4,6 +4,7 @@ GOX := `echo $(go env GOPATH)/bin/gox`
 default:
     just --list
 
+[group('dev')]
 gen-certs:
     #!/bin/bash
     # if certs.key and certs.pem exist, exit\
@@ -13,13 +14,24 @@ gen-certs:
     mkdir certs
     mkcert -install -cert-file certs/cert.pem -key-file certs/cert.key localhost 127.0.0.1
 
+[group('dev')]
 run-server: gen-certs
-    go run ./cmd/server --cert certs/cert.pem --key certs/cert.key
+    go run -tags="sonic avx" ./cmd/server --cert certs/cert.pem --key certs/cert.key
 
+[group('build')]
+build-client:
+    goreleaser build --snapshot --clean --id syftgo_client
+
+[group('build')]
+build-server:
+    goreleaser build --snapshot --clean --id syftgo_server
+
+[group('build')]
 build-all: 
-    goreleaser release --snapshot --clean
+    goreleaser build --snapshot --clean
 
-codesign:
-    codesign --verbose --force --deep --verify --timestamp --sign "Developer ID Application: OpenMined Foundation (28PJ5N8D9X)" .out/syft_server_darwin_arm64 .out/syft_server_darwin_amd64
-    codesign -dv --verbose=4 .out/syft_server_darwin_arm64
-    codesign -dv --verbose=4 .out/syft_server_darwin_amd64
+[group('deploy')]
+deploy: build-server
+    ssh syftbox-yash rm /home/azureuser/syft_server_linux_amd64
+    scp .out/syftgo_server_linux_amd64_v1/syftgo_server syftbox-yash:/home/azureuser/syft_server_linux_amd64
+    ssh syftbox-yash "sudo systemctl restart syftgo"
