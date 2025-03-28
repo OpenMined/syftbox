@@ -5,9 +5,20 @@ import (
 	"sync"
 )
 
+type cacheEntry struct {
+	rule    *aclRule
+	version pCounter
+}
+
 type aclRuleCache struct {
-	index map[string]*aclRule
+	index map[string]*cacheEntry
 	mu    sync.RWMutex
+}
+
+func newAclRuleCache() *aclRuleCache {
+	return &aclRuleCache{
+		index: make(map[string]*cacheEntry),
+	}
 }
 
 func (c *aclRuleCache) Get(path string) *aclRule {
@@ -18,14 +29,26 @@ func (c *aclRuleCache) Get(path string) *aclRule {
 	if !ok {
 		return nil
 	}
-	return cached
+
+	// validate the cache entry
+	valid := cached.rule.node.Version() == cached.version
+	if !valid {
+		// if the version is not valid, remove the entry from the cache
+		c.DeletePrefix(path)
+		return nil
+	}
+
+	return cached.rule
 }
 
-func (c *aclRuleCache) Set(path string, entry *aclRule) {
+func (c *aclRuleCache) Set(path string, rule *aclRule) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.index[path] = entry
+	c.index[path] = &cacheEntry{
+		rule:    rule,
+		version: rule.node.Version(),
+	}
 }
 
 func (c *aclRuleCache) DeletePrefix(path string) {
@@ -38,8 +61,4 @@ func (c *aclRuleCache) DeletePrefix(path string) {
 			delete(c.index, k)
 		}
 	}
-}
-
-func newAclRuleCache() *aclRuleCache {
-	return &aclRuleCache{index: make(map[string]*aclRule)}
 }

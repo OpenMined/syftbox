@@ -87,6 +87,12 @@ func (n *aclNode) Equal(other *aclNode) bool {
 	return n.path == other.path && n.terminal == other.terminal && n.depth == other.depth
 }
 
+func (n *aclNode) Version() pCounter {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.version
+}
+
 func globSpecificityScore(glob string) int {
 	// exact
 	switch glob {

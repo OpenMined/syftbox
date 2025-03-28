@@ -85,18 +85,18 @@ func (s *AclService) RemoveRuleSet(path string) bool {
 func (s *AclService) GetNearestRule(path string) (*aclRule, error) {
 	path = strings.TrimLeft(filepath.Clean(path), PathSep)
 
-	cachedRule := s.cache.Get(path)                    // O(1)
+	// cache hit
+	cachedRule := s.cache.Get(path) // O(1)
+	if cachedRule != nil {
+		return cachedRule, nil
+	}
+
+	// cache miss
 	node, err := s.tree.FindNearestNodeWithRules(path) // O(depth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find node with rules: %w", err)
 	}
 
-	// validate cache hit
-	if cachedRule != nil && node.Equal(cachedRule.node) {
-		return cachedRule, nil
-	}
-
-	// cache miss
 	rule, err := node.FindBestRule(path) // O(rules|node)
 	if err != nil {
 		return nil, err
