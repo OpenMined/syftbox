@@ -4,26 +4,30 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/yashgorana/syftbox-go/internal/aclspec"
 )
 
-type aclTree struct {
-	root *aclNode
+// Tree stores the ACL rules in a tree structure for efficient lookups.
+type Tree struct {
+	root *Node
 }
 
-func newAclTree() *aclTree {
-	return &aclTree{
-		root: newAclNode(PathSep, false, 0),
+func NewTree() *Tree {
+	return &Tree{
+		root: NewNode(pathSep, false, 0),
 	}
 }
 
-// AddRuleSet adds a new set of rules to the tree.
-func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
-	if ruleset == nil || len(ruleset.Rules) == 0 {
+// AddRuleSet adds or updates a set of rules to the tree.
+func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
+	allRules := ruleset.AllRules()
+	if ruleset == nil || len(allRules) == 0 {
 		return fmt.Errorf("ruleset must have at least one rule")
 	}
 
-	parts := strings.Split(filepath.Clean(ruleset.path), PathSep)
-	pathDepth := strings.Count(ruleset.path, PathSep)
+	parts := strings.Split(filepath.Clean(ruleset.Path), pathSep)
+	pathDepth := strings.Count(ruleset.Path, pathSep)
 
 	// depth is u8
 	if pathDepth > 255 {
@@ -44,13 +48,13 @@ func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 
 		current.mu.Lock()
 		if current.children == nil {
-			current.children = make(map[string]*aclNode)
+			current.children = make(map[string]*Node)
 		}
 
 		child, exists := current.children[part]
 		if !exists {
-			fullPath := strings.Join(parts[:depth], PathSep)
-			child = newAclNode(fullPath, false, depth)
+			fullPath := strings.Join(parts[:depth], pathSep)
+			child = NewNode(fullPath, false, depth)
 			current.children[part] = child
 		}
 		current.mu.Unlock()
@@ -58,13 +62,13 @@ func (t *aclTree) AddRuleSet(ruleset *RuleSet) error {
 		current = child
 	}
 
-	current.Set(ruleset.Rules, ruleset.Terminal, depth)
+	current.Set(allRules, ruleset.Terminal, depth)
 	return nil
 }
 
 // FindNearestNodeWithRules finds the most specific node with rules applicable to the given path.
-func (t *aclTree) FindNearestNodeWithRules(path string) (*aclNode, error) {
-	parts := strings.Split(filepath.Clean(path), PathSep)
+func (t *Tree) FindNearestNodeWithRules(path string) (*Node, error) {
+	parts := strings.Split(filepath.Clean(path), pathSep)
 
 	current := t.root
 	lastNodeWithRules := current
@@ -103,8 +107,8 @@ func (t *aclTree) FindNearestNodeWithRules(path string) (*aclNode, error) {
 }
 
 // GetNearestNode finds the most specific node applicable to the given path.
-func (t *aclTree) GetNearestNode(path string) *aclNode {
-	parts := strings.Split(filepath.Clean(path), PathSep)
+func (t *Tree) GetNearestNode(path string) *Node {
+	parts := strings.Split(filepath.Clean(path), pathSep)
 	current := t.root
 
 	for _, part := range parts {
@@ -130,11 +134,11 @@ func (t *aclTree) GetNearestNode(path string) *aclNode {
 }
 
 // RemoveRuleSet removes a ruleset at the specified path.
-func (t *aclTree) RemoveRuleSet(path string) bool {
-	var parent *aclNode
+func (t *Tree) RemoveRuleSet(path string) bool {
+	var parent *Node
 	var lastPart string
 
-	parts := strings.Split(filepath.Clean(path), PathSep)
+	parts := strings.Split(filepath.Clean(path), pathSep)
 	current := t.root
 
 	for _, part := range parts {

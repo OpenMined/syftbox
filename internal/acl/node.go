@@ -8,20 +8,23 @@ import (
 	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/yashgorana/syftbox-go/internal/aclspec"
 )
 
-type aclNode struct {
+// Node represents a node in the ACL tree.
+// Each node corresponds to a part of the path and contains rules for that part.
+type Node struct {
 	mu       sync.RWMutex
-	rules    []*aclRule // rules for this part of the path. key is rule.Pattern
+	rules    []*Rule // rules for this part of the path. key is rule.Pattern
 	path     string
-	children map[string]*aclNode
+	children map[string]*Node
 	terminal bool
-	depth    pCounter
-	version  pCounter
+	depth    uint8
+	version  uint8
 }
 
-func newAclNode(path string, terminal bool, depth pCounter) *aclNode {
-	return &aclNode{
+func NewNode(path string, terminal bool, depth uint8) *Node {
+	return &Node{
 		path:     path,
 		terminal: terminal,
 		depth:    depth,
@@ -30,7 +33,7 @@ func newAclNode(path string, terminal bool, depth pCounter) *aclNode {
 
 // Set the rules, terminal flag and depth for the node.
 // Increments the version counter for repeated operation.
-func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
+func (n *Node) Set(rules []*aclspec.Rule, terminal bool, depth uint8) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -39,9 +42,9 @@ func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
 		sorted := sortBySpecificity(rules)
 
 		// convert the rules to aclRules
-		aclRules := make([]*aclRule, 0, len(sorted))
+		aclRules := make([]*Rule, 0, len(sorted))
 		for _, rule := range sorted {
-			aclRules = append(aclRules, &aclRule{
+			aclRules = append(aclRules, &Rule{
 				rule:        rule,
 				node:        n,
 				fullPattern: filepath.Join(n.path, rule.Pattern),
@@ -61,7 +64,7 @@ func (n *aclNode) Set(rules []*Rule, terminal bool, depth pCounter) {
 }
 
 // FindBestRule finds the best matching rule for the given path.
-func (n *aclNode) FindBestRule(path string) (*aclRule, error) {
+func (n *Node) FindBestRule(path string) (*Rule, error) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
@@ -81,13 +84,13 @@ func (n *aclNode) FindBestRule(path string) (*aclRule, error) {
 }
 
 // Equal checks if the node is equal to another node.
-func (n *aclNode) Equal(other *aclNode) bool {
+func (n *Node) Equal(other *Node) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.path == other.path && n.terminal == other.terminal && n.depth == other.depth
 }
 
-func (n *aclNode) Version() pCounter {
+func (n *Node) Version() uint8 {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.version
@@ -103,7 +106,7 @@ func globSpecificityScore(glob string) int {
 	}
 
 	// 2L + 10D - wildcard penalty
-	score := len(glob)*2 + strings.Count(glob, PathSep)*10
+	score := len(glob)*2 + strings.Count(glob, pathSep)*10
 
 	for i, c := range glob {
 		switch c {
@@ -121,9 +124,9 @@ func globSpecificityScore(glob string) int {
 	return score
 }
 
-func sortBySpecificity(rules []*Rule) []*Rule {
+func sortBySpecificity(rules []*aclspec.Rule) []*aclspec.Rule {
 	// copy the rules
-	clone := append([]*Rule(nil), rules...)
+	clone := append([]*aclspec.Rule(nil), rules...)
 
 	// sort by specificity, descending
 	sort.Slice(clone, func(i, j int) bool {

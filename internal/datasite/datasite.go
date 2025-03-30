@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/yashgorana/syftbox-go/internal/acl"
+	"github.com/yashgorana/syftbox-go/internal/aclspec"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 )
 
@@ -41,6 +42,11 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	}
 	slog.Debug("acl read", "count", len(ruleSets), "took", time.Since(start))
 
+	if len(ruleSets) == 0 {
+		slog.Warn("no ACL rulesets found")
+		return nil
+	}
+
 	// Load the ACL rulesets
 	start = time.Now()
 	d.aclSvc.LoadRuleSets(ruleSets)
@@ -50,7 +56,11 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	index := d.blobSvc.Index()
 	start = time.Now()
 	for blob := range index.Iter() {
-		_, err := d.aclSvc.CanAccess(acl.Everyone, &acl.FileInfo{Path: blob.Key}, acl.ActionFileRead)
+		_, err := d.aclSvc.CanAccess(
+			&acl.User{ID: aclspec.Everyone},
+			&acl.File{Path: blob.Key},
+			acl.AccessRead,
+		)
 		if err != nil {
 			slog.Error("acl cache warm error", "path", blob.Key, "error", err)
 		}
@@ -68,7 +78,11 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 
 	// Filter blobs based on ACL
 	for _, blob := range blobs {
-		ok, err := d.aclSvc.CanAccess(user, &acl.FileInfo{Path: blob.Key}, acl.ActionFileRead)
+		ok, err := d.aclSvc.CanAccess(
+			&acl.User{ID: user, IsOwner: IsOwner(blob.Key, user)},
+			&acl.File{Path: blob.Key},
+			acl.AccessRead,
+		)
 		if ok && err == nil {
 			view = append(view, blob)
 		}
@@ -92,7 +106,7 @@ func (d *DatasiteService) DownloadFiles(ctx context.Context, user string, keys [
 			continue
 		}
 
-		ok, err := d.aclSvc.CanAccess(user, &acl.FileInfo{Path: key}, acl.ActionFileRead)
+		ok, err := d.aclSvc.CanAccess(&acl.User{ID: user, IsOwner: IsOwner(key, user)}, &acl.File{Path: key}, acl.AccessRead)
 		if !ok || err != nil {
 			errs = append(errs, BlobError{Key: key, Error: "access denied"})
 			continue
@@ -110,13 +124,13 @@ func (d *DatasiteService) DownloadFiles(ctx context.Context, user string, keys [
 	return urls, errs, nil
 }
 
-func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobInfo) ([]*acl.RuleSet, error) {
+func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobInfo) ([]*aclspec.RuleSet, error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
 	workers := 8
 	jobs := make(chan *blob.BlobInfo)
-	results := make([]*acl.RuleSet, 0, len(aclBlobs))
+	results := make([]*aclspec.RuleSet, 0, len(aclBlobs))
 	blobClient := d.blobSvc.Client()
 
 	// Start workers
@@ -134,7 +148,8 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 				}
 
 				// Parse the ACL file
-				ruleset, err := acl.NewRuleSetFromReader(blob.Key, obj.Body)
+				ruleset, err := aclspec.LoadFromReader(blob.Key, obj.Body)
+				obj.Body.Close()
 				if err != nil {
 					slog.Error("ruleset parse error", "path", blob.Key, "error", err)
 					continue
@@ -163,7 +178,7 @@ func (d *DatasiteService) ListAclFiles() []*blob.BlobInfo {
 
 	acls := make([]*blob.BlobInfo, 0)
 	for blob := range index.Iter() {
-		if acl.IsAclFile(blob.Key) {
+		if aclspec.IsAclFile(blob.Key) {
 			acls = append(acls, blob)
 		}
 	}

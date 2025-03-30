@@ -8,7 +8,7 @@ import (
 )
 
 // String implements the Stringer interface for PTree
-func (t *aclTree) String() string {
+func (t *Tree) String() string {
 	if t.root == nil {
 		return "<empty tree>"
 	}
@@ -18,7 +18,7 @@ func (t *aclTree) String() string {
 }
 
 // buildString recursively builds the string representation of the tree
-func (n *aclNode) buildString(sb *strings.Builder, prefix string, isLast bool, isRoot bool) {
+func (n *Node) buildString(sb *strings.Builder, prefix string, isLast bool, isRoot bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 

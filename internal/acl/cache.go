@@ -6,22 +6,22 @@ import (
 )
 
 type cacheEntry struct {
-	rule    *aclRule
-	version pCounter
+	rule    *Rule
+	version uint8
 }
 
-type aclRuleCache struct {
+type RuleCache struct {
 	index map[string]*cacheEntry
 	mu    sync.RWMutex
 }
 
-func newAclRuleCache() *aclRuleCache {
-	return &aclRuleCache{
+func NewRuleCache() *RuleCache {
+	return &RuleCache{
 		index: make(map[string]*cacheEntry),
 	}
 }
 
-func (c *aclRuleCache) Get(path string) *aclRule {
+func (c *RuleCache) Get(path string) *Rule {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -41,7 +41,7 @@ func (c *aclRuleCache) Get(path string) *aclRule {
 	return cached.rule
 }
 
-func (c *aclRuleCache) Set(path string, rule *aclRule) {
+func (c *RuleCache) Set(path string, rule *Rule) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -51,7 +51,7 @@ func (c *aclRuleCache) Set(path string, rule *aclRule) {
 	}
 }
 
-func (c *aclRuleCache) DeletePrefix(path string) {
+func (c *RuleCache) DeletePrefix(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

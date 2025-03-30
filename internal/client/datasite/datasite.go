@@ -3,11 +3,10 @@ package datasite
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/yashgorana/syftbox-go/internal/acl"
+	"github.com/yashgorana/syftbox-go/internal/aclspec"
 	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
@@ -56,41 +55,39 @@ func (w *LocalDatasite) Bootstrap() error {
 		}
 	}
 
-	// TODO Setup ACL files
 	// TODO: write a .syftignore file
-	// if err := w.createDefaultAcl(); err != nil {
-	// 	return fmt.Errorf("failed to create default ACL: %w", err)
-	// }
+
+	// Setup ACL files
+	if err := w.createDefaultAcl(); err != nil {
+		return fmt.Errorf("failed to create default ACL: %w", err)
+	}
 
 	return nil
 }
 
 func (w *LocalDatasite) createDefaultAcl() error {
-	rootAclPath := acl.AsAclPath(w.UserDir)
-	publicAclPath := acl.AsAclPath(w.UserPublicDir)
-
 	// Create root ACL file
-	if _, err := os.Stat(rootAclPath); os.IsNotExist(err) {
-		rootRuleset := acl.NewRuleSet(
-			acl.UnsetTerminal,
-			acl.NewRule(acl.AllFiles, acl.PrivateAccess(), acl.DefaultLimits()),
+	if !aclspec.Exists(w.UserDir) {
+		rootRuleset := aclspec.NewRuleSet(
+			w.UserDir,
+			aclspec.UnsetTerminal,
+			aclspec.NewDefaultRule(aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 		)
-		if err := rootRuleset.Save(rootAclPath); err != nil {
+		if err := rootRuleset.Save(); err != nil {
 			return fmt.Errorf("root acl create error: %w", err)
 		}
-		slog.Debug("datasite create", "acl", rootAclPath)
 	}
 
 	// Create public ACL file
-	if _, err := os.Stat(publicAclPath); os.IsNotExist(err) {
-		publicRuleset := acl.NewRuleSet(
-			acl.UnsetTerminal,
-			acl.NewRule(acl.AllFiles, acl.PublicReadAccess(), acl.DefaultLimits()),
+	if !aclspec.Exists(w.UserPublicDir) {
+		publicRuleset := aclspec.NewRuleSet(
+			w.UserPublicDir,
+			aclspec.UnsetTerminal,
+			aclspec.NewDefaultRule(aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 		)
-		if err := publicRuleset.Save(publicAclPath); err != nil {
+		if err := publicRuleset.Save(); err != nil {
 			return fmt.Errorf("public acl create error: %w", err)
 		}
-		slog.Debug("datasite create", "acl", publicAclPath)
 	}
 
 	return nil

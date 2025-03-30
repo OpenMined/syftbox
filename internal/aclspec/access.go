@@ -1,15 +1,16 @@
-package acl
+package aclspec
 
 import (
-	"fmt"
-
 	mapset "github.com/deckarep/golang-set/v2"
+	"gopkg.in/yaml.v3"
 )
 
+var empty = []string{}
+
 type Access struct {
-	Admin mapset.Set[string] `json:"admin" yaml:"admin"`
-	Read  mapset.Set[string] `json:"read"  yaml:"read"`
-	Write mapset.Set[string] `json:"write" yaml:"write"`
+	Admin mapset.Set[string] `yaml:"admin"`
+	Read  mapset.Set[string] `yaml:"read"`
+	Write mapset.Set[string] `yaml:"write"`
 }
 
 // NewAccess creates a new Access object with the specified admin, write, and read users.
@@ -46,16 +47,19 @@ func SharedReadWriteAccess(users ...string) *Access {
 	return NewAccess(empty, users, empty)
 }
 
-func (a *Access) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (a *Access) UnmarshalYAML(value *yaml.Node) error {
+	// Create a map to decode the YAML into
 	var m map[string][]string
-	if err := unmarshal(&m); err != nil {
+	if err := value.Decode(&m); err != nil {
 		return err
 	}
 
+	// Initialize sets
 	a.Admin = mapset.NewSet[string]()
 	a.Read = mapset.NewSet[string]()
 	a.Write = mapset.NewSet[string]()
 
+	// Add values to sets
 	if admin, ok := m["admin"]; ok {
 		a.Admin.Append(admin...)
 	}
@@ -70,6 +74,7 @@ func (a *Access) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 func (a Access) MarshalYAML() (interface{}, error) {
+	// Create map to be marshaled
 	m := make(map[string][]string)
 	if a.Admin != nil {
 		m["admin"] = a.Admin.ToSlice()
@@ -81,8 +86,4 @@ func (a Access) MarshalYAML() (interface{}, error) {
 		m["write"] = a.Write.ToSlice()
 	}
 	return m, nil
-}
-
-func (a *Access) String() string {
-	return fmt.Sprintf("r:%s w:%s a:%s", a.Read.String(), a.Write.String(), a.Admin.String())
 }

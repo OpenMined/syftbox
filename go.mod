@@ -13,12 +13,12 @@ require (
 	github.com/gin-contrib/cors v1.7.4
 	github.com/gin-contrib/gzip v1.2.2
 	github.com/gin-gonic/gin v1.10.0
-	github.com/goccy/go-yaml v1.16.0
 	github.com/lmittmann/tint v1.0.7
 	github.com/radovskyb/watcher v1.0.7
 	github.com/rjeczalik/notify v0.9.3
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
+	gopkg.in/yaml.v3 v3.0.1
 	resty.dev/v3 v3.0.0-beta.2
 )
 
@@ -69,5 +69,4 @@ require (
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
