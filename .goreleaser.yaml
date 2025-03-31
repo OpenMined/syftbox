@@ -7,8 +7,8 @@ before:
   - go mod tidy
 
 builds:
-- id: syftgo_client
-  binary: syftgo_client
+- id: syftbox_client
+  binary: syftbox
   main: ./cmd/client
   flags:
   - -trimpath
@@ -19,19 +19,41 @@ builds:
   - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
   - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
   tags:
-  - sonic avx # for gin+sonic
+  - sonic # for gin with sonic json
+  - avx # for sonic
   env:
   - CGO_ENABLED=0
   goos:
   - linux
-  - darwin
   - windows
   goarch:
   - amd64
   - arm64
 
-- id: syftgo_server
-  binary: syftgo_server
+- id: syftbox_client_macos
+  binary: syftbox
+  main: ./cmd/client
+  flags:
+  - -trimpath
+  ldflags:
+  - -s
+  - -w
+  - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
+  - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
+  tags:
+  - sonic # for gin with sonic json
+  - avx # for sonic
+  env:
+  - CGO_ENABLED=0
+  goos:
+  - darwin
+  goarch:
+  - amd64
+  - arm64
+
+- id: syftbox_server
+  binary: syftbox_server
   main: ./cmd/server
   flags:
   - -trimpath
@@ -42,7 +64,8 @@ builds:
   - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
   - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
   tags:
-  - sonic avx # for gin+sonic
+  - sonic # for gin with sonic json
+  - avx # for sonic
   env:
   - CGO_ENABLED=0
   goos:
@@ -51,21 +74,31 @@ builds:
   - amd64
   - arm64
 
+binary_signs:
+- id: macos-sign
+  artifacts: binary
+  ids:
+  - syftbox_client_macos
+  cmd: codesign
+  args: [ "--verbose", "--force", "--deep", "--verify", "--timestamp", "--options", "runtime", "--sign", "Developer ID Application: OpenMined Foundation (28PJ5N8D9X)", "${artifact}" ]
+  output: true
+
 archives:
 - id: client
-  name_template: "syftgo_client_{{ .Os }}_{{ .Arch }}"
+  name_template: "syftbox_client_{{ .Os }}_{{ .Arch }}"
   wrap_in_directory: true
   ids:
-  - syftgo_client
+  - syftbox_client
+  - syftbox_client_macos
   format_overrides:
   - goos: windows
     formats: [ zip ]
 
 - id: server
-  name_template: "syftgo_server_{{ .Os }}_{{ .Arch }}"
+  name_template: "syftbox_server_{{ .Os }}_{{ .Arch }}"
   wrap_in_directory: true
   ids:
-  - syftgo_server
+  - syftbox_server
 
 checksum:
   name_template: 'checksums.txt'

@@ -13,7 +13,12 @@ import (
 	datasiteHandler "github.com/yashgorana/syftbox-go/internal/server/v1/datasite"
 	wsV1 "github.com/yashgorana/syftbox-go/internal/server/v1/ws"
 	"github.com/yashgorana/syftbox-go/internal/version"
+
+	_ "embed"
 )
+
+//go:embed templates/install.sh
+var installScript string
 
 func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService) http.Handler {
 	r := gin.Default()
@@ -26,6 +31,8 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
+	r.GET("/install.sh", InstallHeader)
+	r.StaticFS("/releases", http.Dir("./releases"))
 
 	v1 := r.Group("/api/v1")
 	v1.Use(middlewares.Auth())
@@ -68,6 +75,12 @@ func HealthHandler(ctx *gin.Context) {
 	ctx.PureJSON(http.StatusOK, gin.H{
 		"status": "ok",
 	})
+}
+
+func InstallHeader(ctx *gin.Context) {
+	ctx.Header("Content-Type", "application/x-sh")
+	ctx.Header("Content-Disposition", "attachment; filename=install.sh")
+	ctx.String(http.StatusOK, installScript)
 }
 
 func init() {

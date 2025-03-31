@@ -20,18 +20,26 @@ run-server: gen-certs
 
 [group('build')]
 build-client:
-    goreleaser build --snapshot --clean --id syftgo_client
+    goreleaser release --snapshot --clean --id syftbox_client
 
 [group('build')]
 build-server:
-    goreleaser build --snapshot --clean --id syftgo_server
+    goreleaser release --snapshot --clean --id syftbox_server
 
 [group('build')]
 build-all: 
-    goreleaser build --snapshot --clean
+    goreleaser release --snapshot --clean
 
 [group('deploy')]
-deploy: build-server
-    ssh syftbox-yash rm /home/azureuser/syft_server_linux_amd64
-    scp .out/syftgo_server_linux_amd64_v1/syftgo_server syftbox-yash:/home/azureuser/syft_server_linux_amd64
+deploy: build-all
+    rm -rf releases && mkdir releases
+    cp -r .out/syftbox_client*.tar.gz releases
+
+    ssh syftbox-yash "rm -rfv /home/azureuser/releases"
+    scp -r ./releases syftbox-yash:/home/azureuser/releases
+
+    ssh syftbox-yash "rm -fv /home/azureuser/syftbox_server"
+    scp .out/syftbox_server_linux_amd64_v1/syftbox_server syftbox-yash:/home/azureuser/syftbox_server
     ssh syftbox-yash "sudo systemctl restart syftgo"
+
+    rm -rf releases
