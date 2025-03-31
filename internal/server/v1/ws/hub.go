@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	maxMessageSize = 1024 * 1024 // 1MB
+	maxMessageSize = 4 * 1024 * 1024 // 1MB
 )
 
 type ClientMessage struct {
@@ -48,7 +48,7 @@ func (h *WebsocketHub) Run(ctx context.Context) {
 
 			h.mu.Lock()
 			h.clients[client.Id] = client
-			slog.Debug("wshub registered", "id", client.Id, "connected", len(h.clients))
+			slog.Debug("wshub registered", "id", client.Id, "total", len(h.clients))
 			h.mu.Unlock()
 
 			h.wg.Add(1)
@@ -62,7 +62,7 @@ func (h *WebsocketHub) Run(ctx context.Context) {
 				defer h.mu.Unlock()
 
 				delete(h.clients, client.Id)
-				slog.Debug("wshub removed", "id", client.Id, "connected", len(h.clients))
+				slog.Debug("wshub removed", "id", client.Id, "total", len(h.clients))
 				h.wg.Done()
 			}()
 		case <-ctx.Done():
@@ -108,7 +108,7 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 		Headers: ctx.Request.Header.Clone(),
 	})
 
-	client.MsgTx <- message.NewSystemMessage("0.5.0", "connected")
+	client.MsgTx <- message.NewSystemMessage("0.5.0", "ok")
 
 	h.register <- client
 }
@@ -118,12 +118,7 @@ func (h *WebsocketHub) SendMessage(clientId string, msg *message.Message) {
 	defer h.mu.RUnlock()
 
 	if client, ok := h.clients[clientId]; ok {
-		select {
-		case client.MsgTx <- msg:
-			// *message.Message sent successfully
-		default:
-			slog.Warn("wshub send buffer full", "id", client.Id)
-		}
+		client.MsgTx <- msg
 	}
 }
 
@@ -158,18 +153,13 @@ func (h *WebsocketHub) Broadcast(msg *message.Message) {
 }
 
 // BroadcastFiltered sends a message to all clients that match the filter
-func (h *WebsocketHub) BroadcastFiltered(msg *message.Message, filter func(*ClientInfo) bool) {
+func (h *WebsocketHub) BroadcastFiltered(msg *message.Message, predicate func(*ClientInfo) bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for _, client := range h.clients {
-		if filter(client.Info) {
-			select {
-			case client.MsgTx <- msg:
-				// Message sent successfully
-			default:
-				slog.Warn("wshub broadcast filtered buffer full", "id", client.Id)
-			}
+		if predicate(client.Info) {
+			client.MsgTx <- msg
 		}
 	}
 }

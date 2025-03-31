@@ -112,8 +112,6 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 
 		default:
 			slog.Warn("wsclient reader buffer full", "id", c.Id, "dropped", data)
-			// c.closeConnection(websocket.StatusPolicyViolation, "send buffer full")
-			// return
 		}
 	}
 }

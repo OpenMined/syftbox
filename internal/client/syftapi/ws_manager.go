@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"strings"
 	"sync"
 	"time"
@@ -14,19 +15,25 @@ import (
 
 const (
 	reconnectInitialDelay = 1 * time.Second
-	reconnectMaxDelay     = 30 * time.Second
-	maxMessageSize        = 1024 * 1024 // 1MB
+	reconnectMaxDelay     = 8 * time.Second
+	maxMessageSize        = 4 * 1024 * 1024
+)
+
+var (
+	ErrWebsocketNotConnected = errors.New("websocket not connected")
+	ErrMessageQueueFull      = errors.New("message queue is full")
 )
 
 // websocketManager handles WebSocket connections and message distribution
 type websocketManager struct {
-	url         string
-	wsClient    *websocketClient
-	subscribers map[chan *message.Message]bool
-	ctx         context.Context
-	cancel      context.CancelFunc
-	mu          sync.RWMutex
-	connected   bool
+	url       string
+	wsClient  *websocketClient
+	messages  chan *message.Message
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.RWMutex
+	connected bool
+
 	// Authentication
 	userID      string
 	authHeaders map[string]string
@@ -39,9 +46,9 @@ func newWebsocketManager(wsURL string) *websocketManager {
 
 	return &websocketManager{
 		url:         url,
-		subscribers: make(map[chan *message.Message]bool),
 		ctx:         ctx,
 		cancel:      cancel,
+		messages:    make(chan *message.Message, 256),
 		authHeaders: make(map[string]string),
 	}
 }
@@ -52,24 +59,6 @@ func (m *websocketManager) SetUser(userID string) {
 	defer m.mu.Unlock()
 
 	m.userID = userID
-
-	// Reconnect if already connected to apply new auth
-	if m.connected && m.wsClient != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
-			defer cancel()
-
-			// Disconnect first
-			m.wsClient.Close()
-			m.wsClient = nil
-			m.connected = false
-
-			// Reconnect with new auth
-			if err := m.Connect(ctx); err != nil {
-				slog.Error("failed to reconnect after auth change", "error", err)
-			}
-		}()
-	}
 }
 
 // SetAuthHeader sets an authorization header for future JWT implementation
@@ -78,24 +67,6 @@ func (m *websocketManager) SetAuthHeader(key, value string) {
 	defer m.mu.Unlock()
 
 	m.authHeaders[key] = value
-
-	// Reconnect if already connected to apply new auth
-	if m.connected && m.wsClient != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
-			defer cancel()
-
-			// Disconnect first
-			m.wsClient.Close()
-			m.wsClient = nil
-			m.connected = false
-
-			// Reconnect with new auth
-			if err := m.Connect(ctx); err != nil {
-				slog.Error("failed to reconnect after auth change", "error", err)
-			}
-		}()
-	}
 }
 
 // Connect initiates a WebSocket connection
@@ -123,38 +94,8 @@ func (m *websocketManager) IsConnected() bool {
 	return m.connected
 }
 
-// Subscribe creates a new message subscription channel
-func (m *websocketManager) Subscribe() chan *message.Message {
-	ch := make(chan *message.Message, 10) // Buffered channel to prevent drops
-
-	m.mu.Lock()
-	m.subscribers[ch] = true
-	connected := m.connected
-	m.mu.Unlock()
-
-	if !connected {
-		go func() {
-			ctx, cancel := context.WithTimeout(m.ctx, 5*time.Second)
-			defer cancel()
-
-			if err := m.Connect(ctx); err != nil {
-				slog.Error("connect failed during subscription", "error", err)
-			}
-		}()
-	}
-
-	return ch
-}
-
-// Unsubscribe removes and closes a subscription channel
-func (m *websocketManager) Unsubscribe(ch chan *message.Message) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.subscribers[ch]; exists {
-		delete(m.subscribers, ch)
-		close(ch)
-	}
+func (m *websocketManager) Messages() <-chan *message.Message {
+	return m.messages
 }
 
 // SendMessage sends a message through the WebSocket
@@ -165,14 +106,14 @@ func (m *websocketManager) SendMessage(message *message.Message) error {
 	m.mu.RUnlock()
 
 	if !connected || wsClient == nil {
-		return errors.New("websocket not connected")
+		return ErrWebsocketNotConnected
 	}
 
 	select {
 	case wsClient.MsgTx <- message:
 		return nil
 	default:
-		return errors.New("message queue is full")
+		return ErrMessageQueueFull
 	}
 }
 
@@ -188,10 +129,6 @@ func (m *websocketManager) Close() {
 		m.wsClient = nil
 	}
 
-	for ch := range m.subscribers {
-		close(ch)
-	}
-	m.subscribers = make(map[chan *message.Message]bool)
 	m.connected = false
 
 	slog.Info("websocket manager closed")
@@ -206,13 +143,10 @@ func (m *websocketManager) connectLocked(ctx context.Context) (*websocketClient,
 	}
 
 	// Build URL with auth query parameters if needed
+	// todo clean this up later
 	url := m.url
 	if m.userID != "" {
-		if strings.Contains(url, "?") {
-			url += "&user=" + m.userID
-		} else {
-			url += "?user=" + m.userID
-		}
+		url += "?user=" + m.userID
 	}
 
 	// Setup auth headers for future JWT implementation
@@ -242,7 +176,7 @@ func (m *websocketManager) connectLocked(ctx context.Context) (*websocketClient,
 
 // manageConnection handles the WebSocket connection lifecycle
 func (m *websocketManager) manageConnection(wsClient *websocketClient) {
-	go m.distributeMessages(wsClient)
+	go m.consumeMessages(wsClient)
 
 	select {
 	case <-wsClient.Closed:
@@ -267,31 +201,22 @@ func (m *websocketManager) manageConnection(wsClient *websocketClient) {
 	}
 }
 
-// distributeMessages sends messages to all subscribers
-func (m *websocketManager) distributeMessages(wsClient *websocketClient) {
+func (m *websocketManager) consumeMessages(wsClient *websocketClient) {
 	for {
 		select {
-		case msg, ok := <-wsClient.MsgRx:
-			if !ok {
-				return
-			}
-
-			m.mu.RLock()
-			for ch := range m.subscribers {
-				select {
-				case ch <- msg:
-					// Message delivered
-				default:
-					slog.Warn("subscriber buffer full, message dropped")
-				}
-			}
-			m.mu.RUnlock()
+		case <-m.ctx.Done():
+			return
 
 		case <-wsClient.Closed:
 			return
 
-		case <-m.ctx.Done():
-			return
+		case msg, ok := <-wsClient.MsgRx:
+			if !ok {
+				slog.Debug("ws manager - client read channe closed")
+				return
+			}
+			// Blocking send - will wait until the message can be sent
+			m.messages <- msg
 		}
 	}
 }
@@ -325,10 +250,17 @@ func (m *websocketManager) reconnectWithBackoff() {
 
 		slog.Error("reconnection failed", "error", err)
 
+		// Exponential backoff
 		delay *= 2
 		if delay > reconnectMaxDelay {
 			delay = reconnectMaxDelay
 		}
+
+		// Add jitter to prevent synchronized retry spikes
+		// Creates a random jitter value between 0 and 25% of the current delay
+		// Subtracts a small fixed portion (12.5%) of the delay, then adds the jitter
+		jitter := time.Duration(rand.Float64() * float64(delay/4))
+		delay = delay - (delay / 8) + jitter
 	}
 }
 

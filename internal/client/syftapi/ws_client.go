@@ -12,7 +12,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/yashgorana/syftbox-go/internal/message"
-	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 const (
@@ -36,7 +35,7 @@ type websocketClient struct {
 
 func newWebsocketClient(conn *websocket.Conn) *websocketClient {
 	return &websocketClient{
-		Id:     utils.TokenHex(3),
+		Id:     "",
 		MsgRx:  make(chan *message.Message, 8),
 		MsgTx:  make(chan *message.Message, 8),
 		Closed: make(chan struct{}),
@@ -100,12 +99,10 @@ func (c *websocketClient) readLoop(ctx context.Context) {
 			return
 
 		case c.MsgRx <- data:
-			// pushed to recieve queue
+			slog.Debug("wsclient reader message", "msgId", data.Id, "msgType", data.Type)
 
 		default:
 			slog.Warn("wsclient reader buffer full", "id", c.Id, "dropped", data)
-			// c.closeConnection(websocket.StatusPolicyViolation, "send buffer full")
-			// return
 		}
 	}
 }

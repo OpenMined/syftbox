@@ -30,8 +30,9 @@ var (
 
 func main() {
 	handler := tint.NewHandler(os.Stdout, &tint.Options{
+		AddSource:  true,
 		Level:      slog.LevelDebug,
-		TimeFormat: time.Kitchen,
+		TimeFormat: time.RFC3339,
 	})
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
@@ -65,7 +66,6 @@ func main() {
 	rootCmd.Flags().StringP("email", "e", "", "Email for the SyftBox datasite")
 	rootCmd.Flags().StringP("datadir", "d", defaultDataDir, "SyftBox Data Directory")
 	rootCmd.Flags().StringP("server", "s", defaultServerURL, "SyftBox Server")
-	// rootCmd.MarkFlagRequired("email")
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -74,7 +74,6 @@ func main() {
 
 func loadConfig(cmd *cobra.Command) error {
 	// config path
-	viper.AddConfigPath(".")                                    // First check current directory
 	viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
 	viper.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
 	viper.SetConfigName(configFileName)                         // Name of config file (without extension)

@@ -8,34 +8,42 @@ import (
 )
 
 func (sm *SyncManager) handleSocketEvents(ctx context.Context) {
-	sm.wsMessages = sm.api.SubscribeEvents()
+	socketEvents := sm.api.Messages()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 
-		case msg, ok := <-sm.wsMessages:
+		case msg, ok := <-socketEvents:
 			if !ok {
+				slog.Debug("handleSocketEvents channel closed")
 				return
 			}
 
 			switch msg.Type {
+			case message.MsgSystem:
+				sm.handleSystem(msg)
 			case message.MsgError:
 				sm.handleError(msg)
 			case message.MsgFileWrite:
 				sm.handleFileWrite(msg)
-			// case message.MsgFileDelete:
-			// 	sm.handleFileDelete(msg)
+			case message.MsgFileDelete:
+				sm.handleFileDelete(msg)
 			default:
-				slog.Info("websocket message", "type", msg.Type, "data", msg.Data)
+				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
 		}
 	}
 }
 
+func (sm *SyncManager) handleSystem(msg *message.Message) {
+	systemMsg := msg.Data.(message.System)
+	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "serverVersion", systemMsg.SystemVersion)
+}
+
 func (sm *SyncManager) handleError(msg *message.Message) {
 	errMsg, _ := msg.Data.(message.Error)
-	slog.Info("websocket ERROR", "errCode", errMsg.Code, "path", errMsg.Path, "message", errMsg.Message)
+	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "message", errMsg.Message)
 
 	switch errMsg.Code {
 	case 403:
@@ -49,15 +57,19 @@ func (sm *SyncManager) handleError(msg *message.Message) {
 
 func (sm *SyncManager) handleFileWrite(msg *message.Message) {
 	createMsg, _ := msg.Data.(message.FileWrite)
-	path := sm.datasite.AbsolutePath(createMsg.Path)
-	slog.Info("websocket file write", "path", path, "size", createMsg.Length, "etag", createMsg.Etag)
+	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.Etag)
 
-	sm.ignorePath(path)
-
-	etag, err := WriteFile(path, createMsg.Content)
+	fullPath := sm.datasite.AbsolutePath(createMsg.Path)
+	sm.ignorePath(fullPath)
+	etag, err := WriteFile(fullPath, createMsg.Content)
 	if err != nil {
-		slog.Error("websocket file write", "error", err)
+		slog.Error("handle", "msgType", msg.Type, "msgId", msg.Id, "error", err)
 	} else if etag != createMsg.Etag {
-		slog.Warn("websocket file write etag mismatch", "expected", createMsg.Etag, "actual", etag)
+		slog.Warn("handle etag mismatch", "msgType", msg.Type, "msgId", msg.Id, "expected", createMsg.Etag, "actual", etag)
 	}
+}
+
+func (sm *SyncManager) handleFileDelete(msg *message.Message) {
+	deleteMsg, _ := msg.Data.(message.FileDelete)
+	slog.Warn("unhandled", "msgType", msg.Type, "msgId", msg.Id, "path", deleteMsg.Path)
 }

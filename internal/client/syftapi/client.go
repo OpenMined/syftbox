@@ -98,15 +98,9 @@ func (s *SyftAPI) ConnectWebsocket(ctx context.Context) error {
 	return s.wsManager.Connect(ctx)
 }
 
-// SubscribeEvents returns a channel for receiving WebSocket events
-// The subscription persists across reconnections
-func (s *SyftAPI) SubscribeEvents() chan *message.Message {
-	return s.wsManager.Subscribe()
-}
-
-// UnsubscribeEvents removes a subscription channel
-func (s *SyftAPI) UnsubscribeEvents(ch chan *message.Message) {
-	s.wsManager.Unsubscribe(ch)
+// Messages returns a channel for receiving WebSocket events
+func (s *SyftAPI) Messages() <-chan *message.Message {
+	return s.wsManager.Messages()
 }
 
 func (s *SyftAPI) SendMessage(message *message.Message) error {

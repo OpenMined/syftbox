@@ -15,6 +15,7 @@ const (
 	logsDir      = "logs"
 	datasitesDir = "datasites"
 	publicDir    = "public"
+	pathSep      = string(filepath.Separator)
 )
 
 type LocalDatasite struct {
@@ -107,7 +108,8 @@ func (w *LocalDatasite) AbsolutePath(path string) string {
 
 func (w *LocalDatasite) RelativePath(path string) string {
 	path, _ = utils.ResolvePath(path)
-	return strings.Replace(path, w.DatasitesDir, "", 1)
+	path = strings.Replace(path, w.DatasitesDir, "", 1)
+	return strings.TrimLeft(filepath.Clean(path), pathSep)
 }
 
 type DatasitePath struct {

@@ -15,7 +15,6 @@ import (
 	"github.com/rjeczalik/notify"
 	"github.com/yashgorana/syftbox-go/internal/client/datasite"
 	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
-	"github.com/yashgorana/syftbox-go/internal/message"
 )
 
 type SyncManager struct {
@@ -24,7 +23,6 @@ type SyncManager struct {
 
 	watchedEvents chan notify.EventInfo
 	pollEvents    chan watcher.Event
-	wsMessages    chan *message.Message
 
 	syncd map[string]bool
 	mu    sync.Mutex
@@ -70,7 +68,6 @@ func (sm *SyncManager) Start(ctx context.Context) error {
 
 func (sm *SyncManager) Stop() {
 	sm.wg.Wait()
-	sm.api.UnsubscribeEvents(sm.wsMessages)
 	close(sm.watchedEvents)
 	close(sm.pollEvents)
 	slog.Info("sync stop")

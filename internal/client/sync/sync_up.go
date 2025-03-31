@@ -29,15 +29,13 @@ func (sm *SyncManager) handleFileEvents(ctx context.Context) {
 			if strings.HasSuffix(path, ".request") || strings.HasSuffix(path, ".response") || strings.HasSuffix(path, ".txt") || strings.HasSuffix(path, "rpc.schema.json") {
 				sm.writePriority(path)
 			} else {
-				slog.Debug("fs event ignored ", "event", "WRITE", "path", path)
 				// sm.handleEvent(ctx, event.Path)
 			}
 
-		case event, ok := <-sm.pollEvents:
+		case _, ok := <-sm.pollEvents:
 			if !ok {
 				return
 			}
-			slog.Debug("fs event ignored", "event", event.Op, "path", event.Path)
 			// sm.handleEvent(ctx, event.Path)
 		}
 	}
