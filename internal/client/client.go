@@ -5,16 +5,18 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/yashgorana/syftbox-go/internal/client/apps"
 	"github.com/yashgorana/syftbox-go/internal/client/datasite"
 	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
 	"github.com/yashgorana/syftbox-go/internal/client/sync"
 )
 
 type Client struct {
-	config   *Config
-	datasite *datasite.LocalDatasite
-	api      *syftapi.SyftAPI
-	sync     *sync.SyncManager
+	config       *Config
+	datasite     *datasite.LocalDatasite
+	api          *syftapi.SyftAPI
+	sync         *sync.SyncManager
+	appScheduler *apps.AppScheduler
 }
 
 func New(config *Config) (*Client, error) {
@@ -28,13 +30,16 @@ func New(config *Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to create api: %w", err)
 	}
 
+	appSched := apps.NewScheduler(ds.AppsDir)
+
 	sync := sync.NewManager(api, ds)
 
 	return &Client{
-		config:   config,
-		datasite: ds,
-		api:      api,
-		sync:     sync,
+		config:       config,
+		datasite:     ds,
+		api:          api,
+		sync:         sync,
+		appScheduler: appSched,
 	}, nil
 }
 
@@ -52,6 +57,11 @@ func (c *Client) Start(ctx context.Context) error {
 	// Start sync manager
 	if err := c.sync.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start sync manager: %w", err)
+	}
+
+	// Start app scheduler
+	if err := c.appScheduler.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start app scheduler: %w", err)
 	}
 
 	<-ctx.Done()
