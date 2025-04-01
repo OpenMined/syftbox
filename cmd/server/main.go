@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -59,21 +60,8 @@ func main() {
 		Use:     "server",
 		Short:   "SyftBox Server CLI",
 		Version: version.Detailed(),
-		PreRun: func(cmd *cobra.Command, args []string) {
-			if showVersion {
-				cmd.Println(version.Detailed())
-				os.Exit(0)
-			}
-		},
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			if configFile != "" {
-				viper.SetConfigFile(configFile)
-				if err := viper.ReadInConfig(); err != nil {
-					return err
-				}
-				slog.Info("Using config file", "file", viper.ConfigFileUsed())
-			}
-			return nil
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return loadConfig(cmd)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			config := &server.Config{
@@ -83,11 +71,11 @@ func main() {
 					KeyFile:  keyFile,
 				},
 				Blob: &blob.BlobConfig{
-					BucketName: viper.GetString("BLOB_BUCKET"),
-					Region:     viper.GetString("BLOB_REGION"),
-					Endpoint:   viper.GetString("BLOB_ENDPOINT"),
-					AccessKey:  viper.GetString("BLOB_ACCESS_KEY"),
-					SecretKey:  viper.GetString("BLOB_SECRET_KEY"),
+					BucketName: viper.GetString("blob.bucket_name"),
+					Region:     viper.GetString("blob.region"),
+					Endpoint:   viper.GetString("blob.endpoint"),
+					AccessKey:  viper.GetString("blob.access_key"),
+					SecretKey:  viper.GetString("blob.secret_key"),
 				},
 			}
 
@@ -124,6 +112,35 @@ func main() {
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
+}
+
+func loadConfig(cmd *cobra.Command) error {
+	if cmd.Flag("config").Changed {
+		configFilePath, _ := cmd.Flags().GetString("config")
+		viper.SetConfigFile(configFilePath)
+	} else {
+		viper.AddConfigPath(".")
+		viper.SetConfigName("config")
+		viper.SetConfigType("yaml")
+	}
+
+	// Read config file
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return fmt.Errorf("error reading config file: %w", err)
+		}
+	}
+
+	// Set up environment variables
+	viper.SetEnvPrefix("SYFTBOX")
+	viper.AutomaticEnv()
+
+	settings := viper.AllSettings()
+	for key, value := range settings {
+		fmt.Printf("%s: %v\n", key, value)
+	}
+
+	return nil
 }
 
 // maskSecret returns first 4 chars of secret followed by "***"

@@ -1,5 +1,6 @@
-SYFTBOX_BLOB_BUCKET: syftbox
-SYFTBOX_BLOB_REGION: us-east-1
-SYFTBOX_BLOB_ENDPOINT: http://syftboxdev.openmined.org:9000
-SYFTBOX_BLOB_ACCESS_KEY: AbH4qZdboOLES93uUUb2
-SYFTBOX_BLOB_SECRET_KEY: Pz46w5OYIRO9pAB5urEfyRdSNwLpeQc9CvwguQzX
+blob:
+  bucket_name: syftbox
+  region: us-east-1
+  endpoint: http://syftboxdev.openmined.org:9000
+  access_key: AbH4qZdboOLES93uUUb2
+  secret_key: Pz46w5OYIRO9pAB5urEfyRdSNwLpeQc9CvwguQzX

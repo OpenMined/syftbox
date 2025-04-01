@@ -1,5 +1,6 @@
-SYFTBOX_BLOB_BUCKET: syftbox-local
-SYFTBOX_BLOB_REGION: us-east-1
-SYFTBOX_BLOB_ENDPOINT: http://localhost:9000
-SYFTBOX_BLOB_ACCESS_KEY: ptSLdKiwOi2LYQFZYEZ6
-SYFTBOX_BLOB_SECRET_KEY: GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8
+blob:
+  bucket_name: syftbox-local
+  region: us-east-1
+  endpoint: http://localhost:9000
+  access_key: ptSLdKiwOi2LYQFZYEZ6
+  secret_key: GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8

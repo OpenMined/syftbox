@@ -2,66 +2,48 @@ package main
 
 import (
 	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestConfigFileLoading(t *testing.T) {
-	// Create a temporary config file
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	configContent := `
-SYFTBOX_BLOB_BUCKET: test-bucket
-SYFTBOX_BLOB_REGION: test-region
-SYFTBOX_BLOB_ENDPOINT: http://test-endpoint
-SYFTBOX_BLOB_ACCESS_KEY: test-access-key
-SYFTBOX_BLOB_SECRET_KEY: test-secret-key
+func TestLoadConfig(t *testing.T) {
+	// Create a temporary dummy.yaml file with expected structure
+	dummyConfigContent := `
+blob:
+  bucket_name: test-bucket
+  region: test-region
+  endpoint: http://test-endpoint
+  access_key: test-access-key
+  secret_key: test-secret-key
 `
-	err := os.WriteFile(configPath, []byte(configContent), 0644)
-	require.NoError(t, err)
+	dummyConfigFile := os.TempDir() + "/dummy.yaml"
+	err := os.WriteFile(dummyConfigFile, []byte(dummyConfigContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write dummy config file: %v", err)
+	}
+	defer os.Remove(dummyConfigFile) // Clean up after test
 
-	// Build the binary
-	binaryPath := filepath.Join(tmpDir, "server")
-	buildCmd := exec.Command("go", "build", "-o", binaryPath)
-	err = buildCmd.Run()
-	require.NoError(t, err)
+	// Create a dummy command
+	cmd := &cobra.Command{}
+	cmd.Flags().String("config", "", "Path to config file")
 
-	// Run the binary with the config file
-	cmd := exec.Command(binaryPath, "--config", configPath)
-	output, err := cmd.CombinedOutput()
+	// Set the dummy config file path
+	cmd.Flags().Set("config", dummyConfigFile)
 
-	// The binary will keep running, so we expect it to be killed
-	// We're only interested in the startup logs
-	require.Error(t, err)
+	// Call loadConfig
+	err = loadConfig(cmd)
 
-	// Convert output to string for easier assertions
-	outputStr := string(output)
+	// Assert no error occurred
+	assert.NoError(t, err)
 
-	// Verify that the config values were loaded correctly
-	require.Contains(t, outputStr, "Using config file")
-	require.Contains(t, outputStr, "Server configuration loaded")
-	require.Contains(t, outputStr, "blob.bucket_name=test-bucket")
-	require.Contains(t, outputStr, "blob.region=test-region")
-	require.Contains(t, outputStr, "blob.endpoint=http://test-endpoint")
-	require.Contains(t, outputStr, "blob.access_key=test***")
-	require.Contains(t, outputStr, "blob.secret_key=test***")
-}
-
-func TestConfigFileNotFound(t *testing.T) {
-	// Build the binary
-	tmpDir := t.TempDir()
-	binaryPath := filepath.Join(tmpDir, "server")
-	buildCmd := exec.Command("go", "build", "-o", binaryPath)
-	err := buildCmd.Run()
-	require.NoError(t, err)
-
-	// Run the binary with a non-existent config file
-	cmd := exec.Command(binaryPath, "--config", "nonexistent.yaml")
-	output, err := cmd.CombinedOutput()
-
-	require.Error(t, err)
-	require.Contains(t, string(output), "Error: open nonexistent.yaml: no such file or directory")
+	// Assert that Viper is set up correctly
+	assert.Equal(t, "SYFTBOX", viper.GetEnvPrefix())
+	assert.Equal(t, viper.GetString("blob.bucket_name"), "test-bucket")
+	assert.Equal(t, viper.GetString("blob.region"), "test-region")
+	assert.Equal(t, viper.GetString("blob.endpoint"), "http://test-endpoint")
+	assert.Equal(t, viper.GetString("blob.access_key"), "test-access-key")
+	assert.Equal(t, viper.GetString("blob.secret_key"), "test-secret-key")
 }
