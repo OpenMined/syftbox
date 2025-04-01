@@ -38,7 +38,11 @@ ssh-minio:
 
 [group('dev')]
 run-server *ARGS: gen-certs
-    go run -tags="sonic avx" -ldflags "-X main.commit=$(git rev-parse HEAD) -X main.date=$(date -u '+%Y-%m-%d_%H:%M:%S') -X main.version=1.0.0" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ARGS}}
+    go run -tags="sonic avx" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ARGS}}
+
+[group('dev')]
+run-client *ARGS:
+    go run -tags="sonic avx" ./cmd/client {{ARGS}}
 
 [group('dev')]
 run-tests:

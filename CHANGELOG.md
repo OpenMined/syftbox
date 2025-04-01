@@ -8,16 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Version info display via CLI flag
-- Server configuration loading and validation
+- Server configuration loading from file
 - Default config values from dev.yaml
 - Unit tests for config file loading
 - Added local minio docker setup
 - Updated README.md and justfile
-
-## Init
-
-### Added
 - Initial server implementation with MinIO blob storage support
 - TLS support with certificate configuration
 - YAML-based configuration system

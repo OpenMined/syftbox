@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,13 +11,10 @@ import (
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 	"github.com/yashgorana/syftbox-go/internal/server"
+	"github.com/yashgorana/syftbox-go/internal/version"
 )
 
 var (
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
-
 	// Default config values from dev.yaml
 	defaultBlobBucket    = "syftbox-local"
 	defaultBlobRegion    = "us-east-1"
@@ -49,20 +45,23 @@ func main() {
 	// Initialize Viper
 	viper.SetConfigType("yaml")
 
-	// Set default values
-	viper.SetDefault("SYFTBOX_BLOB_BUCKET", defaultBlobBucket)
-	viper.SetDefault("SYFTBOX_BLOB_REGION", defaultBlobRegion)
-	viper.SetDefault("SYFTBOX_BLOB_ENDPOINT", defaultBlobEndpoint)
-	viper.SetDefault("SYFTBOX_BLOB_ACCESS_KEY", defaultBlobAccessKey)
-	viper.SetDefault("SYFTBOX_BLOB_SECRET_KEY", defaultBlobSecretKey)
+	// Set up environment variables
+	viper.SetEnvPrefix("SYFTBOX")
+	viper.AutomaticEnv()
+
+	viper.SetDefault("BLOB_BUCKET", defaultBlobBucket)
+	viper.SetDefault("BLOB_REGION", defaultBlobRegion)
+	viper.SetDefault("BLOB_ENDPOINT", defaultBlobEndpoint)
+	viper.SetDefault("BLOB_ACCESS_KEY", defaultBlobAccessKey)
+	viper.SetDefault("BLOB_SECRET_KEY", defaultBlobSecretKey)
 
 	var rootCmd = &cobra.Command{
 		Use:     "server",
 		Short:   "SyftBox Server CLI",
-		Version: formatVersion(),
+		Version: version.Detailed(),
 		PreRun: func(cmd *cobra.Command, args []string) {
 			if showVersion {
-				cmd.Println(formatVersion())
+				cmd.Println(version.Detailed())
 				os.Exit(0)
 			}
 		},
@@ -84,11 +83,11 @@ func main() {
 					KeyFile:  keyFile,
 				},
 				Blob: &blob.BlobConfig{
-					BucketName: viper.GetString("SYFTBOX_BLOB_BUCKET"),
-					Region:     viper.GetString("SYFTBOX_BLOB_REGION"),
-					Endpoint:   viper.GetString("SYFTBOX_BLOB_ENDPOINT"),
-					AccessKey:  viper.GetString("SYFTBOX_BLOB_ACCESS_KEY"),
-					SecretKey:  viper.GetString("SYFTBOX_BLOB_SECRET_KEY"),
+					BucketName: viper.GetString("BLOB_BUCKET"),
+					Region:     viper.GetString("BLOB_REGION"),
+					Endpoint:   viper.GetString("BLOB_ENDPOINT"),
+					AccessKey:  viper.GetString("BLOB_ACCESS_KEY"),
+					SecretKey:  viper.GetString("BLOB_SECRET_KEY"),
 				},
 			}
 
@@ -133,8 +132,4 @@ func maskSecret(s string) string {
 		return "***"
 	}
 	return s[:4] + "***"
-}
-
-func formatVersion() string {
-	return fmt.Sprintf("Version: %s\nCommit: %s\nBuilt: %s", version, commit, date)
 }
