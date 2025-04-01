@@ -1,5 +1,45 @@
 # SyftBox Go
 
+## Quick Start
+
+### Install Go (MacOS)
+
+```
+brew install go
+```
+
+### Install mkcert
+
+```
+brew install mkcert
+```
+
+### Run Tests
+```
+just run-tests
+```
+
+### Start MinIO
+```
+just run-minio
+```
+
+### Run the Server
+```
+just run-server -f config/dev.yaml
+```
+
+### Destroy MinIO
+Deletes the data as well
+```
+just delete-minio
+```
+
+### SSH into MinIO
+```
+just ssh-minio
+```
+
 ## Sync Client
 
 On start, sync client builds a local index of the files and directories in the sync directory.
