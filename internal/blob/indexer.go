@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +20,7 @@ type BlobIndex interface {
 	Remove(key string)
 	List() []*BlobInfo
 	Iter() iter.Seq[*BlobInfo]
+	FilterByPrefix(prefix string) []*BlobInfo
 }
 
 type BlobIndexer struct {
@@ -97,6 +99,19 @@ func (bi *BlobIndexer) Iter() iter.Seq[*BlobInfo] {
 	defer bi.mu.RUnlock()
 
 	return maps.Values(bi.index)
+}
+
+func (bi *BlobIndexer) FilterByPrefix(prefix string) []*BlobInfo {
+	bi.mu.RLock()
+	defer bi.mu.RUnlock()
+
+	blobs := make([]*BlobInfo, 0, len(bi.index))
+	for _, blob := range bi.index {
+		if strings.HasPrefix(blob.Key, prefix) {
+			blobs = append(blobs, blob)
+		}
+	}
+	return blobs
 }
 
 func (bi *BlobIndexer) buildIndex(ctx context.Context) error {

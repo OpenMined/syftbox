@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 	"github.com/yashgorana/syftbox-go/internal/datasite"
+	"github.com/yashgorana/syftbox-go/internal/server/explorer"
 	"github.com/yashgorana/syftbox-go/internal/server/middlewares"
 	blobHandler "github.com/yashgorana/syftbox-go/internal/server/v1/blob"
 	datasiteHandler "github.com/yashgorana/syftbox-go/internal/server/v1/datasite"
@@ -25,6 +26,7 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 
 	blob := blobHandler.New(svcBlob)
 	ds := datasiteHandler.New(svcDatasite)
+	explorer := explorer.New(svcBlob)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
@@ -32,6 +34,7 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
 	r.GET("/install.sh", InstallHeader)
+	r.GET("/datasites/*filepath", explorer.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
 	v1 := r.Group("/api/v1")
