@@ -15,7 +15,7 @@ import (
 	"github.com/yashgorana/syftbox-go/internal/version"
 )
 
-var (
+const (
 	// Default config values from dev.yaml
 	defaultBlobBucket    = "syftbox-local"
 	defaultBlobRegion    = "us-east-1"
@@ -42,19 +42,6 @@ func main() {
 	// Setup root context with signal handling
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	// Initialize Viper
-	viper.SetConfigType("yaml")
-
-	// Set up environment variables
-	viper.SetEnvPrefix("SYFTBOX")
-	viper.AutomaticEnv()
-
-	viper.SetDefault("BLOB_BUCKET", defaultBlobBucket)
-	viper.SetDefault("BLOB_REGION", defaultBlobRegion)
-	viper.SetDefault("BLOB_ENDPOINT", defaultBlobEndpoint)
-	viper.SetDefault("BLOB_ACCESS_KEY", defaultBlobAccessKey)
-	viper.SetDefault("BLOB_SECRET_KEY", defaultBlobSecretKey)
 
 	var rootCmd = &cobra.Command{
 		Use:     "server",
@@ -124,6 +111,12 @@ func loadConfig(cmd *cobra.Command) error {
 		viper.SetConfigType("yaml")
 	}
 
+	viper.SetDefault("blob.bucket_name", defaultBlobBucket)
+	viper.SetDefault("blob.region", defaultBlobRegion)
+	viper.SetDefault("blob.endpoint", defaultBlobEndpoint)
+	viper.SetDefault("blob.access_key", defaultBlobAccessKey)
+	viper.SetDefault("blob.secret_key", defaultBlobSecretKey)
+
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -134,11 +127,6 @@ func loadConfig(cmd *cobra.Command) error {
 	// Set up environment variables
 	viper.SetEnvPrefix("SYFTBOX")
 	viper.AutomaticEnv()
-
-	settings := viper.AllSettings()
-	for key, value := range settings {
-		fmt.Printf("%s: %v\n", key, value)
-	}
 
 	return nil
 }
