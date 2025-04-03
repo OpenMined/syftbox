@@ -38,14 +38,16 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 	v1.Use(middlewares.Auth())
 	{
 		// blob
-		v1.GET("/blob/list", blob.List)
-		v1.GET("/blob/upload", blob.Upload)
-		v1.GET("/blob/download", blob.Download)
-		v1.POST("/blob/complete", blob.Complete)
+		v1.GET("/blob/list", blob.ListObjects)
+		v1.PUT("/blob/upload", blob.Upload)
+		v1.POST("/blob/upload/presigned", blob.UploadPresigned)
+		v1.POST("/blob/upload/complete", blob.UploadComplete)
+		v1.POST("/blob/download", blob.DownloadObjectsPresigned)
+		v1.POST("/blob/delete", blob.DeleteObjects)
 
 		// datasite
 		v1.GET("/datasite/view", ds.GetView)
-		v1.POST("/datasite/download", ds.DownloadFiles)
+		// v1.POST("/datasite/download", ds.DownloadFiles)
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
