@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -8,7 +9,13 @@ import (
 	"github.com/yashgorana/syftbox-go/internal/aclspec"
 )
 
-// Tree stores the ACL rules in a tree structure for efficient lookups.
+var (
+	ErrInvalidRuleset   = errors.New("invalid ruleset")
+	ErrMaxDepthExceeded = errors.New("maximum depth exceeded")
+	ErrNoRuleFound      = errors.New("no rule found")
+)
+
+// Tree stores the ACL rules in a n-ary tree for efficient lookups.
 type Tree struct {
 	root *Node
 }
@@ -19,113 +26,110 @@ func NewTree() *Tree {
 	}
 }
 
-// AddRuleSet adds or updates a set of rules to the tree.
+// Add or update a ruleset in the tree.
 func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
+	// Validate the ruleset
+	if ruleset == nil {
+		return fmt.Errorf("%w: ruleset is nil", ErrInvalidRuleset)
+	}
+
 	allRules := ruleset.AllRules()
-	if ruleset == nil || len(allRules) == 0 {
-		return fmt.Errorf("ruleset must have at least one rule")
+	if len(allRules) == 0 {
+		return fmt.Errorf("%w: ruleset is empty", ErrInvalidRuleset)
 	}
 
-	parts := strings.Split(filepath.Clean(ruleset.Path), pathSep)
-	pathDepth := strings.Count(ruleset.Path, pathSep)
+	// Clean and split the path
+	cleanPath := stripSep(ruleset.Path)
+	parts := strings.Split(cleanPath, pathSep)
+	pathDepth := strings.Count(cleanPath, pathSep)
 
-	// depth is u8
+	// Check path depth limit (u8)
 	if pathDepth > 255 {
-		return fmt.Errorf("path exceeds maximum depth of 255")
+		return ErrMaxDepthExceeded
 	}
 
+	// Start at the root node
 	current := t.root
-	depth := current.depth
+	currentDepth := current.depth
 
+	// Traverse/create the path
 	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		depth++
+		currentDepth++
 
-		// * DO NOT return if current.terminal. Let the tree know all the ACLs
-		// * else we'll have to re-build the whole tree again when someone flips terminal flag
-
-		current.mu.Lock()
-		if current.children == nil {
-			current.children = make(map[string]*Node)
-		}
-
-		child, exists := current.children[part]
+		// Important: We still process terminal nodes to ensure all ACLs are known to the tree
+		// Get or create child node
+		child, exists := current.GetChild(part)
 		if !exists {
-			fullPath := strings.Join(parts[:depth], pathSep)
-			child = NewNode(fullPath, false, depth)
-			current.children[part] = child
+			fullPath := strings.Join(parts[:currentDepth], pathSep)
+			child = NewNode(fullPath, false, currentDepth)
+			current.SetChild(part, child)
 		}
-		current.mu.Unlock()
-
 		current = child
 	}
 
-	current.Set(allRules, ruleset.Terminal, depth)
+	// Set the rules on the final node
+	current.SetRules(allRules, ruleset.Terminal)
+
 	return nil
 }
 
-// FindNearestNodeWithRules finds the most specific node with rules applicable to the given path.
-func (t *Tree) FindNearestNodeWithRules(path string) (*Node, error) {
-	parts := strings.Split(filepath.Clean(path), pathSep)
+// Get rule for the given path
+func (t *Tree) GetRule(path string) (*Rule, error) {
 
-	current := t.root
-	lastNodeWithRules := current
-
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-
-		if current.rules != nil {
-			lastNodeWithRules = current
-		}
-
-		if current.terminal {
-			lastNodeWithRules = current
-			break
-		}
-
-		// Lock only the current node while checking its children
-		current.mu.RLock()
-		child, exists := current.children[part]
-		current.mu.RUnlock()
-
-		if !exists {
-			break
-		}
-		current = child
+	node := t.GetNearestNodeWithRules(path) // O(depth)
+	if node == nil {
+		return nil, ErrNoRuleFound
 	}
 
-	// Final rules check outside the loop
-	if lastNodeWithRules.rules == nil {
-		return nil, fmt.Errorf("no rules found for path %s", path)
+	rule, err := node.FindBestRule(path) // O(rules|node)
+	if err != nil {
+		return nil, err
 	}
 
-	return lastNodeWithRules, nil
+	return rule, nil
 }
 
-// GetNearestNode finds the most specific node applicable to the given path.
-func (t *Tree) GetNearestNode(path string) *Node {
-	parts := strings.Split(filepath.Clean(path), pathSep)
+// GetNearestNodeWithRules returns the nearest node in the tree that has associated rules for the given path.
+// It returns nil if no such node is found.
+func (t *Tree) GetNearestNodeWithRules(path string) *Node {
+	parts := pathParts(path)
+
+	var candidate *Node
 	current := t.root
 
 	for _, part := range parts {
-		if part == "" {
-			continue
+		// Stop if the current node is terminal.
+		if current.IsTerminal() {
+			break
 		}
 
-		if current.terminal {
-			return current
-		}
-
-		current.mu.RLock()
-		child, exists := current.children[part]
-		current.mu.RUnlock()
-
+		child, exists := current.GetChild(part)
 		if !exists {
-			return current
+			break
+		}
+
+		current = child
+		if child.Rules() != nil {
+			candidate = current
+		}
+	}
+
+	return candidate
+}
+
+// GetNode finds the exact node applicable for the given path.
+func (t *Tree) GetNode(path string) *Node {
+	parts := pathParts(path)
+	current := t.root
+
+	for _, part := range parts {
+		if current.IsTerminal() {
+			break
+		}
+
+		child, exists := current.GetChild(part)
+		if !exists {
+			break
 		}
 		current = child
 	}
@@ -133,23 +137,16 @@ func (t *Tree) GetNearestNode(path string) *Node {
 	return current
 }
 
-// RemoveRuleSet removes a ruleset at the specified path.
+// Removes a ruleset at the specified path
 func (t *Tree) RemoveRuleSet(path string) bool {
 	var parent *Node
 	var lastPart string
 
-	parts := strings.Split(filepath.Clean(path), pathSep)
+	parts := pathParts(path)
 	current := t.root
 
 	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-
-		current.mu.RLock()
-		child, exists := current.children[part]
-		current.mu.RUnlock()
-
+		child, exists := current.GetChild(part)
 		if !exists {
 			return false
 		}
@@ -160,9 +157,15 @@ func (t *Tree) RemoveRuleSet(path string) bool {
 	}
 
 	// Need to lock parent since we're modifying its children
-	parent.mu.Lock()
-	defer parent.mu.Unlock()
+	parent.DeleteChild(lastPart)
 
-	delete(parent.children, lastPart)
 	return true
+}
+
+func pathParts(path string) []string {
+	return strings.Split(stripSep(path), pathSep)
+}
+
+func stripSep(path string) string {
+	return strings.TrimLeft(filepath.Clean(path), pathSep)
 }

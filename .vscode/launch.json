@@ -10,6 +10,10 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/server",
+            "args": [
+                "--config",
+                "${workspaceFolder}/config/prod.yaml"
+            ],
         },
         {
             "name": "Launch Client",

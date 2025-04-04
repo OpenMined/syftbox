@@ -23,9 +23,8 @@ func NewRuleCache() *RuleCache {
 
 func (c *RuleCache) Get(path string) *Rule {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	cached, ok := c.index[path]
+	c.mu.RUnlock()
 	if !ok {
 		return nil
 	}
@@ -33,8 +32,7 @@ func (c *RuleCache) Get(path string) *Rule {
 	// validate the cache entry
 	valid := cached.rule.node.Version() == cached.version
 	if !valid {
-		// if the version is not valid, remove the entry from the cache
-		c.DeletePrefix(path)
+		c.Delete(path)
 		return nil
 	}
 
@@ -49,6 +47,13 @@ func (c *RuleCache) Set(path string, rule *Rule) {
 		rule:    rule,
 		version: rule.node.Version(),
 	}
+}
+
+func (c *RuleCache) Delete(path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.index, path)
 }
 
 func (c *RuleCache) DeletePrefix(path string) {
