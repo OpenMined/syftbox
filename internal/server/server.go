@@ -155,12 +155,11 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	from := msg.Info.User
 
 	// check permissions
-	ok, err := s.aclSvc.CanAccess(
+	if err := s.aclSvc.CanAccess(
 		&acl.User{ID: from, IsOwner: datasite.IsOwner(data.Path, from)},
 		&acl.File{Path: data.Path, Size: data.Length},
 		acl.AccessWrite,
-	)
-	if !ok || err != nil {
+	); err != nil {
 		slog.Warn("FILE_WRITE permissions error", "msgId", msg.Message.Id, "from", from, "path", data.Path, "err", err)
 		errMsg := message.NewError(http.StatusForbidden, data.Path, "no permissions to write the file")
 		s.hub.SendMessage(msg.ClientId, errMsg)
@@ -175,8 +174,11 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			return false
 		}
 
-		ok, err := s.aclSvc.CanAccess(&acl.User{ID: to, IsOwner: datasite.IsOwner(data.Path, to)}, &acl.File{Path: data.Path, Size: data.Length}, acl.AccessRead)
-		if !ok || err != nil {
+		if err := s.aclSvc.CanAccess(
+			&acl.User{ID: to, IsOwner: datasite.IsOwner(data.Path, to)},
+			&acl.File{Path: data.Path, Size: data.Length},
+			acl.AccessRead,
+		); err != nil {
 			return false
 		}
 		return true

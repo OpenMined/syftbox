@@ -1,14 +1,11 @@
 package acl
 
 import (
-	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/yashgorana/syftbox-go/internal/aclspec"
 )
-
-var pathSep = string(filepath.Separator)
 
 // AclService helps to manage and enforce access control rules for file system operations.
 type AclService struct {
@@ -45,9 +42,8 @@ func (s *AclService) RemoveRuleSet(path string) bool {
 	return s.tree.RemoveRuleSet(path)
 }
 
-// GetNearestRule finds the most specific rule applicable to the given path.
-// Returns nil if no rule is found.
-func (s *AclService) GetNearestRule(path string) (*Rule, error) {
+// GetRule finds the most specific rule applicable to the given path.
+func (s *AclService) GetRule(path string) (*Rule, error) {
 	path = strings.TrimLeft(filepath.Clean(path), pathSep)
 
 	// cache hit
@@ -57,12 +53,7 @@ func (s *AclService) GetNearestRule(path string) (*Rule, error) {
 	}
 
 	// cache miss
-	node, err := s.tree.FindNearestNodeWithRules(path) // O(depth)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find node with rules: %w", err)
-	}
-
-	rule, err := node.FindBestRule(path) // O(rules|node)
+	rule, err := s.tree.GetRule(path) // O(depth)
 	if err != nil {
 		return nil, err
 	}
@@ -74,33 +65,33 @@ func (s *AclService) GetNearestRule(path string) (*Rule, error) {
 }
 
 // CanAccess checks if a user has the specified access permission for a file.
-func (s *AclService) CanAccess(user *User, file *File, level AccessLevel) (bool, error) {
+func (s *AclService) CanAccess(user *User, file *File, level AccessLevel) error {
 	if user.IsOwner {
-		return true, nil
+		return nil
 	}
 
-	filePath := strings.TrimLeft(filepath.Clean(file.Path), pathSep)
-	rule, err := s.GetNearestRule(filePath)
+	rule, err := s.GetRule(file.Path)
 	if err != nil {
-		return false, err
-	} else if rule == nil {
-		return false, fmt.Errorf("no rule found for path %s", filePath)
+		return err
 	}
 
-	fileLimits := true
-	isAcl := aclspec.IsAclFile(filePath)
+	isAcl := aclspec.IsAclFile(file.Path)
 
 	// elevate action for ACL files
-	if isAcl && level == AccessRead {
-		level = AccessReadACL
-	} else if isAcl && level == AccessWrite {
+	if isAcl && level == AccessWrite {
 		level = AccessWriteACL
 	} else if level == AccessWrite {
 		// writes need to be checked against the file limits
-		fileLimits = rule.CheckLimits(file)
+		if err := rule.CheckLimits(file); err != nil {
+			return err
+		}
 	}
 
-	return rule.CheckAccess(user, level) && fileLimits, nil
+	if err := rule.CheckAccess(user, level); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // String returns a string representation of the ACL service's rule tree.

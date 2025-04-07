@@ -2,6 +2,7 @@ package datasite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -58,13 +59,12 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	// Warm up the ACL cache
 	start = time.Now()
 	for blob := range d.blobSvc.Index().Iter() {
-		_, err := d.aclSvc.CanAccess(
+		if err := d.aclSvc.CanAccess(
 			&acl.User{ID: aclspec.Everyone},
 			&acl.File{Path: blob.Key},
 			acl.AccessRead,
-		)
-		if err != nil {
-			slog.Error("acl cache warm error", "path", blob.Key, "error", err)
+		); err != nil && errors.Is(err, acl.ErrNoRuleFound) {
+			slog.Warn("acl cache warm error", "path", blob.Key, "error", err)
 		}
 	}
 	slog.Debug("acl cache warm", "took", time.Since(start))
@@ -79,12 +79,11 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 
 	// Filter blobs based on ACL
 	for _, blob := range blobs {
-		ok, err := d.aclSvc.CanAccess(
+		if err := d.aclSvc.CanAccess(
 			&acl.User{ID: user, IsOwner: IsOwner(blob.Key, user)},
 			&acl.File{Path: blob.Key},
 			acl.AccessRead,
-		)
-		if ok && err == nil {
+		); err == nil {
 			view = append(view, blob)
 		}
 	}
