@@ -22,6 +22,7 @@ var installScript string
 
 func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService) http.Handler {
 	r := gin.Default()
+	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
 	blob := blobHandler.New(svcBlob)
 	ds := datasiteHandler.New(svcDatasite)
