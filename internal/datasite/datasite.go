@@ -98,15 +98,19 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 // 	errs := make([]BlobError, 0, len(keys))
 
 // 	for _, key := range keys {
+
 // 		_, ok := index.Get(key)
 // 		if !ok {
 // 			errs = append(errs, BlobError{Key: key, Error: "not found"})
 // 			continue
 // 		}
 
-// 		ok, err := d.aclSvc.CanAccess(&acl.User{ID: user, IsOwner: IsOwner(key, user)}, &acl.File{Path: key}, acl.AccessRead)
-// 		if !ok || err != nil {
-// 			errs = append(errs, BlobError{Key: key, Error: "access denied"})
+// 		if err := d.aclSvc.CanAccess(
+// 			&acl.User{ID: user, IsOwner: IsOwner(key, user)},
+// 			&acl.File{Path: key},
+// 			acl.AccessRead,
+// 		); err != nil {
+// 			errs = append(errs, BlobError{Key: key, Error: err.Error()})
 // 			continue
 // 		}
 
