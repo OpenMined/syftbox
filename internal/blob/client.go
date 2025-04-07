@@ -53,8 +53,8 @@ type PutObjectPresignedResponse struct {
 // ===================================================================================================
 
 type PutObjectMultipartParams struct {
-	Key   string `json: "key" form: "key" binding:"required"`
-	Parts uint16 `json: "parts" form: "parts" binding:"required"`
+	Key   string `json:"key" binding:"required"`
+	Parts uint16 `json:"parts" binding:"required"`
 }
 
 type PutObjectMultipartResponse struct {
