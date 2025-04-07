@@ -1,5 +1,5 @@
 version: 2
-
+project_name: syftbox
 dist: .out
 
 before:
@@ -45,7 +45,7 @@ builds:
   - sonic # for gin with sonic json
   - avx # for sonic
   env:
-  - CGO_ENABLED=0
+  - CGO_ENABLED=1
   goos:
   - darwin
   goarch:
@@ -60,14 +60,23 @@ builds:
   ldflags:
   - -s
   - -w
+  - -linkmode external
+  - -extldflags '-static'
   - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
   - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
   - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
   tags:
   - sonic # for gin with sonic json
   - avx # for sonic
+  - sqlite_omit_load_extension # for sqlite3
   env:
-  - CGO_ENABLED=0
+  - CGO_ENABLED=1
+  - CGO_CFLAGS=-Ofast
+  - >-
+    {{- if eq .Os "linux" }}
+      {{- if eq .Arch "amd64" }}CC=x86_64-linux-musl-gcc{{- end }}
+      {{- if eq .Arch "arm64"}}CC=aarch64-linux-musl-gcc{{- end }}
+    {{- end }}
   goos:
   - linux
   goarch:

@@ -13,7 +13,7 @@
             "args": [
                 "--config",
                 "${workspaceFolder}/config/prod.yaml"
-            ],
+            ]
         },
         {
             "name": "Launch Client",

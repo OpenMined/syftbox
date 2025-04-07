@@ -73,3 +73,7 @@ deploy: build-all
     ssh syftbox-yash "sudo systemctl restart syftgo"
 
     rm -rf releases
+
+[group('utils')]
+setup-toolchain:
+    brew install FiloSottile/musl-cross/musl-cross

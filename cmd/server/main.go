@@ -6,30 +6,33 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 	"github.com/yashgorana/syftbox-go/internal/server"
+	"github.com/yashgorana/syftbox-go/internal/utils"
 	"github.com/yashgorana/syftbox-go/internal/version"
 )
 
 const (
-	// Default config values from dev.yaml
-	defaultBlobBucket    = "syftbox-local"
+	defaultDataDir       = ".data"
+	defaultBlobBucket    = "syftbox"
 	defaultBlobRegion    = "us-east-1"
-	defaultBlobEndpoint  = "http://localhost:9000"
-	defaultBlobAccessKey = "ptSLdKiwOi2LYQFZYEZ6"
-	defaultBlobSecretKey = "GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8"
+	defaultBlobEndpoint  = "http://syftboxdev.openmined.org:9000"
+	defaultBlobAccessKey = "AbH4qZdboOLES93uUUb2"
+	defaultBlobSecretKey = "Pz46w5OYIRO9pAB5urEfyRdSNwLpeQc9CvwguQzX"
 )
 
 func main() {
 	var certFile string
 	var keyFile string
 	var addr string
+	var dataDir string
 	var configFile string
-	var showVersion bool
 
 	// Setup logger
 	opts := &slog.HandlerOptions{
@@ -51,19 +54,24 @@ func main() {
 			return loadConfig(cmd)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dataDir, err := utils.ResolvePath(viper.GetString("data_dir"))
+			if err != nil {
+				return err
+			}
 			config := &server.Config{
 				Http: &server.HttpServerConfig{
 					Addr:     addr,
 					CertFile: certFile,
 					KeyFile:  keyFile,
 				},
-				Blob: &blob.BlobConfig{
+				Blob: &blob.S3BlobConfig{
 					BucketName: viper.GetString("blob.bucket_name"),
 					Region:     viper.GetString("blob.region"),
 					Endpoint:   viper.GetString("blob.endpoint"),
 					AccessKey:  viper.GetString("blob.access_key"),
 					SecretKey:  viper.GetString("blob.secret_key"),
 				},
+				DbPath: filepath.Join(dataDir, "state.db"),
 			}
 
 			// Log all configuration details
@@ -76,6 +84,7 @@ func main() {
 				"blob.endpoint", config.Blob.Endpoint,
 				"blob.access_key", maskSecret(config.Blob.AccessKey),
 				"blob.secret_key", maskSecret(config.Blob.SecretKey),
+				"db.path", config.DbPath,
 			)
 
 			c, err := server.New(config)
@@ -93,8 +102,8 @@ func main() {
 	rootCmd.Flags().StringVarP(&certFile, "cert", "c", "", "Path to the certificate file")
 	rootCmd.Flags().StringVarP(&keyFile, "key", "k", "", "Path to the key file")
 	rootCmd.Flags().StringVarP(&addr, "bind", "b", server.DefaultAddr, "Address to bind the server")
+	rootCmd.Flags().StringVarP(&dataDir, "dataDir", "d", defaultDataDir, "Address to bind the server")
 	rootCmd.Flags().StringVarP(&configFile, "config", "f", "", "Path to config file")
-	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -111,12 +120,6 @@ func loadConfig(cmd *cobra.Command) error {
 		viper.SetConfigType("yaml")
 	}
 
-	viper.SetDefault("blob.bucket_name", defaultBlobBucket)
-	viper.SetDefault("blob.region", defaultBlobRegion)
-	viper.SetDefault("blob.endpoint", defaultBlobEndpoint)
-	viper.SetDefault("blob.access_key", defaultBlobAccessKey)
-	viper.SetDefault("blob.secret_key", defaultBlobSecretKey)
-
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -124,9 +127,22 @@ func loadConfig(cmd *cobra.Command) error {
 		}
 	}
 
+	viper.BindPFlag("data_dir", cmd.Flags().Lookup("dataDir"))
+
 	// Set up environment variables
 	viper.SetEnvPrefix("SYFTBOX")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+
+	viper.SetDefault("blob.bucket_name", defaultBlobBucket)
+	viper.SetDefault("blob.region", defaultBlobRegion)
+	viper.SetDefault("blob.endpoint", defaultBlobEndpoint)
+	viper.SetDefault("blob.access_key", defaultBlobAccessKey)
+	viper.SetDefault("blob.secret_key", defaultBlobSecretKey)
+
+	for key, value := range viper.AllSettings() {
+		slog.Debug("Config", key, value)
+	}
 
 	return nil
 }

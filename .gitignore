@@ -21,6 +21,11 @@ go.work.sum
 # env file
 .env
 
+# db
+*.db
+*.db-shm
+*.db-wal
+
 # os garbage
 .DS_Store
 Thumbs.db

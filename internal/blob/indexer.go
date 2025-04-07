@@ -3,38 +3,28 @@ package blob
 import (
 	"context"
 	"fmt"
-	"iter"
 	"log/slog"
-	"maps"
-	"slices"
-	"sync"
 	"time"
 )
 
-const IndexUpdatePeriod = 15 * time.Minute
+const indexInterval = 5 * time.Minute
 
-type BlobIndex interface {
-	Get(key string) (*BlobInfo, bool)
-	Set(blob *BlobInfo)
-	Remove(key string)
-	List() []*BlobInfo
-	Iter() iter.Seq[*BlobInfo]
-}
-
-type BlobIndexer struct {
+// blobIndexer handles the periodic updating of the blob index
+type blobIndexer struct {
 	api   *BlobClient
-	index map[string]*BlobInfo
-	mu    sync.RWMutex
+	index *BlobIndex
 }
 
-func NewBlobIndexer(api *BlobClient) *BlobIndexer {
-	return &BlobIndexer{
+// newBlobIndexer creates a new indexer that updates the provided index
+func newBlobIndexer(api *BlobClient, index *BlobIndex) *blobIndexer {
+	return &blobIndexer{
 		api:   api,
-		index: make(map[string]*BlobInfo),
+		index: index,
 	}
 }
 
-func (bi *BlobIndexer) Start(ctx context.Context) error {
+// Start begins the indexing process and starts periodic updates
+func (bi *blobIndexer) Start(ctx context.Context) error {
 	// Initial build of the index
 	if err := bi.buildIndex(ctx); err != nil {
 		return err
@@ -43,7 +33,7 @@ func (bi *BlobIndexer) Start(ctx context.Context) error {
 	// Start periodic updates
 	go func() {
 		slog.Debug("blob indexer started")
-		ticker := time.NewTicker(IndexUpdatePeriod)
+		ticker := time.NewTicker(indexInterval)
 		defer ticker.Stop()
 
 		for {
@@ -53,7 +43,7 @@ func (bi *BlobIndexer) Start(ctx context.Context) error {
 				return
 			case <-ticker.C:
 				if err := bi.buildIndex(ctx); err != nil {
-					slog.Error("blob index build", "error", err)
+					slog.Error("blob indexer error", "error", err)
 				}
 			}
 		}
@@ -62,44 +52,8 @@ func (bi *BlobIndexer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (bi *BlobIndexer) Get(key string) (*BlobInfo, bool) {
-	bi.mu.RLock()
-	defer bi.mu.RUnlock()
-
-	val, ok := bi.index[key]
-	return val, ok
-}
-
-func (bi *BlobIndexer) Set(blob *BlobInfo) {
-	bi.mu.Lock()
-	defer bi.mu.Unlock()
-
-	bi.index[blob.Key] = blob
-}
-
-func (bi *BlobIndexer) Remove(key string) {
-	bi.mu.Lock()
-	defer bi.mu.Unlock()
-
-	delete(bi.index, key)
-}
-
-func (bi *BlobIndexer) List() []*BlobInfo {
-	// return slices.SortedFunc(bi.Iter(), func(a, b *BlobInfo) int {
-	// 	return strings.Compare(a.Key, b.Key)
-	// })
-	// return blobs
-	return slices.Collect(bi.Iter())
-}
-
-func (bi *BlobIndexer) Iter() iter.Seq[*BlobInfo] {
-	bi.mu.RLock()
-	defer bi.mu.RUnlock()
-
-	return maps.Values(bi.index)
-}
-
-func (bi *BlobIndexer) buildIndex(ctx context.Context) error {
+// buildIndex incrementally updates the index by fetching objects and delegating to BlobIndex.BulkUpdate
+func (bi *blobIndexer) buildIndex(ctx context.Context) error {
 	start := time.Now()
 
 	blobs, err := bi.api.ListObjects(ctx)
@@ -107,18 +61,19 @@ func (bi *BlobIndexer) buildIndex(ctx context.Context) error {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}
 
-	bi.mu.Lock()
-	defer bi.mu.Unlock()
-
-	// clear the index
-	clear(bi.index)
-
-	// build the index
-	for _, blob := range blobs {
-		bi.index[blob.Key] = blob
+	result, err := bi.index.bulkUpdate(blobs)
+	if err != nil {
+		return fmt.Errorf("failed to update index: %w", err)
 	}
 
-	slog.Debug("blob indexer rebuild", "blobs", len(blobs), "took", time.Since(start))
+	// Log statistics
+	slog.Debug("blob indexer update result",
+		"total", len(blobs),
+		"added", result.Added,
+		"updated", result.Updated,
+		"deleted", result.Deleted,
+		"took", time.Since(start),
+	)
 
 	return nil
 }
