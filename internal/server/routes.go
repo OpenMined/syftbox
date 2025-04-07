@@ -41,6 +41,7 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 		v1.GET("/blob/list", blob.ListObjects)
 		v1.PUT("/blob/upload", blob.Upload)
 		v1.POST("/blob/upload/presigned", blob.UploadPresigned)
+		v1.POST("/blob/upload/multipart", blob.UploadMultipart)
 		v1.POST("/blob/upload/complete", blob.UploadComplete)
 		v1.POST("/blob/download", blob.DownloadObjectsPresigned)
 		v1.POST("/blob/delete", blob.DeleteObjects)

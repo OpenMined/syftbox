@@ -115,7 +115,7 @@ func (s *BlobClient) GetObject(ctx context.Context, key string) (*GetObjectRespo
 }
 
 func (s *BlobClient) GetObjectPresigned(ctx context.Context, key string) (string, error) {
-	return s.generatePresignedDownloadURL(ctx, key)
+	return s.generateGetObjectURL(ctx, key)
 }
 
 // ===================================================================================================
@@ -151,7 +151,71 @@ func (s *BlobClient) PutObject(ctx context.Context, params *PutObjectParams) (*P
 }
 
 func (s *BlobClient) PutObjectPresigned(ctx context.Context, key string) (string, error) {
-	return s.generatePresignedUploadURL(ctx, key)
+	return s.generatePutObjectURL(ctx, key)
+}
+
+func (s *BlobClient) PutObjectMultipart(ctx context.Context, params *PutObjectMultipartParams) (*PutObjectMultipartResponse, error) {
+	// Create a multipart upload
+	result, err := s.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: &s.config.BucketName,
+		Key:    &params.Key,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	urls := make([]string, 0, params.Parts)
+	for i := range params.Parts {
+		// Presign the URL for each part
+		url, err := s.s3Presigner.PresignUploadPart(ctx, &s3.UploadPartInput{
+			Bucket:     &s.config.BucketName,
+			Key:        &params.Key,
+			UploadId:   result.UploadId,
+			PartNumber: aws.Int32(int32(i + 1)),
+		}, func(opts *s3.PresignOptions) {
+			opts.Expires = 2 * uploadExpiry
+		})
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, url.URL)
+	}
+
+	return &PutObjectMultipartResponse{
+		Key:      params.Key,
+		UploadID: aws.ToString(result.UploadId),
+		URLs:     urls,
+	}, nil
+}
+
+func (s *BlobClient) CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error) {
+	completedParts := make([]types.CompletedPart, len(params.Parts))
+	for i, part := range params.Parts {
+		completedParts[i] = types.CompletedPart{
+			ETag:       &part.ETag,
+			PartNumber: aws.Int32(int32(part.PartNumber)),
+		}
+	}
+
+	res, err := s.s3Client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   &s.config.BucketName,
+		Key:      &params.Key,
+		UploadId: &params.UploadID,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: completedParts,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &PutObjectResponse{
+		Key:          params.Key,
+		Version:      aws.ToString(res.VersionId),
+		ETag:         strings.ReplaceAll(aws.ToString(res.ETag), "\"", ""),
+		LastModified: time.Now().UTC(),
+	}, nil
 }
 
 // ===================================================================================================
@@ -229,7 +293,7 @@ func (s *BlobClient) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
 
 // ===================================================================================================
 
-func (s *BlobClient) generatePresignedUploadURL(ctx context.Context, key string) (string, error) {
+func (s *BlobClient) generatePutObjectURL(ctx context.Context, key string) (string, error) {
 	url, err := s.s3Presigner.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: &s.config.BucketName,
 		Key:    &key,
@@ -242,7 +306,7 @@ func (s *BlobClient) generatePresignedUploadURL(ctx context.Context, key string)
 	return url.URL, nil
 }
 
-func (s *BlobClient) generatePresignedDownloadURL(ctx context.Context, key string) (string, error) {
+func (s *BlobClient) generateGetObjectURL(ctx context.Context, key string) (string, error) {
 	url, err := s.s3Presigner.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.config.BucketName,
 		Key:    &key,

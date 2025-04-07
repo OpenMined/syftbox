@@ -11,9 +11,14 @@ type IBlobClient interface {
 	GetObjectPresigned(ctx context.Context, key string) (string, error)
 	PutObject(ctx context.Context, params *PutObjectParams) (*PutObjectResponse, error)
 	PutObjectPresigned(ctx context.Context, key string) (string, error)
+	PutObjectMultipart(ctx context.Context, params *PutObjectMultipartParams) (*PutObjectMultipartResponse, error)
+	CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error)
+	CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error)
 	DeleteObject(ctx context.Context, key string) (bool, error)
 	ListObjects(ctx context.Context) ([]*BlobInfo, error)
 }
+
+// ===================================================================================================
 
 type GetObjectResponse struct {
 	Body         io.ReadCloser
@@ -43,6 +48,32 @@ type PutObjectPresignedResponse struct {
 	Name          string   `json:"name" binding:"required"`
 	UploadID      string   `json:"uploadId"`
 	PresignedURLs []string `json:"presignedUrls"`
+}
+
+// ===================================================================================================
+
+type PutObjectMultipartParams struct {
+	Key   string `json: "key" form: "key" binding:"required"`
+	Parts uint16 `json: "parts" form: "parts" binding:"required"`
+}
+
+type PutObjectMultipartResponse struct {
+	Key      string   `json:"key"`
+	UploadID string   `json:"uploadId"`
+	URLs     []string `json:"urls"`
+}
+
+// ===================================================================================================
+
+type CompletedPart struct {
+	PartNumber int    `json:"partNumber"`
+	ETag       string `json:"etag"`
+}
+
+type CompleteMultipartUploadParams struct {
+	Key      string           `json:"key"`
+	UploadID string           `json:"uploadId"`
+	Parts    []*CompletedPart `json:"parts"`
 }
 
 // ===================================================================================================

@@ -15,6 +15,13 @@ func New(svc *blob.BlobService) *BlobHandler {
 	return &BlobHandler{svc: svc}
 }
 
+func (h *BlobHandler) UploadMultipart(ctx *gin.Context) {
+	// todo
+	ctx.PureJSON(http.StatusNotImplemented, gin.H{
+		"error": "not implemented",
+	})
+}
+
 func (h *BlobHandler) UploadComplete(ctx *gin.Context) {
 	// todo
 	ctx.PureJSON(http.StatusNotImplemented, gin.H{
