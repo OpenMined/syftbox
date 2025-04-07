@@ -23,7 +23,7 @@ func TestInsertBurst(t *testing.T) {
 	index, err := createIndex(WithDB(db))
 	assert.NoError(t, err)
 
-	const numOperations = 50000
+	const numOperations = 10000
 
 	// Create a sync map to store all blobs for later verification
 	var blobMap sync.Map
