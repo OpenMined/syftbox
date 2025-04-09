@@ -9,9 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/yashgorana/syftbox-go/internal/acl"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 	"github.com/yashgorana/syftbox-go/internal/datasite"
+	"github.com/yashgorana/syftbox-go/internal/db"
 	"github.com/yashgorana/syftbox-go/internal/message"
 	"github.com/yashgorana/syftbox-go/internal/server/v1/ws"
 )
@@ -20,6 +22,7 @@ type Server struct {
 	config *Config
 	server *http.Server
 	hub    *ws.WebsocketHub
+	db     *sqlx.DB
 
 	blobSvc     *blob.BlobService
 	aclSvc      *acl.AclService
@@ -27,8 +30,16 @@ type Server struct {
 }
 
 func New(config *Config) (*Server, error) {
+	sqliteDb, err := db.NewSqliteDb(db.WithPath(config.DbPath))
+	if err != nil {
+		return nil, fmt.Errorf("error opening db: %w", err)
+	}
+
 	aclSvc := acl.NewAclService()
-	blobSvc := blob.NewBlobService(config.Blob)
+	blobSvc, err := blob.NewBlobService(config.Blob, blob.WithDB(sqliteDb))
+	if err != nil {
+		return nil, err
+	}
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
 	hub := ws.NewHub()
@@ -36,6 +47,7 @@ func New(config *Config) (*Server, error) {
 
 	return &Server{
 		config:      config,
+		db:          sqliteDb,
 		blobSvc:     blobSvc,
 		aclSvc:      aclSvc,
 		datasiteSvc: datasiteSvc,
@@ -143,12 +155,11 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	from := msg.Info.User
 
 	// check permissions
-	ok, err := s.aclSvc.CanAccess(
+	if err := s.aclSvc.CanAccess(
 		&acl.User{ID: from, IsOwner: datasite.IsOwner(data.Path, from)},
 		&acl.File{Path: data.Path, Size: data.Length},
 		acl.AccessWrite,
-	)
-	if !ok || err != nil {
+	); err != nil {
 		slog.Warn("FILE_WRITE permissions error", "msgId", msg.Message.Id, "from", from, "path", data.Path, "err", err)
 		errMsg := message.NewError(http.StatusForbidden, data.Path, "no permissions to write the file")
 		s.hub.SendMessage(msg.ClientId, errMsg)
@@ -163,8 +174,11 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			return false
 		}
 
-		ok, err := s.aclSvc.CanAccess(&acl.User{ID: to, IsOwner: datasite.IsOwner(data.Path, to)}, &acl.File{Path: data.Path, Size: data.Length}, acl.AccessRead)
-		if !ok || err != nil {
+		if err := s.aclSvc.CanAccess(
+			&acl.User{ID: to, IsOwner: datasite.IsOwner(data.Path, to)},
+			&acl.File{Path: data.Path, Size: data.Length},
+			acl.AccessRead,
+		); err != nil {
 			return false
 		}
 		return true

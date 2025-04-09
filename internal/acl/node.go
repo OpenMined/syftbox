@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,12 +14,12 @@ import (
 // Each node corresponds to a part of the path and contains rules for that part.
 type Node struct {
 	mu       sync.RWMutex
-	rules    []*Rule // rules for this part of the path. key is rule.Pattern
-	path     string
-	children map[string]*Node
-	terminal bool
-	depth    uint8
-	version  uint8
+	rules    []*Rule          // rules for this part of the path. sorted by specificity.
+	path     string           // path is the full path to this node
+	children map[string]*Node // key is the part of the path
+	terminal bool             // true if this node is a terminal node
+	depth    uint8            // depth of the node in the tree. 0 is root node
+	version  uint8            // version of the node. incremented on every change
 }
 
 func NewNode(path string, terminal bool, depth uint8) *Node {
@@ -31,9 +30,59 @@ func NewNode(path string, terminal bool, depth uint8) *Node {
 	}
 }
 
-// Set the rules, terminal flag and depth for the node.
+func (n *Node) Version() uint8 {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.version
+}
+
+func (n *Node) IsTerminal() bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.terminal
+}
+
+func (n *Node) Depth() uint8 {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.depth
+}
+
+func (n *Node) Rules() []*Rule {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.rules
+}
+
+func (n *Node) SetChild(key string, child *Node) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.children == nil {
+		n.children = make(map[string]*Node)
+	}
+	if child == nil {
+		delete(n.children, key)
+	} else {
+		n.children[key] = child
+	}
+}
+
+func (n *Node) GetChild(key string) (*Node, bool) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	child, exists := n.children[key]
+	return child, exists
+}
+
+func (n *Node) DeleteChild(key string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.children, key)
+}
+
+// SetRules the rules, terminal flag and depth for the node.
 // Increments the version counter for repeated operation.
-func (n *Node) Set(rules []*aclspec.Rule, terminal bool, depth uint8) {
+func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -56,9 +105,6 @@ func (n *Node) Set(rules []*aclspec.Rule, terminal bool, depth uint8) {
 	// set the rules and terminal flag
 	n.terminal = terminal
 
-	// set the depth and version
-	n.depth = depth
-
 	// increment the version. uint8 overflow will reset it to 0.
 	n.version++
 }
@@ -69,18 +115,17 @@ func (n *Node) FindBestRule(path string) (*Rule, error) {
 	defer n.mu.RUnlock()
 
 	if n.rules == nil {
-		return nil, fmt.Errorf("no rules found for path %s", path)
+		return nil, ErrNoRuleFound
 	}
 
 	// find the best matching rule
 	for _, aclRule := range n.rules {
-		ok, _ := doublestar.Match(aclRule.fullPattern, path)
-		if ok {
+		if ok, _ := doublestar.Match(aclRule.fullPattern, path); ok {
 			return aclRule, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no matching rule found for path %s", path)
+	return nil, ErrNoRuleFound
 }
 
 // Equal checks if the node is equal to another node.
@@ -88,12 +133,6 @@ func (n *Node) Equal(other *Node) bool {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.path == other.path && n.terminal == other.terminal && n.depth == other.depth
-}
-
-func (n *Node) Version() uint8 {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.version
 }
 
 func globSpecificityScore(glob string) int {

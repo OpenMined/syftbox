@@ -2,6 +2,7 @@ package datasite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -31,7 +32,10 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 
 	// Fetch the ACL files
 	start := time.Now()
-	acls := d.ListAclFiles()
+	acls, err := d.ListAclFiles()
+	if err != nil {
+		return fmt.Errorf("error listing acls: %w", err)
+	}
 	slog.Debug("acl list", "count", len(acls), "took", time.Since(start))
 
 	// Fetch the ACL rulesets
@@ -40,7 +44,7 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error fetching acls: %w", err)
 	}
-	slog.Debug("acl read", "count", len(ruleSets), "took", time.Since(start))
+	slog.Debug("acl fetch", "count", len(ruleSets), "took", time.Since(start))
 
 	if len(ruleSets) == 0 {
 		slog.Warn("no ACL rulesets found")
@@ -53,16 +57,14 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	slog.Debug("acl build", "count", len(ruleSets), "took", time.Since(start))
 
 	// Warm up the ACL cache
-	index := d.blobSvc.Index()
 	start = time.Now()
-	for blob := range index.Iter() {
-		_, err := d.aclSvc.CanAccess(
+	for blob := range d.blobSvc.Index().Iter() {
+		if err := d.aclSvc.CanAccess(
 			&acl.User{ID: aclspec.Everyone},
 			&acl.File{Path: blob.Key},
 			acl.AccessRead,
-		)
-		if err != nil {
-			slog.Error("acl cache warm error", "path", blob.Key, "error", err)
+		); err != nil && errors.Is(err, acl.ErrNoRuleFound) {
+			slog.Warn("acl cache warm error", "path", blob.Key, "error", err)
 		}
 	}
 	slog.Debug("acl cache warm", "took", time.Since(start))
@@ -72,76 +74,82 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 
 func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 	// First collect all accessible blobs
-	index := d.blobSvc.Index()
-	blobs := index.List()
+	blobs, _ := d.blobSvc.Index().List()
 	view := make([]*blob.BlobInfo, 0, len(blobs))
 
 	// Filter blobs based on ACL
 	for _, blob := range blobs {
-		ok, err := d.aclSvc.CanAccess(
+		if err := d.aclSvc.CanAccess(
 			&acl.User{ID: user, IsOwner: IsOwner(blob.Key, user)},
 			&acl.File{Path: blob.Key},
 			acl.AccessRead,
-		)
-		if ok && err == nil {
+		); err == nil {
 			view = append(view, blob)
 		}
 	}
-
 	return view
 }
 
-func (d *DatasiteService) DownloadFiles(ctx context.Context, user string, keys []string) ([]BlobUrl, []BlobError, error) {
-	index := d.blobSvc.Index()
-	client := d.blobSvc.Client()
+// func (d *DatasiteService) DownloadFiles(ctx context.Context, user string, keys []string) ([]BlobUrl, []BlobError, error) {
+// 	index := d.blobSvc.Index()
+// 	client := d.blobSvc.Client()
 
-	urls := make([]BlobUrl, 0, len(keys))
-	errs := make([]BlobError, 0, len(keys))
+// 	urls := make([]BlobUrl, 0, len(keys))
+// 	errs := make([]BlobError, 0, len(keys))
 
-	for _, key := range keys {
+// 	for _, key := range keys {
 
-		_, ok := index.Get(key)
-		if !ok {
-			errs = append(errs, BlobError{Key: key, Error: "not found"})
-			continue
-		}
+// 		_, ok := index.Get(key)
+// 		if !ok {
+// 			errs = append(errs, BlobError{Key: key, Error: "not found"})
+// 			continue
+// 		}
 
-		ok, err := d.aclSvc.CanAccess(&acl.User{ID: user, IsOwner: IsOwner(key, user)}, &acl.File{Path: key}, acl.AccessRead)
-		if !ok || err != nil {
-			errs = append(errs, BlobError{Key: key, Error: "access denied"})
-			continue
-		}
+// 		if err := d.aclSvc.CanAccess(
+// 			&acl.User{ID: user, IsOwner: IsOwner(key, user)},
+// 			&acl.File{Path: key},
+// 			acl.AccessRead,
+// 		); err != nil {
+// 			errs = append(errs, BlobError{Key: key, Error: err.Error()})
+// 			continue
+// 		}
 
-		url, err := client.PresignedDownload(ctx, key)
-		if err != nil {
-			errs = append(errs, BlobError{Key: key, Error: err.Error()})
-			continue
-		}
+// 		url, err := client.GetObjectPresigned(ctx, key)
+// 		if err != nil {
+// 			errs = append(errs, BlobError{Key: key, Error: err.Error()})
+// 			continue
+// 		}
 
-		urls = append(urls, BlobUrl{Key: key, Url: url})
-	}
+// 		urls = append(urls, BlobUrl{Key: key, Url: url})
+// 	}
 
-	return urls, errs, nil
+// 	return urls, errs, nil
+// }
+
+func (d *DatasiteService) ListAclFiles() ([]*blob.BlobInfo, error) {
+	return d.blobSvc.Index().FilterBySuffix(aclspec.AclFileName)
 }
 
 func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobInfo) ([]*aclspec.RuleSet, error) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	workers := 8
+	workers := 16
 	jobs := make(chan *blob.BlobInfo)
 	results := make([]*aclspec.RuleSet, 0, len(aclBlobs))
 	blobClient := d.blobSvc.Client()
 
+	slog.Debug("acl fetch", "workers", workers, "blobs", len(aclBlobs))
+
 	// Start workers
-	for i := 0; i < workers; i++ {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for blob := range jobs {
 
 				// Pull the ACL file
-				obj, err := blobClient.Download(ctx, blob.Key)
+				obj, err := blobClient.GetObject(ctx, blob.Key)
 				if err != nil {
 					slog.Error("ruleset fetch error", "path", blob.Key, "error", err)
 					continue
@@ -171,16 +179,4 @@ func (d *DatasiteService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobIn
 	wg.Wait()
 
 	return results, nil
-}
-
-func (d *DatasiteService) ListAclFiles() []*blob.BlobInfo {
-	index := d.blobSvc.Index()
-
-	acls := make([]*blob.BlobInfo, 0)
-	for blob := range index.Iter() {
-		if aclspec.IsAclFile(blob.Key) {
-			acls = append(acls, blob)
-		}
-	}
-	return acls
 }

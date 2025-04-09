@@ -16,7 +16,7 @@ const (
 
 // IsAclFile checks if the path is an syft.pub.yaml file
 func IsAclFile(path string) bool {
-	return strings.HasSuffix(filepath.Clean(path), AclFileName)
+	return strings.HasSuffix(path, AclFileName)
 }
 
 // AsAclPath converts any path to exact acl file path
@@ -24,12 +24,12 @@ func AsAclPath(path string) string {
 	if IsAclFile(path) {
 		return path
 	}
-	return filepath.Join(filepath.Clean(path), AclFileName)
+	return filepath.Join(path, AclFileName)
 }
 
 // WithoutAclPath truncates syft.pub.yaml from the path
 func WithoutAclPath(path string) string {
-	return strings.TrimSuffix(filepath.Clean(path), AclFileName)
+	return strings.TrimSuffix(path, AclFileName)
 }
 
 // Exists checks if the ACL file exists at the given path

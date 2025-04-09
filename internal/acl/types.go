@@ -1,5 +1,9 @@
 package acl
 
+import "path/filepath"
+
+var pathSep = string(filepath.Separator)
+
 type User struct {
 	ID      string
 	IsOwner bool
