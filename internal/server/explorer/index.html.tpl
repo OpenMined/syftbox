@@ -1,61 +1,169 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 
 <head>
-    <title>Index of /{{.Path}}</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 20px;
-        }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyftBox - {{.Path}}</title>
+  <style>
+    :root {
+      --background: #ffffff;
+      --text: #111111;
+      --secondary-text: #767676;
+      --accent: #0077ed;
+      --border: #f0f0f0;
+      --hover: #fafafa;
+    }
 
-        a {
-            text-decoration: none;
-            color: blue;
-        }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.5;
+      color: var(--text);
+      background-color: var(--background);
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2.5rem 2rem;
+    }
 
-        th,
-        td {
-            padding: 8px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
+    header {
+      margin-bottom: 2rem;
+    }
 
-        th {
-            background-color: #f4f4f4;
-        }
-    </style>
+    h1 {
+      font-weight: 500;
+      font-size: 1.25rem;
+      color: var(--text);
+      margin-bottom: 0.5rem;
+    }
+
+    .path {
+      font-size: 1rem;
+      color: var(--secondary-text);
+      margin-bottom: 1rem;
+    }
+
+    a {
+      text-decoration: none;
+      color: var(--accent);
+    }
+
+    a:hover {
+      opacity: 0.8;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 10px 16px;
+      text-align: left;
+    }
+
+    th {
+      font-weight: 500;
+      font-size: 0.8125rem;
+      color: var(--secondary-text);
+      border-bottom: 1px solid var(--border);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    td {
+      font-size: 0.9375rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:hover td {
+      background-color: var(--hover);
+    }
+
+    .size-column,
+    .date-column {
+      color: var(--secondary-text);
+      font-size: 0.875rem;
+    }
+
+    .icon {
+      display: inline-block;
+      width: 20px;
+      margin-right: 8px;
+      text-align: center;
+      color: var(--secondary-text);
+    }
+
+    .parent-dir {
+      font-weight: 500;
+    }
+
+    .parent-dir .icon {
+      transform: rotate(90deg);
+      margin-right: 4px;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1.5rem 1rem;
+      }
+
+      th,
+      td {
+        padding: 8px 12px;
+      }
+
+      .date-column {
+        display: none;
+      }
+    }
+  </style>
 </head>
 
 <body>
-    <h1>Index of /{{.Path}}</h1>
-    <table>
-        <tr>
-            <th>Name</th>
-            <th>Size</th>
-            <th>Last Modified</th>
-        </tr>
-        <tr>
-            <td><a href="../">.. (parent directory)</a></td>
-            <td></td>
-            <td></td>
-        </tr>
-        {{range .Folders}}<tr>
-            <td><a href="./{{.}}/">{{.}}</a></td>
-            <td>DIR</td>
-            <td></td>
-        </tr>{{end}}
-        {{range .Files}}<tr>
-            <td><a href="./{{basename .Key}}">{{basename .Key}}</a></td>
-            <td>{{.Size}}</td>
-            <td>{{.LastModified}}</td>
-        </tr>{{end}}
-    </table>
+  <header>
+    <h1>SyftBox Datasites</h1>
+    <div class="path">{{.Path}}</div>
+  </header>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th class="size-column">Size</th>
+        <th class="date-column">Modified</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="parent-dir">
+          <a href="../"><span class="icon">←</span> Back</a>
+        </td>
+        <td class="size-column"></td>
+        <td class="date-column"></td>
+      </tr>
+      {{range .Folders}}
+      <tr>
+        <td><a href="/datasites{{$.Path}}{{.}}/"><span class="icon">📁</span>{{.}}/</a></td>
+        <td class="size-column">Directory</td>
+        <td class="date-column">-</td>
+      </tr>
+      {{end}}
+      {{range .Files}}
+      <tr>
+        <td><a href="/datasites/{{.Key}}"><span class="icon">📄</span>{{basename .Key}}</a></td>
+        <td class="size-column">{{humanizeSize .Size}}</td>
+        <td class="date-column">{{.LastModified}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
 </body>
 
 </html>

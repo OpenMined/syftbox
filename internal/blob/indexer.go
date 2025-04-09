@@ -25,14 +25,16 @@ func newBlobIndexer(api *BlobClient, index *BlobIndex) *blobIndexer {
 
 // Start begins the indexing process and starts periodic updates
 func (bi *blobIndexer) Start(ctx context.Context) error {
-	// Initial build of the index
-	if err := bi.buildIndex(ctx); err != nil {
-		return err
-	}
 
 	// Start periodic updates
 	go func() {
 		slog.Debug("blob indexer started")
+		// Initial build of the index
+		if err := bi.buildIndex(ctx); err != nil {
+			slog.Error("blob indexer error", "error", err)
+			return
+		}
+
 		ticker := time.NewTicker(indexInterval)
 		defer ticker.Stop()
 

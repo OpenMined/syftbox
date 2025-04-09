@@ -13,14 +13,18 @@ import (
 
 	_ "embed"
 
+	"github.com/dustin/go-humanize"
 	"github.com/gin-gonic/gin"
+	"github.com/yashgorana/syftbox-go/internal/acl"
+	"github.com/yashgorana/syftbox-go/internal/aclspec"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 )
 
-var pathSep = string(filepath.Separator)
-
 //go:embed index.html.tpl
 var indexOfTmpl string
+
+//go:embed notfound.html.tpl
+var notFoundOfTmpl string
 
 // indexData contains data for the index template
 type indexData struct {
@@ -39,19 +43,28 @@ type directoryContents struct {
 // Explorer handles browsing and file downloads from a blob service
 type Explorer struct {
 	svc      *blob.BlobService
-	template *template.Template
+	acl      *acl.AclService
+	tplIndex *template.Template
+	tpl404   *template.Template
 }
 
 // New creates a new Explorer instance
-func New(svc *blob.BlobService) *Explorer {
+func New(svc *blob.BlobService, acl *acl.AclService) *Explorer {
 	funcMap := template.FuncMap{
 		"basename": filepath.Base,
+		"humanizeSize": func(size int64) string {
+			return humanize.Bytes(uint64(size))
+		},
 	}
-	tmpl := template.Must(template.New("index").Funcs(funcMap).Parse(indexOfTmpl))
+
+	tplIndex := template.Must(template.New("index").Funcs(funcMap).Parse(indexOfTmpl))
+	tpl404 := template.Must(template.New("notfound").Funcs(funcMap).Parse(notFoundOfTmpl))
 
 	return &Explorer{
 		svc:      svc,
-		template: tmpl,
+		acl:      acl,
+		tplIndex: tplIndex,
+		tpl404:   tpl404,
 	}
 }
 
@@ -75,21 +88,33 @@ func (e *Explorer) listContents(prefix string) *directoryContents {
 	folders := map[string]bool{}
 	isDir := false
 
-	datasite := datasiteFromPath(prefix)
-	slog.Info("Listing contents", "prefix", prefix, "datasite", datasite)
-
 	// Normalize prefix to end with a slash if not empty
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
 
-	// todo - this code is potentially broken it can return `api_data`
-	filterPrefix := prefix
-	if datasite != "" {
+	datasite := datasiteFromPath(prefix)
+
+	var filterPrefix string
+	if datasite == "" {
+		// root index
+		filterPrefix = "*/public/" + aclspec.AclFileName
+	} else if !strings.HasPrefix(prefix, datasite+"/public/") {
+		// force public dirs
 		filterPrefix = datasite + "/public/"
+	} else {
+		filterPrefix = prefix
 	}
 
-	blobs := e.svc.Index().FilterByPrefix(filterPrefix)
+	blobs, err := e.svc.Index().FilterByPrefix(filterPrefix)
+	if err != nil {
+		slog.Error("Failed to filter blobs by prefix", "error", err)
+		return &directoryContents{
+			IsDir:   false,
+			Files:   []*blob.BlobInfo{},
+			Folders: []string{},
+		}
+	}
 
 	for _, blob := range blobs {
 		if strings.HasPrefix(blob.Key, prefix) {
@@ -123,6 +148,16 @@ func (e *Explorer) listContents(prefix string) *directoryContents {
 
 // Serve the "Index Of" page
 func (e *Explorer) serveDir(c *gin.Context, path string, contents *directoryContents) {
+	if path == "" {
+		path = "/"
+	}
+	if path != "" && !strings.HasSuffix(path, "/") {
+		path = path + "/"
+	}
+	if path != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
 	data := indexData{
 		Path:    path,
 		Folders: contents.Folders,
@@ -131,16 +166,26 @@ func (e *Explorer) serveDir(c *gin.Context, path string, contents *directoryCont
 
 	// Generate an HTML response
 	c.Header("Content-Type", "text/html; charset=utf-8")
-	if err := e.template.Execute(c.Writer, data); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := e.tplIndex.Execute(c.Writer, data); err != nil {
+		c.String(http.StatusInternalServerError, "internal server error")
 	}
 }
 
 // Serve a file from S3
 func (e *Explorer) serveFile(c *gin.Context, key string) {
-	resp, err := e.svc.Client().Download(c.Request.Context(), key)
+	if err := e.acl.CanAccess(
+		&acl.User{ID: aclspec.Everyone, IsOwner: false},
+		&acl.File{Path: key},
+		acl.AccessRead,
+	); err != nil {
+		// don't reveal if the file is private or not
+		e.serve404(c, key)
+		return
+	}
+
+	resp, err := e.svc.Client().GetObject(c.Request.Context(), key)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		e.serve404(c, key)
 		return
 	}
 	defer resp.Body.Close()
@@ -152,16 +197,26 @@ func (e *Explorer) serveFile(c *gin.Context, key string) {
 	// Stream response body directly
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		slog.Error("Failed to stream file", "error", err)
+		c.String(http.StatusInternalServerError, "internal server error")
 		return
 	}
 }
 
 func (e *Explorer) detectContentType(key string) string {
-	if mimeType := mime.TypeByExtension(filepath.Ext(key)); mimeType != "" {
+	if isTextLike(key) {
+		return "text/plain; charset=utf-8"
+	} else if mimeType := mime.TypeByExtension(filepath.Ext(key)); mimeType != "" {
 		return mimeType
 	}
 	return "application/octet-stream"
+}
+
+func (e *Explorer) serve404(c *gin.Context, key string) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	if err := e.tpl404.Execute(c.Writer, map[string]any{"Key": key}); err != nil {
+		c.String(http.StatusInternalServerError, "internal server error")
+	}
 }
 
 func datasiteFromPath(path string) string {
@@ -170,4 +225,11 @@ func datasiteFromPath(path string) string {
 		return parts[0]
 	}
 	return ""
+}
+
+func isTextLike(key string) bool {
+	return strings.HasSuffix(key, ".yaml") ||
+		strings.HasSuffix(key, ".yml") ||
+		strings.HasSuffix(key, ".toml") ||
+		strings.HasSuffix(key, ".md")
 }

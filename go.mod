@@ -10,6 +10,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.8.1
 	github.com/coder/websocket v1.8.13
 	github.com/deckarep/golang-set/v2 v2.8.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.18.0
 	github.com/gin-contrib/cors v1.7.4
 	github.com/gin-contrib/gzip v1.2.2
