@@ -43,7 +43,7 @@ func New(config *Config) (*Server, error) {
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
 	hub := ws.NewHub()
-	httpHandler := SetupRoutes(hub, blobSvc, datasiteSvc)
+	httpHandler := SetupRoutes(hub, blobSvc, datasiteSvc, aclSvc)
 
 	return &Server{
 		config:      config,

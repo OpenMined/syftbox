@@ -6,8 +6,10 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"github.com/yashgorana/syftbox-go/internal/acl"
 	"github.com/yashgorana/syftbox-go/internal/blob"
 	"github.com/yashgorana/syftbox-go/internal/datasite"
+	"github.com/yashgorana/syftbox-go/internal/server/explorer"
 	"github.com/yashgorana/syftbox-go/internal/server/middlewares"
 	blobHandler "github.com/yashgorana/syftbox-go/internal/server/v1/blob"
 	datasiteHandler "github.com/yashgorana/syftbox-go/internal/server/v1/datasite"
@@ -20,12 +22,13 @@ import (
 //go:embed templates/install.sh
 var installScript string
 
-func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService) http.Handler {
+func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService, svcAcl *acl.AclService) http.Handler {
 	r := gin.Default()
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
 	blob := blobHandler.New(svcBlob)
 	ds := datasiteHandler.New(svcDatasite)
+	explorer := explorer.New(svcBlob, svcAcl)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
@@ -33,6 +36,7 @@ func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
 	r.GET("/install.sh", InstallHeader)
+	r.GET("/datasites/*filepath", explorer.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
 	v1 := r.Group("/api/v1")
