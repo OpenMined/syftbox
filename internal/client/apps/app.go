@@ -43,7 +43,7 @@ func (a *App) Start(ctx context.Context) error {
 	a.Cancel = cancel
 
 	// Prepare the command to run the app
-	a.Process = exec.CommandContext(appCtx, runScript)
+	a.Process = exec.CommandContext(appCtx, "sh", runScript)
 	a.Process.Dir = a.Path
 
 	// Set environment variables
@@ -151,9 +151,6 @@ func GetRunScript(appPath string) (string, error) {
 	}
 	if info.IsDir() {
 		return "", fmt.Errorf("run script at %s is a directory", runScript)
-	}
-	if info.Mode()&0111 == 0 {
-		return "", fmt.Errorf("run script at %s is not executable", runScript)
 	}
 	return runScript, nil
 }

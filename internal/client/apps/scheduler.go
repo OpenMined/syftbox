@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -53,6 +54,13 @@ func NewScheduler(appDir string, configPath string) *AppScheduler {
 
 // Start initializes the scheduler and begins monitoring for apps
 func (s *AppScheduler) Start(ctx context.Context) error {
+
+	// check if apps can be scheduled
+	// requires uv and sh/bash available
+	if err := s.checkEnv(); err != nil {
+		return err
+	}
+
 	slog.Info("app scheduler start", "appdir", s.appDir)
 
 	// Create the app directory if it doesn't exist
@@ -246,6 +254,19 @@ func (s *AppScheduler) scanDirectoryForApps(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (s *AppScheduler) checkEnv() error {
+	// check if bash is available
+	if _, err := exec.LookPath("sh"); err != nil {
+		return fmt.Errorf("'sh' not available")
+	}
+
+	// check if uv is available
+	if _, err := exec.LookPath("uv"); err != nil {
+		return fmt.Errorf("'uv' not available")
+	}
+	return nil
 }
 
 // pathWithoutVenv drops any venv paths from the PATH environment variable

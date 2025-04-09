@@ -62,7 +62,7 @@ func (c *Client) Start(ctx context.Context) error {
 	// Start app scheduler
 	if c.config.AppsEnabled {
 		if err := c.appScheduler.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start app scheduler: %w", err)
+			slog.Error("failed to start app scheduler", "error", err)
 		}
 	} else {
 		slog.Info("apps disabled")
