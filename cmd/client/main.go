@@ -28,6 +28,37 @@ var (
 	configFileName   = "config"
 )
 
+var rootCmd = &cobra.Command{
+	Use:     "syftbox",
+	Short:   "SyftBox CLI",
+	Version: version.Detailed(),
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return loadConfig(cmd)
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := client.New(&client.Config{
+			Path:        viper.ConfigFileUsed(),
+			Email:       viper.GetString("email"),
+			DataDir:     viper.GetString("data_dir"),
+			ServerURL:   viper.GetString("server_url"),
+			AppsEnabled: viper.GetBool("apps_enabled"),
+		})
+		if err != nil {
+			return err
+		}
+		defer slog.Info("Bye!")
+		showSyftBoxHeader()
+		return c.Start(cmd.Context())
+	},
+}
+
+func init() {
+	rootCmd.Flags().StringP("email", "e", "", "Email for the SyftBox datasite")
+	rootCmd.Flags().StringP("datadir", "d", defaultDataDir, "SyftBox Data Directory")
+	rootCmd.Flags().StringP("server", "s", defaultServerURL, "SyftBox Server")
+	rootCmd.PersistentFlags().StringP("config", "c", "", "SyftBox config file")
+}
+
 func main() {
 	handler := tint.NewHandler(os.Stdout, &tint.Options{
 		AddSource:  true,
@@ -41,32 +72,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	var rootCmd = &cobra.Command{
-		Use:     "SyftBox",
-		Short:   "SyftBox Client CLI",
-		Version: version.Detailed(),
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			showSyftBoxHeader()
-			return loadConfig(cmd)
-		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := client.New(&client.Config{
-				Email:     viper.GetString("email"),
-				DataDir:   viper.GetString("data_dir"),
-				ServerURL: viper.GetString("server_url"),
-			})
-			if err != nil {
-				return err
-			}
-			defer slog.Info("Bye!")
-			return c.Start(cmd.Context())
-		},
-	}
-
-	rootCmd.Flags().StringP("email", "e", "", "Email for the SyftBox datasite")
-	rootCmd.Flags().StringP("datadir", "d", defaultDataDir, "SyftBox Data Directory")
-	rootCmd.Flags().StringP("server", "s", defaultServerURL, "SyftBox Server")
-
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
@@ -74,10 +79,15 @@ func main() {
 
 func loadConfig(cmd *cobra.Command) error {
 	// config path
-	viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
-	viper.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
-	viper.SetConfigName(configFileName)                         // Name of config file (without extension)
-	viper.SetConfigType("json")
+	if cmd.Flag("config").Changed {
+		configFilePath, _ := cmd.Flags().GetString("config")
+		viper.SetConfigFile(configFilePath)
+	} else {
+		viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
+		viper.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
+		viper.SetConfigName(configFileName)                         // Name of config file (without extension)
+		viper.SetConfigType("json")
+	}
 
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
@@ -90,6 +100,9 @@ func loadConfig(cmd *cobra.Command) error {
 	viper.BindPFlag("email", cmd.Flags().Lookup("email"))
 	viper.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
 	viper.BindPFlag("server_url", cmd.Flags().Lookup("server"))
+
+	// env only
+	viper.SetDefault("apps_enabled", true)
 
 	// Set up environment variables
 	viper.SetEnvPrefix("SYFTBOX")

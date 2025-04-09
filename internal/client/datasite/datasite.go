@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	appsDir      = "apis"
+	appsDir      = "apps"
 	logsDir      = "logs"
 	datasitesDir = "datasites"
 	publicDir    = "public"

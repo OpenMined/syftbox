@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	pingPeriod     = 60 * time.Second
-	writeTimeout   = 10 * time.Second
+	pingPeriod     = 15 * time.Second
+	writeTimeout   = 20 * time.Second
 	shutdownReason = "shutdown"
 )
 
@@ -108,10 +108,10 @@ func (c *websocketClient) readLoop(ctx context.Context) {
 }
 
 func (c *websocketClient) writeLoop(ctx context.Context) {
-	ticker := time.NewTicker(pingPeriod)
+	pingTicker := time.NewTicker(pingPeriod)
 	defer func() {
 		slog.Debug("wsclient writer shutdown", "id", c.Id)
-		ticker.Stop()
+		pingTicker.Stop()
 		c.wg.Done()
 		c.closeConnection(websocket.StatusNormalClosure, shutdownReason)
 	}()
@@ -130,7 +130,7 @@ func (c *websocketClient) writeLoop(ctx context.Context) {
 				return
 			}
 
-		case <-ticker.C:
+		case <-pingTicker.C:
 
 			// ping the client
 			ctxWrite, cancel := context.WithTimeout(ctx, writeTimeout)

@@ -14,9 +14,39 @@ gen-certs:
     mkdir certs
     mkcert -install -cert-file certs/cert.pem -key-file certs/cert.key localhost 127.0.0.1
 
+[group('dev')] 
+run-minio:
+    docker run -d \
+      --name syftbox-minio \
+      -p 9000:9000 \
+      -p 9001:9001 \
+      -e MINIO_ROOT_USER=minioadmin \
+      -e MINIO_ROOT_PASSWORD=minioadmin \
+      -v minio-data:/data \
+      -v $(pwd)/minio/init.d:/etc/minio/init.d \
+      minio/minio server /data --console-address ':9001' & \
+    sleep 1 && \
+    docker exec syftbox-minio /etc/minio/init.d/setup.sh
+
 [group('dev')]
-run-server: gen-certs
-    go run -tags="sonic avx" ./cmd/server --cert certs/cert.pem --key certs/cert.key
+destroy-minio:
+    docker rm -f syftbox-minio && docker volume rm minio-data || true
+
+[group('dev')]
+ssh-minio:
+    docker exec -it syftbox-minio bash
+
+[group('dev')]
+run-server *ARGS: gen-certs
+    go run -tags="sonic avx" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ARGS}}
+
+[group('dev')]
+run-client *ARGS:
+    go run -tags="sonic avx" ./cmd/client {{ARGS}}
+
+[group('dev')]
+run-tests:
+    go test -v -cover ./...
 
 [group('build')]
 build-client:
@@ -43,3 +73,7 @@ deploy: build-all
     ssh syftbox-yash "sudo systemctl restart syftgo"
 
     rm -rf releases
+
+[group('utils')]
+setup-toolchain:
+    brew install FiloSottile/musl-cross/musl-cross
