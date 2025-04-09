@@ -1,7 +1,9 @@
 package client
 
 type Config struct {
-	DataDir   string
-	Email     string
-	ServerURL string
+	Path        string
+	DataDir     string
+	Email       string
+	ServerURL   string
+	AppsEnabled bool
 }
