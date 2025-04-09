@@ -51,9 +51,11 @@ func main() {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := client.New(&client.Config{
-				Email:     viper.GetString("email"),
-				DataDir:   viper.GetString("data_dir"),
-				ServerURL: viper.GetString("server_url"),
+				Path:        viper.ConfigFileUsed(),
+				Email:       viper.GetString("email"),
+				DataDir:     viper.GetString("data_dir"),
+				ServerURL:   viper.GetString("server_url"),
+				AppsEnabled: viper.GetBool("apps_enabled"),
 			})
 			if err != nil {
 				return err
@@ -90,6 +92,9 @@ func loadConfig(cmd *cobra.Command) error {
 	viper.BindPFlag("email", cmd.Flags().Lookup("email"))
 	viper.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
 	viper.BindPFlag("server_url", cmd.Flags().Lookup("server"))
+
+	// env only
+	viper.SetDefault("apps_enabled", true)
 
 	// Set up environment variables
 	viper.SetEnvPrefix("SYFTBOX")

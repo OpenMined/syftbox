@@ -30,7 +30,7 @@ func New(config *Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to create api: %w", err)
 	}
 
-	appSched := apps.NewScheduler(ds.AppsDir)
+	appSched := apps.NewScheduler(ds.AppsDir, config.Path)
 
 	sync := sync.NewManager(api, ds)
 
@@ -60,8 +60,12 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	// Start app scheduler
-	if err := c.appScheduler.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start app scheduler: %w", err)
+	if c.config.AppsEnabled {
+		if err := c.appScheduler.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start app scheduler: %w", err)
+		}
+	} else {
+		slog.Info("apps disabled")
 	}
 
 	<-ctx.Done()
