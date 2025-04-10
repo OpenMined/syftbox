@@ -264,7 +264,10 @@ func (s *Server) checkPermission(user string, path string, access acl.AccessLeve
 }
 
 func isRpc(path string) bool {
-	return strings.Contains(path, "/rpc/") && (strings.HasSuffix(path, ".request") || strings.HasSuffix(path, ".response"))
+	return strings.Contains(path, "/rpc/") &&
+		(strings.HasSuffix(path, ".request") ||
+			strings.HasSuffix(path, ".response") ||
+			strings.HasSuffix(path, "rpc.schema.json"))
 }
 
 // func (s *Server) handleFileDelete(msg *ws.ClientMessage) {
