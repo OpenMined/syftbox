@@ -17,7 +17,10 @@ import (
 )
 
 //go:embed templates/install.sh
-var installScript string
+var installShell string
+
+//go:embed templates/install.ps1
+var installPowershell string
 
 func SetupRoutes(svc *Services, hub *wsV1.WebsocketHub) http.Handler {
 	r := gin.Default()
@@ -32,7 +35,8 @@ func SetupRoutes(svc *Services, hub *wsV1.WebsocketHub) http.Handler {
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
-	r.GET("/install.sh", InstallHeader)
+	r.GET("/install.sh", InstallShell)
+	r.GET("/install.ps1", InstallPowershell)
 	r.GET("/datasites/*filepath", explorer.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
@@ -82,10 +86,16 @@ func HealthHandler(ctx *gin.Context) {
 	})
 }
 
-func InstallHeader(ctx *gin.Context) {
+func InstallShell(ctx *gin.Context) {
 	ctx.Header("Content-Type", "application/x-sh")
 	ctx.Header("Content-Disposition", "attachment; filename=install.sh")
-	ctx.String(http.StatusOK, installScript)
+	ctx.String(http.StatusOK, installShell)
+}
+
+func InstallPowershell(ctx *gin.Context) {
+	ctx.Header("Content-Type", "application/x-powershell")
+	ctx.Header("Content-Disposition", "attachment; filename=install.ps1")
+	ctx.String(http.StatusOK, installPowershell)
 }
 
 func init() {
