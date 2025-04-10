@@ -1,17 +1,20 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/yashgorana/syftbox-go/internal/db"
 	"github.com/yashgorana/syftbox-go/internal/server/acl"
+	"github.com/yashgorana/syftbox-go/internal/server/blob"
 	"github.com/yashgorana/syftbox-go/internal/server/datasite"
 	"github.com/yashgorana/syftbox-go/internal/server/v1/ws"
 	"github.com/yashgorana/syftbox-go/internal/syftmsg"
@@ -208,19 +211,18 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 
 	from := msg.Info.User
 
-	// check permissions
-	if err := s.svc.ACL.CanAccess(
-		&acl.User{ID: from, IsOwner: datasite.IsOwner(data.Path, from)},
-		&acl.File{Path: data.Path, Size: data.Length},
-		acl.AccessWrite,
-	); err != nil {
-		slog.Warn("write permission denied", "msgId", msg.Message.Id, "from", from, "path", data.Path, "err", err)
+	if err := s.checkPermission(from, data.Path, acl.AccessWrite); err != nil {
+		slog.Warn("write permission denied",
+			"msgId", msg.Message.Id,
+			"from", from,
+			"path", data.Path,
+			"err", err)
 		errMsg := syftmsg.NewError(http.StatusForbidden, data.Path, "permission denied for write operation")
 		s.hub.SendMessage(msg.ClientId, errMsg)
 		return
 	}
 
-	slog.Info("FILE_WRITE", "client", from, "msgId", msg.Message.Id, "path", data.Path, "size", data.Length)
+	slog.Info("ws file write", "client", from, "msgId", msg.Message.Id, "path", data.Path, "size", data.Length)
 
 	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
 		to := info.User
@@ -228,15 +230,41 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			return false
 		}
 
-		if err := s.svc.ACL.CanAccess(
-			&acl.User{ID: to, IsOwner: datasite.IsOwner(data.Path, to)},
-			&acl.File{Path: data.Path, Size: data.Length},
-			acl.AccessRead,
-		); err != nil {
+		if err := s.checkPermission(to, data.Path, acl.AccessRead); err != nil {
+			slog.Warn("read permission denied",
+				"msgId", msg.Message.Id,
+				"from", from,
+				"to", to,
+				"path", data.Path,
+				"err", err)
 			return false
 		}
+
 		return true
 	})
+
+	s.svc.Blob.Client().PutObject(context.Background(), &blob.PutObjectParams{
+		Key:  data.Path,
+		ETag: msg.Message.Id,
+		Body: bytes.NewReader(data.Content),
+		Size: data.Length,
+	})
+}
+
+func (s *Server) checkPermission(user string, path string, access acl.AccessLevel) error {
+	// todo remove hax
+	if isRpc(path) {
+		return nil
+	}
+	return s.svc.ACL.CanAccess(
+		&acl.User{ID: user, IsOwner: datasite.IsOwner(path, user)},
+		&acl.File{Path: path},
+		access,
+	)
+}
+
+func isRpc(path string) bool {
+	return strings.Contains(path, "/rpc/") && (strings.HasSuffix(path, ".request") || strings.HasSuffix(path, ".response"))
 }
 
 // func (s *Server) handleFileDelete(msg *ws.ClientMessage) {

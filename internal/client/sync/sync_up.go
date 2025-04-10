@@ -26,7 +26,7 @@ func (sm *SyncManager) handleFileEvents(ctx context.Context) {
 				continue
 			}
 
-			if strings.HasSuffix(path, ".request") || strings.HasSuffix(path, ".response") || strings.HasSuffix(path, ".txt") || strings.HasSuffix(path, "rpc.schema.json") {
+			if strings.HasSuffix(path, ".request") || strings.HasSuffix(path, ".response") || strings.HasSuffix(path, "syftperm.yaml") || strings.HasSuffix(path, "rpc.schema.json") {
 				sm.writePriority(path)
 			} else {
 				// sm.handleEvent(ctx, event.Path)
