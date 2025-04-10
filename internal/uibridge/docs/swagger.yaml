@@ -1,0 +1,88 @@
+basePath: /
+definitions:
+  errors.ErrorResponse:
+    description: Standardized error response structure
+    properties:
+      code:
+        description: Error code identifier
+        example: unauthorized
+        type: string
+      details:
+        additionalProperties: true
+        description: Optional additional error details
+        type: object
+      message:
+        description: Human-readable error message
+        example: Authentication required
+        type: string
+    type: object
+  models.Health:
+    properties:
+      status:
+        description: Status is the health status ("healthy" or "unhealthy").
+        type: string
+      timestamp:
+        description: Timestamp is when the health check was performed.
+        type: string
+    type: object
+  models.Status:
+    properties:
+      status:
+        description: Status indicates whether the service is online or offline.
+        type: string
+      timestamp:
+        description: Timestamp is when the status was checked.
+        type: string
+    type: object
+info:
+  contact: {}
+  description: API bridge server for SyftUI
+  title: SyftBox UI Bridge API
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      description: Returns the health status of the service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Health'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      summary: Get health status
+      tags:
+      - health
+  /v1/status:
+    get:
+      description: Returns the current status of the service
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Status'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/errors.ErrorResponse'
+      security:
+      - APIToken: []
+      summary: Get service status
+      tags:
+      - status
+securityDefinitions:
+  APIToken:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -1,0 +1,131 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "API bridge server for SyftUI",
+        "title": "SyftBox UI Bridge API",
+        "contact": {},
+        "version": "0.1.0"
+    },
+    "basePath": "/",
+    "paths": {
+        "/health": {
+            "get": {
+                "description": "Returns the health status of the service",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "health"
+                ],
+                "summary": "Get health status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Health"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/status": {
+            "get": {
+                "security": [
+                    {
+                        "APIToken": []
+                    }
+                ],
+                "description": "Returns the current status of the service",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "status"
+                ],
+                "summary": "Get service status",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Status"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/errors.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "errors.ErrorResponse": {
+            "description": "Standardized error response structure",
+            "type": "object",
+            "properties": {
+                "code": {
+                    "description": "Error code identifier",
+                    "type": "string",
+                    "example": "unauthorized"
+                },
+                "details": {
+                    "description": "Optional additional error details",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "message": {
+                    "description": "Human-readable error message",
+                    "type": "string",
+                    "example": "Authentication required"
+                }
+            }
+        },
+        "models.Health": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "description": "Status is the health status (\"healthy\" or \"unhealthy\").",
+                    "type": "string"
+                },
+                "timestamp": {
+                    "description": "Timestamp is when the health check was performed.",
+                    "type": "string"
+                }
+            }
+        },
+        "models.Status": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "description": "Status indicates whether the service is online or offline.",
+                    "type": "string"
+                },
+                "timestamp": {
+                    "description": "Timestamp is when the status was checked.",
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "APIToken": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
+}
