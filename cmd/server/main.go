@@ -53,7 +53,10 @@ func main() {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return loadConfig(cmd)
 		},
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
 			dataDir, err := utils.ResolvePath(viper.GetString("data_dir"))
 			if err != nil {
 				return err
@@ -93,7 +96,6 @@ func main() {
 				return err
 			}
 
-			slog.Info("Server created successfully, starting...")
 			defer slog.Info("Bye!")
 			return c.Start(cmd.Context())
 		},
@@ -139,10 +141,6 @@ func loadConfig(cmd *cobra.Command) error {
 	viper.SetDefault("blob.endpoint", defaultBlobEndpoint)
 	viper.SetDefault("blob.access_key", defaultBlobAccessKey)
 	viper.SetDefault("blob.secret_key", defaultBlobSecretKey)
-
-	for key, value := range viper.AllSettings() {
-		slog.Debug("Config", key, value)
-	}
 
 	return nil
 }

@@ -6,9 +6,6 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/server/acl"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
-	"github.com/yashgorana/syftbox-go/internal/server/datasite"
 	"github.com/yashgorana/syftbox-go/internal/server/explorer"
 	"github.com/yashgorana/syftbox-go/internal/server/middlewares"
 	blobHandler "github.com/yashgorana/syftbox-go/internal/server/v1/blob"
@@ -22,13 +19,13 @@ import (
 //go:embed templates/install.sh
 var installScript string
 
-func SetupRoutes(hub *wsV1.WebsocketHub, svcBlob *blob.BlobService, svcDatasite *datasite.DatasiteService, svcAcl *acl.AclService) http.Handler {
+func SetupRoutes(svc *Services, hub *wsV1.WebsocketHub) http.Handler {
 	r := gin.Default()
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
-	blob := blobHandler.New(svcBlob)
-	ds := datasiteHandler.New(svcDatasite)
-	explorer := explorer.New(svcBlob, svcAcl)
+	blob := blobHandler.New(svc.Blob)
+	ds := datasiteHandler.New(svc.Datasite)
+	explorer := explorer.New(svc.Blob, svc.ACL)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())

@@ -25,11 +25,8 @@ func NewDatasiteService(blobSvc *blob.BlobService, aclSvc *acl.AclService) *Data
 	}
 }
 
-func (d *DatasiteService) Init(ctx context.Context) error {
-	if err := d.blobSvc.Start(ctx); err != nil {
-		return fmt.Errorf("error starting blob service: %w", err)
-	}
-
+func (d *DatasiteService) Start(ctx context.Context) error {
+	slog.Debug("datasite service start")
 	// Fetch the ACL files
 	start := time.Now()
 	acls, err := d.ListAclFiles()
@@ -69,6 +66,11 @@ func (d *DatasiteService) Init(ctx context.Context) error {
 	}
 	slog.Debug("acl cache warm", "took", time.Since(start))
 
+	return nil
+}
+
+func (d *DatasiteService) Shutdown(ctx context.Context) error {
+	slog.Debug("datasite service shutdown")
 	return nil
 }
 

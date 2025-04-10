@@ -79,6 +79,7 @@ func WithDB(db *sqlx.DB) *IndexConfig {
 }
 
 func (b *BlobService) Start(ctx context.Context) error {
+	slog.Debug("blob service start")
 	b.client.setHooks(&blobClientHooks{
 		AfterPutObject:    b.afterPutObject,
 		AfterDeleteObject: b.afterDeleteObjects,
@@ -87,8 +88,9 @@ func (b *BlobService) Start(ctx context.Context) error {
 	return b.indexer.Start(ctx)
 }
 
-// Close releases any resources used by the service
-func (b *BlobService) Close() error {
+// Shutdown releases any resources used by the service
+func (b *BlobService) Shutdown(ctx context.Context) error {
+	slog.Debug("blob service shutdown")
 	return b.index.Close()
 }
 
