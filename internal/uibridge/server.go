@@ -127,6 +127,9 @@ func (s *Server) Start(ctx context.Context) error {
 	fmt.Printf("Token: %s\n\n", s.config.Token)
 	fmt.Printf("To access SyftBox, open this URL in a browser:\n    https://syftbox.openmined.org/#host=%s&port=%s&token=%s\n\n",
 		host, port, s.config.Token)
+	if s.config.EnableSwagger {
+		fmt.Printf("Swagger UI: http://%s/swagger/index.html\n\n", addr)
+	}
 
 	// Start the server in a goroutine
 	go func() {
