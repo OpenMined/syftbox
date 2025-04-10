@@ -94,14 +94,6 @@ func (w *LocalDatasite) createDefaultAcl() error {
 	return nil
 }
 
-func (w *LocalDatasite) ToDatasitePath(path string) *DatasitePath {
-	relative := w.RelativePath(path)
-	return &DatasitePath{
-		Relative: relative,
-		Absolute: filepath.Join(w.DatasitesDir, relative),
-	}
-}
-
 func (w *LocalDatasite) AbsolutePath(path string) string {
 	return filepath.Join(w.DatasitesDir, path)
 }
@@ -109,22 +101,14 @@ func (w *LocalDatasite) AbsolutePath(path string) string {
 func (w *LocalDatasite) RelativePath(path string) string {
 	path, _ = utils.ResolvePath(path)
 	path = strings.Replace(path, w.DatasitesDir, "", 1)
-	return strings.TrimLeft(filepath.Clean(path), pathSep)
+	return strings.ReplaceAll(strings.TrimLeft(filepath.Clean(path), pathSep), pathSep, "/")
 }
 
-type DatasitePath struct {
-	Relative string
-	Absolute string
-}
-
-func (p *DatasitePath) Owner() string {
-	parts := strings.Split(p.Relative, "/")
+func (w *LocalDatasite) PathOwner(path string) string {
+	p := w.RelativePath(path)
+	parts := strings.Split(p, "/")
 	if len(parts) < 2 {
 		return ""
 	}
 	return parts[1]
-}
-
-func (p *DatasitePath) String() string {
-	return p.Relative
 }

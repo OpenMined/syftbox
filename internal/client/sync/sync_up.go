@@ -43,10 +43,7 @@ func (sm *SyncManager) handleFileEvents(ctx context.Context) {
 
 func (sm *SyncManager) writePriority(path string) {
 	timeNow := time.Now()
-	// 1. as datasite path
-	dsPath := sm.datasite.ToDatasitePath(path)
 
-	// 2. get file info
 	fileInfo, err := getFileInfo(path)
 	if err != nil {
 		slog.Error("priority write stat error", "error", err, "path", path)
@@ -54,11 +51,14 @@ func (sm *SyncManager) writePriority(path string) {
 	}
 
 	timeTaken := timeNow.Sub(fileInfo.ModTime)
-	slog.Info("priority write", "path", dsPath, "size", fileInfo.Size, "etag", fileInfo.Etag, "watchLatency", timeTaken)
+	relPath := sm.datasite.RelativePath(path)
+	slog.Info("priority write", "path", relPath,
+		"size", fileInfo.Size,
+		"etag", fileInfo.Etag,
+		"watchLatency", timeTaken)
 
-	// 3. send rpc message
 	message := syftmsg.NewFileWrite(
-		dsPath.Relative,
+		relPath,
 		fileInfo.Etag,
 		fileInfo.Size,
 		fileInfo.Content,
