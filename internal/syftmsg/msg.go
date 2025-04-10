@@ -1,17 +1,13 @@
-package message
+package syftmsg
 
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
-const (
-	MsgSystem MessageType = iota
-	MsgError
-	MsgFileWrite
-	MsgFileMove
-	MsgFileDelete
-)
+const IdSize = 3
 
 type Message struct {
 	Id   string      `json:"id"`
@@ -63,12 +59,6 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = fileDelete
-	case MsgFileMove:
-		var fileMove FileMove
-		if err := json.Unmarshal(temp.Data, &fileMove); err != nil {
-			return err
-		}
-		m.Data = fileMove
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}
@@ -76,29 +66,6 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type Error struct {
-	Code    int    `json:"cod"`
-	Path    string `json:"pth"`
-	Message string `json:"msg"`
-}
-
-type FileWrite struct {
-	Path    string `json:"pth"`
-	Etag    string `json:"etg"`
-	Length  int64  `json:"len"`
-	Content []byte `json:"con,omitempty"`
-}
-
-type FileDelete struct {
-	Path string `json:"pth"`
-}
-
-type FileMove struct {
-	From string `json:"frm"`
-	To   string `json:"to"`
-}
-
-type System struct {
-	SystemVersion string `json:"ver"`
-	Message       string `json:"msg"`
+func generateID() string {
+	return utils.TokenHex(IdSize)
 }

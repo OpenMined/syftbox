@@ -11,11 +11,11 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/yashgorana/syftbox-go/internal/db"
-	"github.com/yashgorana/syftbox-go/internal/message"
 	"github.com/yashgorana/syftbox-go/internal/server/acl"
 	"github.com/yashgorana/syftbox-go/internal/server/blob"
 	"github.com/yashgorana/syftbox-go/internal/server/datasite"
 	"github.com/yashgorana/syftbox-go/internal/server/v1/ws"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 )
 
 type Server struct {
@@ -140,7 +140,7 @@ func (s *Server) handleSocketMessages(ctx context.Context) {
 
 func (s *Server) onMessage(msg *ws.ClientMessage) {
 	switch msg.Message.Type {
-	case message.MsgFileWrite:
+	case syftmsg.MsgFileWrite:
 		s.handleFileWrite(msg)
 	// case message.MsgFileDelete:
 	// 	s.handleFileDelete(msg)
@@ -150,7 +150,7 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 }
 
 func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
-	data, _ := msg.Message.Data.(message.FileWrite)
+	data, _ := msg.Message.Data.(syftmsg.FileWrite)
 
 	from := msg.Info.User
 
@@ -161,7 +161,7 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 		acl.AccessWrite,
 	); err != nil {
 		slog.Warn("FILE_WRITE permissions error", "msgId", msg.Message.Id, "from", from, "path", data.Path, "err", err)
-		errMsg := message.NewError(http.StatusForbidden, data.Path, "no permissions to write the file")
+		errMsg := syftmsg.NewError(http.StatusForbidden, data.Path, "no permissions to write the file")
 		s.hub.SendMessage(msg.ClientId, errMsg)
 		return
 	}

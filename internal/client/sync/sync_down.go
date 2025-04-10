@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 )
 
 func (sm *SyncManager) handleSocketEvents(ctx context.Context) {
@@ -21,13 +21,13 @@ func (sm *SyncManager) handleSocketEvents(ctx context.Context) {
 			}
 
 			switch msg.Type {
-			case message.MsgSystem:
+			case syftmsg.MsgSystem:
 				sm.handleSystem(msg)
-			case message.MsgError:
+			case syftmsg.MsgError:
 				sm.handleError(msg)
-			case message.MsgFileWrite:
+			case syftmsg.MsgFileWrite:
 				sm.handleFileWrite(msg)
-			case message.MsgFileDelete:
+			case syftmsg.MsgFileDelete:
 				sm.handleFileDelete(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
@@ -36,13 +36,13 @@ func (sm *SyncManager) handleSocketEvents(ctx context.Context) {
 	}
 }
 
-func (sm *SyncManager) handleSystem(msg *message.Message) {
-	systemMsg := msg.Data.(message.System)
+func (sm *SyncManager) handleSystem(msg *syftmsg.Message) {
+	systemMsg := msg.Data.(syftmsg.System)
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "serverVersion", systemMsg.SystemVersion)
 }
 
-func (sm *SyncManager) handleError(msg *message.Message) {
-	errMsg, _ := msg.Data.(message.Error)
+func (sm *SyncManager) handleError(msg *syftmsg.Message) {
+	errMsg, _ := msg.Data.(syftmsg.Error)
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "message", errMsg.Message)
 
 	switch errMsg.Code {
@@ -55,8 +55,8 @@ func (sm *SyncManager) handleError(msg *message.Message) {
 	}
 }
 
-func (sm *SyncManager) handleFileWrite(msg *message.Message) {
-	createMsg, _ := msg.Data.(message.FileWrite)
+func (sm *SyncManager) handleFileWrite(msg *syftmsg.Message) {
+	createMsg, _ := msg.Data.(syftmsg.FileWrite)
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.Etag)
 
 	fullPath := sm.datasite.AbsolutePath(createMsg.Path)
@@ -69,7 +69,7 @@ func (sm *SyncManager) handleFileWrite(msg *message.Message) {
 	}
 }
 
-func (sm *SyncManager) handleFileDelete(msg *message.Message) {
-	deleteMsg, _ := msg.Data.(message.FileDelete)
+func (sm *SyncManager) handleFileDelete(msg *syftmsg.Message) {
+	deleteMsg, _ := msg.Data.(syftmsg.FileDelete)
 	slog.Warn("unhandled", "msgType", msg.Type, "msgId", msg.Id, "path", deleteMsg.Path)
 }

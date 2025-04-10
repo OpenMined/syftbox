@@ -1,8 +1,17 @@
-package message
+package syftmsg
 
 import "fmt"
 
 type MessageType uint16
+
+const (
+	MsgSystem MessageType = iota
+	MsgError
+	MsgFileWrite
+	MsgFileDelete
+	MsgAck
+	MsgNack
+)
 
 func (t MessageType) String() string {
 	switch t {
@@ -12,10 +21,12 @@ func (t MessageType) String() string {
 		return "ERROR"
 	case MsgFileWrite:
 		return "FILE_WRITE"
-	case MsgFileMove:
-		return "FILE_MOVE"
 	case MsgFileDelete:
 		return "FILE_DELETE"
+	case MsgAck:
+		return "ACK"
+	case MsgNack:
+		return "NACK"
 	default:
 		return fmt.Sprintf("???(%d)", t)
 	}

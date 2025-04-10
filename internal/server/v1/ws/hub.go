@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 type ClientMessage struct {
 	ClientId string
 	Info     *ClientInfo
-	Message  *message.Message
+	Message  *syftmsg.Message
 }
 
 type WebsocketHub struct {
@@ -108,12 +108,12 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 		Headers: ctx.Request.Header.Clone(),
 	})
 
-	client.MsgTx <- message.NewSystemMessage("0.5.0", "ok")
+	client.MsgTx <- syftmsg.NewSystemMessage("0.5.0", "ok")
 
 	h.register <- client
 }
 
-func (h *WebsocketHub) SendMessage(clientId string, msg *message.Message) {
+func (h *WebsocketHub) SendMessage(clientId string, msg *syftmsg.Message) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -123,7 +123,7 @@ func (h *WebsocketHub) SendMessage(clientId string, msg *message.Message) {
 }
 
 // SendMessageUser sends a message to all clients with the specified username
-func (h *WebsocketHub) SendMessageUser(user string, msg *message.Message) bool {
+func (h *WebsocketHub) SendMessageUser(user string, msg *syftmsg.Message) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -143,7 +143,7 @@ func (h *WebsocketHub) SendMessageUser(user string, msg *message.Message) bool {
 	return sent
 }
 
-func (h *WebsocketHub) Broadcast(msg *message.Message) {
+func (h *WebsocketHub) Broadcast(msg *syftmsg.Message) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -153,7 +153,7 @@ func (h *WebsocketHub) Broadcast(msg *message.Message) {
 }
 
 // BroadcastFiltered sends a message to all clients that match the filter
-func (h *WebsocketHub) BroadcastFiltered(msg *message.Message, predicate func(*ClientInfo) bool) {
+func (h *WebsocketHub) BroadcastFiltered(msg *syftmsg.Message, predicate func(*ClientInfo) bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 

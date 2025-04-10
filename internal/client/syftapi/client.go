@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 	"resty.dev/v3"
 )
 
@@ -99,11 +99,11 @@ func (s *SyftAPI) ConnectWebsocket(ctx context.Context) error {
 }
 
 // Messages returns a channel for receiving WebSocket events
-func (s *SyftAPI) Messages() <-chan *message.Message {
+func (s *SyftAPI) Messages() <-chan *syftmsg.Message {
 	return s.wsManager.Messages()
 }
 
-func (s *SyftAPI) SendMessage(message *message.Message) error {
+func (s *SyftAPI) SendMessage(message *syftmsg.Message) error {
 	return s.wsManager.SendMessage(message)
 }
 

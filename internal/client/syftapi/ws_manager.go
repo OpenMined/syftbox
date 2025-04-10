@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 )
 
 const (
@@ -28,7 +28,7 @@ var (
 type websocketManager struct {
 	url       string
 	wsClient  *websocketClient
-	messages  chan *message.Message
+	messages  chan *syftmsg.Message
 	ctx       context.Context
 	cancel    context.CancelFunc
 	mu        sync.RWMutex
@@ -48,7 +48,7 @@ func newWebsocketManager(wsURL string) *websocketManager {
 		url:         url,
 		ctx:         ctx,
 		cancel:      cancel,
-		messages:    make(chan *message.Message, 256),
+		messages:    make(chan *syftmsg.Message, 256),
 		authHeaders: make(map[string]string),
 	}
 }
@@ -94,12 +94,12 @@ func (m *websocketManager) IsConnected() bool {
 	return m.connected
 }
 
-func (m *websocketManager) Messages() <-chan *message.Message {
+func (m *websocketManager) Messages() <-chan *syftmsg.Message {
 	return m.messages
 }
 
 // SendMessage sends a message through the WebSocket
-func (m *websocketManager) SendMessage(message *message.Message) error {
+func (m *websocketManager) SendMessage(message *syftmsg.Message) error {
 	m.mu.RLock()
 	wsClient := m.wsClient
 	connected := m.connected

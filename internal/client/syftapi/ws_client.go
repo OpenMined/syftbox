@@ -11,7 +11,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
-	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 )
 
 const (
@@ -23,8 +23,8 @@ const (
 // websocketClient represents a connected WebSocket client.
 type websocketClient struct {
 	Id     string
-	MsgRx  chan *message.Message
-	MsgTx  chan *message.Message
+	MsgRx  chan *syftmsg.Message
+	MsgTx  chan *syftmsg.Message
 	Closed chan struct{}
 
 	conn      *websocket.Conn
@@ -36,8 +36,8 @@ type websocketClient struct {
 func newWebsocketClient(conn *websocket.Conn) *websocketClient {
 	return &websocketClient{
 		Id:     "",
-		MsgRx:  make(chan *message.Message, 8),
-		MsgTx:  make(chan *message.Message, 8),
+		MsgRx:  make(chan *syftmsg.Message, 8),
+		MsgTx:  make(chan *syftmsg.Message, 8),
 		Closed: make(chan struct{}),
 		wsDone: make(chan struct{}),
 		conn:   conn,
@@ -81,7 +81,7 @@ func (c *websocketClient) readLoop(ctx context.Context) {
 		c.closeConnection(websocket.StatusNormalClosure, shutdownReason)
 	}()
 
-	var data *message.Message
+	var data *syftmsg.Message
 
 	for {
 		err := wsjson.Read(ctx, c.conn, &data)

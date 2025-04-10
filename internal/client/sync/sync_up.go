@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
 )
 
 func (sm *SyncManager) handleFileEvents(ctx context.Context) {
@@ -57,7 +57,7 @@ func (sm *SyncManager) writePriority(path string) {
 	slog.Info("priority write", "path", dsPath, "size", fileInfo.Size, "etag", fileInfo.Etag, "watchLatency", timeTaken)
 
 	// 3. send rpc message
-	message := message.NewFileWrite(
+	message := syftmsg.NewFileWrite(
 		dsPath.Relative,
 		fileInfo.Etag,
 		fileInfo.Size,
