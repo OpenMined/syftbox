@@ -20,8 +20,9 @@ func TokenAuth(config TokenAuthConfig) gin.HandlerFunc {
 		token := c.Query("token")
 		if token == "" {
 			token = c.GetHeader("Authorization")
-			// Remove "Bearer " prefix if present
-			if len(token) > 7 && token[:7] == "Bearer " {
+			// Remove "Bearer " prefix if present (case-insensitive)
+			tokenLower := strings.ToLower(token)
+			if strings.HasPrefix(tokenLower, "bearer ") {
 				token = token[7:]
 			}
 		}
