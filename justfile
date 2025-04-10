@@ -50,11 +50,11 @@ run-tests:
 
 [group('build')]
 build-client:
-    goreleaser release --snapshot --clean --id syftbox_client
+    goreleaser build --snapshot --clean --id syftbox_client --id syftbox_client_macos
 
 [group('build')]
 build-server:
-    goreleaser release --snapshot --clean --id syftbox_server
+    goreleaser build --snapshot --clean --id syftbox_server
 
 [group('build')]
 build-all: 
