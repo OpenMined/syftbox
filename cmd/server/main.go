@@ -12,8 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/yashgorana/syftbox-go/internal/blob"
 	"github.com/yashgorana/syftbox-go/internal/server"
+	"github.com/yashgorana/syftbox-go/internal/server/blob"
 	"github.com/yashgorana/syftbox-go/internal/utils"
 	"github.com/yashgorana/syftbox-go/internal/version"
 )

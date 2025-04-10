@@ -10,20 +10,20 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/yashgorana/syftbox-go/internal/acl"
-	"github.com/yashgorana/syftbox-go/internal/blob"
-	"github.com/yashgorana/syftbox-go/internal/datasite"
 	"github.com/yashgorana/syftbox-go/internal/db"
 	"github.com/yashgorana/syftbox-go/internal/message"
+	"github.com/yashgorana/syftbox-go/internal/server/acl"
+	"github.com/yashgorana/syftbox-go/internal/server/blob"
+	"github.com/yashgorana/syftbox-go/internal/server/datasite"
 	"github.com/yashgorana/syftbox-go/internal/server/v1/ws"
 )
 
 type Server struct {
 	config *Config
 	server *http.Server
-	hub    *ws.WebsocketHub
 	db     *sqlx.DB
 
+	hub         *ws.WebsocketHub
 	blobSvc     *blob.BlobService
 	aclSvc      *acl.AclService
 	datasiteSvc *datasite.DatasiteService
