@@ -35,14 +35,15 @@ func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 }
 
 func (s *Services) Start(ctx context.Context) error {
-	if err := s.Datasite.Start(ctx); err != nil {
-		return fmt.Errorf("start datasite service: %w", err)
-	}
-
+	// first start blob service - it populates the blob index
 	if err := s.Blob.Start(ctx); err != nil {
 		return fmt.Errorf("start blob service: %w", err)
 	}
 
+	// then start datasite service
+	if err := s.Datasite.Start(ctx); err != nil {
+		return fmt.Errorf("start datasite service: %w", err)
+	}
 	return nil
 }
 
