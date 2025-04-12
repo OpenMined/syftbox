@@ -8,7 +8,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 const schemaSQL = `
@@ -23,82 +22,19 @@ CREATE INDEX IF NOT EXISTS idx_blobs_etag ON blobs(etag);
 CREATE INDEX IF NOT EXISTS idx_blobs_last_modified ON blobs(last_modified);
 `
 
-// SQLite pragmas for optimal performance
-const pragmasSQL = `
-PRAGMA journal_mode=WAL;
-PRAGMA temp_store=MEMORY;
-PRAGMA synchronous=NORMAL;
-PRAGMA foreign_keys=ON;
-PRAGMA cache_size=8000;
-PRAGMA mmap_size=268435456;
-PRAGMA busy_timeout=5000;
-`
-
 // BlobIndex provides access to the blob metadata stored in SQLite
 type BlobIndex struct {
 	db *sqlx.DB
 }
 
-// newBlobIndex creates a new in-memory index
-func newBlobIndex() (*BlobIndex, error) {
-	db, err := sqlx.Connect("sqlite3", ":memory:")
-	if err != nil {
-		return nil, fmt.Errorf("failed to open in-memory SQLite database: %w", err)
-	}
-
-	if _, err := db.Exec(pragmasSQL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to set SQLite pragmas: %w", err)
-	}
-
+// newBlobIndex creates a new index using an existing database connection
+func newBlobIndex(db *sqlx.DB) (*BlobIndex, error) {
 	idx := &BlobIndex{db: db}
-	if err := idx.initialize(); err != nil {
-		idx.db.Close()
+	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("failed to initialize index: %w", err)
 	}
 
 	return idx, nil
-}
-
-// newBlobIndexFromPath creates a new index using a SQLite database at the specified path
-func newBlobIndexFromPath(path string) (*BlobIndex, error) {
-	if err := utils.EnsureParent(path); err != nil {
-		return nil, fmt.Errorf("failed to ensure parent directory for %s: %w", path, err)
-	}
-
-	db, err := sqlx.Connect("sqlite3", path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open SQLite database at %s: %w", path, err)
-	}
-
-	if _, err := db.Exec(pragmasSQL); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to set SQLite pragmas: %w", err)
-	}
-
-	idx := &BlobIndex{db: db}
-	if err := idx.initialize(); err != nil {
-		idx.db.Close()
-		return nil, fmt.Errorf("failed to initialize index: %w", err)
-	}
-
-	return idx, nil
-}
-
-// newBlobIndexFromDB creates a new index using an existing database connection
-func newBlobIndexFromDB(db *sqlx.DB) (*BlobIndex, error) {
-	idx := &BlobIndex{db: db}
-	if err := idx.initialize(); err != nil {
-		return nil, fmt.Errorf("failed to initialize index: %w", err)
-	}
-
-	return idx, nil
-}
-
-// initialize creates the necessary tables if they don't exist
-func (bi *BlobIndex) initialize() error {
-	_, err := bi.db.Exec(schemaSQL)
-	return err
 }
 
 // Close releases resources used by the index
@@ -395,3 +331,6 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 
 	return result, nil
 }
+
+// soft check interface, incase we want to add a different implementation
+var _ IBlobIndex = (*BlobIndex)(nil)

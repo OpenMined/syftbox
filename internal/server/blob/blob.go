@@ -2,7 +2,6 @@ package blob
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -16,8 +15,8 @@ type BlobService struct {
 	indexer *blobIndexer
 }
 
-func NewBlobService(cfg *S3BlobConfig, idxCfg *IndexConfig) (*BlobService, error) {
-	index, err := createIndex(idxCfg)
+func NewBlobService(cfg *S3BlobConfig, db *sqlx.DB) (*BlobService, error) {
+	index, err := newBlobIndex(db)
 	if err != nil {
 		return nil, err
 	}
@@ -29,17 +28,6 @@ func NewBlobService(cfg *S3BlobConfig, idxCfg *IndexConfig) (*BlobService, error
 	svc.indexer = newBlobIndexer(svc.client, svc.index)
 
 	return svc, nil
-}
-
-func createIndex(idxCfg *IndexConfig) (*BlobIndex, error) {
-	if idxCfg == nil {
-		return newBlobIndex()
-	} else if idxCfg.DBPath != "" {
-		return newBlobIndexFromPath(idxCfg.DBPath)
-	} else if idxCfg.DB != nil {
-		return newBlobIndexFromDB(idxCfg.DB)
-	}
-	return nil, fmt.Errorf("invalid index configuration")
 }
 
 // NewS3BucketConfig creates a configuration for an S3 bucket
@@ -62,19 +50,6 @@ func WithMinioConfig(url, bucketName, accessKey, secretKey string) *S3BlobConfig
 		AccessKey:     accessKey,
 		SecretKey:     secretKey,
 		UseAccelerate: false,
-	}
-}
-
-func WithDBPath(path string) *IndexConfig {
-	return &IndexConfig{
-		DBPath: path,
-	}
-}
-
-// WithDB creates an index configuration using an existing DB connection
-func WithDB(db *sqlx.DB) *IndexConfig {
-	return &IndexConfig{
-		DB: db,
 	}
 }
 

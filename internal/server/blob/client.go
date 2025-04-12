@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// not enforced yet
 type IBlobClient interface {
 	GetObject(ctx context.Context, key string) (*GetObjectResponse, error)
 	GetObjectPresigned(ctx context.Context, key string) (string, error)

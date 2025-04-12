@@ -11,8 +11,7 @@ import (
 	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
-// TestInsertBurst tests the concurrent insertion of blobs into the database.
-func TestInsertBurst(t *testing.T) {
+func TestBlobIndexBurstInsert(t *testing.T) {
 	path := t.TempDir()
 	dbPath := filepath.Join(path, "test.db")
 
@@ -20,7 +19,7 @@ func TestInsertBurst(t *testing.T) {
 	db, err := db.NewSqliteDb(db.WithPath(dbPath), db.WithMaxOpenConns(1))
 	assert.NoError(t, err)
 
-	index, err := createIndex(WithDB(db))
+	index, err := newBlobIndex(db)
 	assert.NoError(t, err)
 
 	const numOperations = 10000
