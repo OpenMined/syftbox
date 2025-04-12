@@ -1,5 +1,11 @@
-GOX := `echo $(go env GOPATH)/bin/gox`
+syftbox_version := "0.5.0"
+commit := `git rev-parse --short HEAD`
+build_date := `date -u +%Y-%m-%dT%H:%M:%SZ`
 
+LD_FLAGS := "-s -w" + \
+    " -X github.com/yashgorana/syftbox-go/internal/version.Version=" + syftbox_version + \
+    " -X github.com/yashgorana/syftbox-go/internal/version.Revision=" + commit + \
+    " -X github.com/yashgorana/syftbox-go/internal/version.BuildDate=" + build_date
 
 default:
     just --list
@@ -47,6 +53,14 @@ run-client *ARGS:
 [group('dev')]
 run-tests:
     go test -v -cover ./...
+
+[group('build')]
+[doc('Needs a platform specific compiler. Example: CC="aarch64-linux-musl-gcc" just build-client-target goos=linux goarch=arm64')]
+build-client-target goos=`go env GOOS` goarch=`go env GOARCH`:
+    rm -rf .out
+    mkdir -p .out
+    CGO_ENABLED=1 GOOS={{goos}} GOARCH={{goarch}} \
+    go build -trimpath -ldflags="{{ LD_FLAGS }}" -o .out/syftbox_client_{{goos}}_{{goarch}} ./cmd/client
 
 [group('build')]
 build-client:
