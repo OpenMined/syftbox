@@ -7,7 +7,7 @@ import (
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
-	appErrors "github.com/yashgorana/syftbox-go/internal/uibridge/errors"
+	appErrors "github.com/yashgorana/syftbox-go/internal/localhttp/errors"
 )
 
 // ErrorResponse represents an error response

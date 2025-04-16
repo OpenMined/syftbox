@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/internal/uibridge/models"
+	"github.com/yashgorana/syftbox-go/internal/localhttp/models"
 )
 
 // StatusService provides service status information.

@@ -1,4 +1,4 @@
-package uibridge
+package localhttp
 
 import (
 	"context"
@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/uibridge/controllers"
-	_ "github.com/yashgorana/syftbox-go/internal/uibridge/docs" // use underscore to only run the init function
-	"github.com/yashgorana/syftbox-go/internal/uibridge/middleware"
-	"github.com/yashgorana/syftbox-go/internal/uibridge/services"
+	"github.com/yashgorana/syftbox-go/internal/localhttp/controllers"
+	_ "github.com/yashgorana/syftbox-go/internal/localhttp/docs" // use underscore to only run the init function
+	"github.com/yashgorana/syftbox-go/internal/localhttp/middleware"
+	"github.com/yashgorana/syftbox-go/internal/localhttp/services"
 	"github.com/yashgorana/syftbox-go/internal/utils"
 
 	swaggerFiles "github.com/swaggo/files"     // swagger embed files

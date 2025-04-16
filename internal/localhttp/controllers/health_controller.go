@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/uibridge/errors"
-	"github.com/yashgorana/syftbox-go/internal/uibridge/services"
+	"github.com/yashgorana/syftbox-go/internal/localhttp/errors"
+	"github.com/yashgorana/syftbox-go/internal/localhttp/services"
 )
 
 // HealthController handles health check requests.

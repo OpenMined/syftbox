@@ -1,6 +1,6 @@
 package client
 
-import "github.com/yashgorana/syftbox-go/internal/uibridge"
+import "github.com/yashgorana/syftbox-go/internal/localhttp"
 
 type Config struct {
 	Path        string
@@ -8,5 +8,5 @@ type Config struct {
 	Email       string
 	ServerURL   string
 	AppsEnabled bool
-	UIBridge    uibridge.Config
+	UIBridge    localhttp.Config
 }

@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/internal/client"
-	"github.com/yashgorana/syftbox-go/internal/uibridge"
+	"github.com/yashgorana/syftbox-go/internal/localhttp"
 	"github.com/yashgorana/syftbox-go/internal/utils"
 	"github.com/yashgorana/syftbox-go/internal/version"
 )
@@ -45,7 +45,7 @@ var rootCmd = &cobra.Command{
 
 		// Generate Swagger docs if enabled
 		if viper.GetBool("ui") && viper.GetBool("ui_swagger") {
-			uibridge.GenerateSwagger()
+			localhttp.GenerateSwagger()
 		}
 
 		c, err := client.New(&client.Config{
@@ -54,7 +54,7 @@ var rootCmd = &cobra.Command{
 			DataDir:     viper.GetString("data_dir"),
 			ServerURL:   viper.GetString("server_url"),
 			AppsEnabled: viper.GetBool("apps_enabled"),
-			UIBridge: uibridge.Config{
+			UIBridge: localhttp.Config{
 				Enabled:        viper.GetBool("ui"),
 				Host:           viper.GetString("ui_host"),
 				Port:           viper.GetInt("ui_port"),

@@ -1,4 +1,4 @@
-package uibridge
+package localhttp
 
 import "time"
 

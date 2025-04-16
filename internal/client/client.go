@@ -9,7 +9,7 @@ import (
 	"github.com/yashgorana/syftbox-go/internal/client/datasite"
 	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
 	"github.com/yashgorana/syftbox-go/internal/client/sync"
-	"github.com/yashgorana/syftbox-go/internal/uibridge"
+	"github.com/yashgorana/syftbox-go/internal/localhttp"
 )
 
 type Client struct {
@@ -18,7 +18,7 @@ type Client struct {
 	api          *syftapi.SyftAPI
 	sync         *sync.SyncManager
 	appScheduler *apps.AppScheduler
-	uiServer     *uibridge.Server
+	uiServer     *localhttp.Server
 }
 
 func New(config *Config) (*Client, error) {
@@ -37,9 +37,9 @@ func New(config *Config) (*Client, error) {
 	sync := sync.NewManager(api, ds)
 
 	// Create UI bridge server if enabled
-	var uiServer *uibridge.Server
+	var uiServer *localhttp.Server
 	if config.UIBridge.Enabled {
-		uiServer, err = uibridge.New(config.UIBridge)
+		uiServer, err = localhttp.New(config.UIBridge)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create UI bridge server: %w", err)
 		}
