@@ -7,15 +7,15 @@ import (
 
 	"github.com/yashgorana/syftbox-go/internal/client/apps"
 	"github.com/yashgorana/syftbox-go/internal/client/datasite"
-	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
 	"github.com/yashgorana/syftbox-go/internal/client/sync"
 	"github.com/yashgorana/syftbox-go/internal/localhttp"
+	"github.com/yashgorana/syftbox-go/internal/syftsdk"
 )
 
 type Client struct {
 	config       *Config
 	datasite     *datasite.LocalDatasite
-	api          *syftapi.SyftAPI
+	sdk          *syftsdk.SyftSDK
 	sync         *sync.SyncManager
 	appScheduler *apps.AppScheduler
 	uiServer     *localhttp.Server
@@ -27,14 +27,14 @@ func New(config *Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to create datasite: %w", err)
 	}
 
-	api, err := syftapi.New(config.ServerURL)
+	sdk, err := syftsdk.New(config.ServerURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create api: %w", err)
+		return nil, fmt.Errorf("failed to create sdk: %w", err)
 	}
 
 	appSched := apps.NewScheduler(ds.AppsDir, config.Path)
 
-	sync := sync.NewManager(api, ds)
+	sync := sync.NewManager(sdk, ds)
 
 	// Create UI bridge server if enabled
 	var uiServer *localhttp.Server
@@ -48,7 +48,7 @@ func New(config *Config) (*Client, error) {
 	return &Client{
 		config:       config,
 		datasite:     ds,
-		api:          api,
+		sdk:          sdk,
 		sync:         sync,
 		appScheduler: appSched,
 		uiServer:     uiServer,
@@ -62,7 +62,7 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to bootstrap datasite: %w", err)
 	}
 
-	if err := c.api.Login(c.config.Email); err != nil {
+	if err := c.sdk.Login(c.config.Email); err != nil {
 		return fmt.Errorf("failed to login: %w", err)
 	}
 
@@ -100,7 +100,7 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	c.sync.Stop()
-	c.api.Close()
+	c.sdk.Close()
 	slog.Info("syftgo client stop")
 	return nil
 }

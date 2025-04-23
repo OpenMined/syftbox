@@ -11,30 +11,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/radovskyb/watcher"
 	"github.com/rjeczalik/notify"
 	"github.com/yashgorana/syftbox-go/internal/client/datasite"
-	"github.com/yashgorana/syftbox-go/internal/client/syftapi"
+	"github.com/yashgorana/syftbox-go/internal/syftsdk"
 )
 
 type SyncManager struct {
-	api      *syftapi.SyftAPI
+	sdk      *syftsdk.SyftSDK
 	datasite *datasite.LocalDatasite
 
 	watchedEvents chan notify.EventInfo
-	pollEvents    chan watcher.Event
 
 	syncd map[string]bool
 	mu    sync.Mutex
 	wg    sync.WaitGroup
 }
 
-func NewManager(api *syftapi.SyftAPI, datasite *datasite.LocalDatasite) *SyncManager {
+func NewManager(sdk *syftsdk.SyftSDK, datasite *datasite.LocalDatasite) *SyncManager {
 	return &SyncManager{
-		api:           api,
+		sdk:           sdk,
 		datasite:      datasite,
 		watchedEvents: make(chan notify.EventInfo, 16),
-		pollEvents:    make(chan watcher.Event, 16),
 		syncd:         make(map[string]bool),
 	}
 }
@@ -47,7 +44,7 @@ func (sm *SyncManager) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := sm.api.ConnectWebsocket(ctx); err != nil {
+	if err := sm.sdk.Events.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect websocket: %w", err)
 	}
 
@@ -69,7 +66,6 @@ func (sm *SyncManager) Start(ctx context.Context) error {
 func (sm *SyncManager) Stop() {
 	sm.wg.Wait()
 	close(sm.watchedEvents)
-	close(sm.pollEvents)
 	slog.Info("sync stop")
 }
 
@@ -80,9 +76,6 @@ func (sm *SyncManager) startWatcher(ctx context.Context) error {
 		return fmt.Errorf("fs notify error: %w", err)
 	}
 
-	if err := sm.startPollWatcher(ctx); err != nil {
-		return fmt.Errorf("fs poll error: %w", err)
-	}
 	return nil
 }
 
@@ -153,56 +146,6 @@ func (sm *SyncManager) startFileWatcher(ctx context.Context) error {
 				notify.Stop(chanEvents)
 				return
 			}
-		}
-	}()
-
-	return nil
-}
-
-func (sm *SyncManager) startPollWatcher(ctx context.Context) error {
-	w := watcher.New()
-	w.FilterOps(watcher.Move, watcher.Rename, watcher.Remove)
-
-	// Watch this folder for changes.
-	if err := w.AddRecursive(sm.datasite.DatasitesDir); err != nil {
-		return fmt.Errorf("fs poll add error: %w", err)
-	}
-
-	sm.wg.Add(2)
-
-	go func() {
-		defer sm.wg.Done()
-
-		for {
-			select {
-			case event, ok := <-w.Event:
-				if !ok {
-					return
-				} else if event.IsDir() {
-					continue
-				}
-				sm.pollEvents <- event
-
-			case err := <-w.Error:
-				slog.Error("fs poll error", "error", err)
-
-			case <-w.Closed:
-				return
-
-			case <-ctx.Done():
-				w.Close()
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer sm.wg.Done()
-		defer slog.Info("fs poll stop")
-
-		slog.Info("fs poll start", "dir", sm.datasite.DatasitesDir)
-		if err := w.Start(time.Millisecond * 2000); err != nil {
-			slog.Error("fs poll start error", "error", err)
 		}
 	}()
 

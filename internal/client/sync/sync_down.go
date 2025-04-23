@@ -8,7 +8,7 @@ import (
 )
 
 func (sm *SyncManager) handleSocketEvents(ctx context.Context) {
-	socketEvents := sm.api.Messages()
+	socketEvents := sm.sdk.Events.Get()
 	for {
 		select {
 		case <-ctx.Done():
