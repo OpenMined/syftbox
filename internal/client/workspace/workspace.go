@@ -68,8 +68,6 @@ func (w *Workspace) Lock() error {
 		return fmt.Errorf("failed to create directory %s: %w", w.InternalDataDir, err)
 	}
 
-	slog.Debug("locking workspace", "path", w.flock.Path())
-
 	locked, err := w.flock.TryLock()
 	if err != nil {
 		return fmt.Errorf("failed to lock workspace: %w", err)

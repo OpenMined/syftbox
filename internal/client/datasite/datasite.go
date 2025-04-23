@@ -7,7 +7,7 @@ import (
 
 	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/config"
-	"github.com/openmined/syftbox/internal/client/sync"
+	"github.com/openmined/syftbox/internal/client/sync3"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
 )
@@ -18,11 +18,11 @@ type Datasite struct {
 	workspace    *workspace.Workspace
 	appScheduler *apps.AppScheduler
 	appManager   *apps.AppManager
-	sync         *sync.SyncManager
+	sync         *sync3.SyncManager
 }
 
 func New(config *config.Config) (*Datasite, error) {
-	ds, err := workspace.NewWorkspace(config.DataDir, config.Email)
+	ws, err := workspace.NewWorkspace(config.DataDir, config.Email)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datasite: %w", err)
 	}
@@ -32,15 +32,18 @@ func New(config *config.Config) (*Datasite, error) {
 		return nil, fmt.Errorf("failed to create sdk: %w", err)
 	}
 
-	appSched := apps.NewScheduler(ds.AppsDir, config.Path)
-	appMgr := apps.NewManager(ds.AppsDir)
+	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
+	appMgr := apps.NewManager(ws.AppsDir)
 
-	sync := sync.NewManager(sdk, ds)
+	sync, err := sync3.NewManager(ws, sdk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync manager: %w", err)
+	}
 
 	return &Datasite{
 		config:       config,
 		sdk:          sdk,
-		workspace:    ds,
+		workspace:    ws,
 		appScheduler: appSched,
 		appManager:   appMgr,
 		sync:         sync,
@@ -96,6 +99,6 @@ func (d *Datasite) GetAppManager() *apps.AppManager {
 	return d.appManager
 }
 
-func (d *Datasite) GetSyncManager() *sync.SyncManager {
+func (d *Datasite) GetSyncManager() *sync3.SyncManager {
 	return d.sync
 }

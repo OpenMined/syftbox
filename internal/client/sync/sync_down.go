@@ -57,15 +57,15 @@ func (sm *SyncManager) handleError(msg *syftmsg.Message) {
 
 func (sm *SyncManager) handleFileWrite(msg *syftmsg.Message) {
 	createMsg, _ := msg.Data.(syftmsg.FileWrite)
-	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.Etag)
+	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.ETag)
 
 	fullPath := sm.datasite.DatasiteAbsPath(createMsg.Path)
 	sm.ignorePath(fullPath)
 	etag, err := WriteFile(fullPath, createMsg.Content)
 	if err != nil {
 		slog.Error("handle", "msgType", msg.Type, "msgId", msg.Id, "error", err)
-	} else if etag != createMsg.Etag {
-		slog.Warn("handle etag mismatch", "msgType", msg.Type, "msgId", msg.Id, "expected", createMsg.Etag, "actual", etag)
+	} else if etag != createMsg.ETag {
+		slog.Warn("handle etag mismatch", "msgType", msg.Type, "msgId", msg.Id, "expected", createMsg.ETag, "actual", etag)
 	}
 }
 

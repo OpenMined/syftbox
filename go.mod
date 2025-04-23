@@ -21,6 +21,7 @@ require (
 	github.com/lmittmann/tint v1.0.7
 	github.com/mattn/go-sqlite3 v1.14.28
 	github.com/rjeczalik/notify v0.9.3
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0

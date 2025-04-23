@@ -2,7 +2,7 @@ package syftmsg
 
 type FileWrite struct {
 	Path    string `json:"pth"`
-	Etag    string `json:"etg"`
+	ETag    string `json:"etg"`
 	Length  int64  `json:"len"`
 	Content []byte `json:"con,omitempty"`
 }
@@ -17,7 +17,7 @@ func NewFileWrite(path string, etag string, length int64, contents []byte) *Mess
 		Type: MsgFileWrite,
 		Data: &FileWrite{
 			Path:    path,
-			Etag:    etag,
+			ETag:    etag,
 			Length:  length,
 			Content: contents,
 		},

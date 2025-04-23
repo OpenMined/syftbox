@@ -1,0 +1,37 @@
+package sync3
+
+type OpType uint8
+
+var opTypeNames = []string{
+	"OpWriteRemote",
+	"OpWriteLocal",
+	"OpDeleteRemote",
+	"OpDeleteLocal",
+	"OpRenameRemote",
+	"OpRenameLocal",
+	"OpConflict",
+	"OpError",
+}
+
+const (
+	OpWriteRemote OpType = iota
+	OpWriteLocal
+	OpDeleteRemote
+	OpDeleteLocal
+	OpRenameRemote
+	OpRenameLocal
+	OpConflict
+	OpError
+)
+
+type SyncOperation struct {
+	Op         OpType
+	Path       string
+	Local      *FileMetadata
+	Remote     *FileMetadata
+	LastSynced *FileMetadata
+}
+
+func (op OpType) String() string {
+	return opTypeNames[op]
+}
