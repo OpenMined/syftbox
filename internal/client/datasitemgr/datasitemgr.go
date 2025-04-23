@@ -8,8 +8,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/yashgorana/syftbox-go/internal/client/config"
-	"github.com/yashgorana/syftbox-go/internal/client/datasite"
+	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/client/datasite"
 )
 
 var (

@@ -15,9 +15,9 @@ builds:
   ldflags:
   - -s
   - -w
-  - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
+  - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
+  - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
+  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
   tags:
   - sonic # for gin with sonic json
   - avx # for sonic
@@ -38,9 +38,9 @@ builds:
   ldflags:
   - -s
   - -w
-  - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
+  - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
+  - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
+  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
   tags:
   - sonic # for gin with sonic json
   - avx # for sonic
@@ -62,9 +62,9 @@ builds:
   - -w
   - -linkmode external
   - -extldflags '-static'
-  - -X github.com/yashgorana/syftbox-go/internal/version.Revision={{.ShortCommit}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.BuildDate={{.Date}}
-  - -X github.com/yashgorana/syftbox-go/internal/version.Version=0.5.0
+  - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
+  - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
+  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
   tags:
   - sonic # for gin with sonic json
   - avx # for sonic

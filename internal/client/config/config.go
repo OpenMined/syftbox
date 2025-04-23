@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yashgorana/syftbox-go/internal/utils"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 var (

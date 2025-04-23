@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/yashgorana/syftbox-go/internal/utils"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 const IdSize = 3

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
+	"github.com/openmined/syftbox/internal/aclspec"
 )
 
 // AclService helps to manage and enforce access control rules for file system operations.

@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/openmined/syftbox/internal/db"
+	"github.com/openmined/syftbox/internal/utils"
 	"github.com/stretchr/testify/assert"
-	"github.com/yashgorana/syftbox-go/internal/db"
-	"github.com/yashgorana/syftbox-go/internal/utils"
 )
 
 func TestBlobIndexBurstInsert(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
+	"github.com/openmined/syftbox/internal/aclspec"
 )
 
 var (

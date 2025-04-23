@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/yashgorana/syftbox-go/internal/db"
-	"github.com/yashgorana/syftbox-go/internal/server/acl"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
-	"github.com/yashgorana/syftbox-go/internal/server/datasite"
-	"github.com/yashgorana/syftbox-go/internal/server/v1/ws"
-	"github.com/yashgorana/syftbox-go/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/db"
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/v1/ws"
+	"github.com/openmined/syftbox/internal/syftmsg"
 	"golang.org/x/sync/errgroup"
 )
 

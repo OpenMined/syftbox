@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/yashgorana/syftbox-go/internal/server/acl"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
-	"github.com/yashgorana/syftbox-go/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/datasite"
 )
 
 type Services struct {

@@ -6,12 +6,12 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/server/explorer"
-	"github.com/yashgorana/syftbox-go/internal/server/middlewares"
-	blobHandler "github.com/yashgorana/syftbox-go/internal/server/v1/blob"
-	datasiteHandler "github.com/yashgorana/syftbox-go/internal/server/v1/datasite"
-	wsV1 "github.com/yashgorana/syftbox-go/internal/server/v1/ws"
-	"github.com/yashgorana/syftbox-go/internal/version"
+	"github.com/openmined/syftbox/internal/server/explorer"
+	"github.com/openmined/syftbox/internal/server/middlewares"
+	blobHandler "github.com/openmined/syftbox/internal/server/v1/blob"
+	datasiteHandler "github.com/openmined/syftbox/internal/server/v1/datasite"
+	wsV1 "github.com/openmined/syftbox/internal/server/v1/ws"
+	"github.com/openmined/syftbox/internal/version"
 
 	_ "embed"
 )

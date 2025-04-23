@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/internal/client/datasitemgr"
+	"github.com/openmined/syftbox/internal/client/datasitemgr"
 	"golang.org/x/sync/errgroup"
 )
 

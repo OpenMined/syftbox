@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/yashgorana/syftbox-go/internal/utils"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 // SQLite pragmas for optimal performance

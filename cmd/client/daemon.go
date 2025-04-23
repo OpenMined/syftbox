@@ -3,8 +3,8 @@ package main
 import (
 	"log/slog"
 
+	"github.com/openmined/syftbox/internal/client"
 	"github.com/spf13/cobra"
-	"github.com/yashgorana/syftbox-go/internal/client"
 )
 
 func init() {

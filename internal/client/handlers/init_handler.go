@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/client/config"
-	"github.com/yashgorana/syftbox-go/internal/client/datasitemgr"
+	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/client/datasitemgr"
 )
 
 const (
@@ -22,15 +22,15 @@ func NewInitHandler(mgr *datasitemgr.DatasiteManger) *InitHandler {
 	}
 }
 
-//	@Summary		Get token
-//	@Description	Request an email validation token from the syftbox server
-//	@Tags			init
-//	@Produce		json
-//	@Param			email		query		string	true	"Email"			Format(email)
-//	@Param			server_url	query		string	true	"Server URL"	Format(url)
-//	@Success		200			{object}	ControlPlaneResponse
-//	@Failure		400			{object}	ControlPlaneError
-//	@Router			/v1/init/token [get]
+// @Summary		Get token
+// @Description	Request an email validation token from the syftbox server
+// @Tags			init
+// @Produce		json
+// @Param			email		query		string	true	"Email"			Format(email)
+// @Param			server_url	query		string	true	"Server URL"	Format(url)
+// @Success		200			{object}	ControlPlaneResponse
+// @Failure		400			{object}	ControlPlaneError
+// @Router			/v1/init/token [get]
 func (h *InitHandler) GetToken(c *gin.Context) {
 	var req GetTokenRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -48,16 +48,16 @@ func (h *InitHandler) GetToken(c *gin.Context) {
 	})
 }
 
-//	@Summary		Initialize the client
-//	@Description	Initialize the client with the given configuration
-//	@Tags			init
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		InitDatasiteRequest	true	"Initialize request"
-//	@Success		200		{object}	ControlPlaneResponse
-//	@Failure		400		{object}	ControlPlaneError
-//	@Failure		500		{object}	ControlPlaneError
-//	@Router			/v1/init/datasite [post]
+// @Summary		Initialize the client
+// @Description	Initialize the client with the given configuration
+// @Tags			init
+// @Accept			json
+// @Produce		json
+// @Param			request	body		InitDatasiteRequest	true	"Initialize request"
+// @Success		200		{object}	ControlPlaneResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Router			/v1/init/datasite [post]
 func (h *InitHandler) InitDatasite(c *gin.Context) {
 	var req InitDatasiteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

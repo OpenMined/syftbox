@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/spf13/cobra"
-	"github.com/yashgorana/syftbox-go/internal/client/config"
 )
 
 // NOTE: This is a temporary command to initialize the syftbox datasite.

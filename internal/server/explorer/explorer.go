@@ -15,9 +15,9 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
-	"github.com/yashgorana/syftbox-go/internal/server/acl"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
+	"github.com/openmined/syftbox/internal/aclspec"
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/blob"
 )
 
 //go:embed index.html.tpl

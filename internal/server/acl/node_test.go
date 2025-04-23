@@ -3,8 +3,8 @@ package acl
 import (
 	"testing"
 
+	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/stretchr/testify/assert"
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
 )
 
 func TestNodeFindBestRule(t *testing.T) {

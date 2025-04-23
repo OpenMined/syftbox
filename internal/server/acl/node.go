@@ -7,7 +7,7 @@ import (
 	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
+	"github.com/openmined/syftbox/internal/aclspec"
 )
 
 // Node represents a node in the ACL tree.

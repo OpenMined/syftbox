@@ -10,12 +10,12 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/openmined/syftbox/internal/server"
+	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/utils"
+	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/yashgorana/syftbox-go/internal/server"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
-	"github.com/yashgorana/syftbox-go/internal/utils"
-	"github.com/yashgorana/syftbox-go/internal/version"
 )
 
 const (

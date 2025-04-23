@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/yashgorana/syftbox-go/internal/client/apps"
-	"github.com/yashgorana/syftbox-go/internal/client/sync"
-	"github.com/yashgorana/syftbox-go/internal/client/workspace"
-	"github.com/yashgorana/syftbox-go/internal/syftsdk"
+	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/sync"
+	"github.com/openmined/syftbox/internal/client/workspace"
+	"github.com/openmined/syftbox/internal/syftsdk"
 )
 
 type Client struct {

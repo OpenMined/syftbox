@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/gofrs/flock"
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
-	"github.com/yashgorana/syftbox-go/internal/utils"
+	"github.com/openmined/syftbox/internal/aclspec"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 const (

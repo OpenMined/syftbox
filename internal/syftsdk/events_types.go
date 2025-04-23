@@ -3,7 +3,7 @@ package syftsdk
 import (
 	"errors"
 
-	"github.com/yashgorana/syftbox-go/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
 var (

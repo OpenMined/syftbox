@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/client/apps"
-	"github.com/yashgorana/syftbox-go/internal/client/datasitemgr"
+	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/datasitemgr"
 )
 
 const (
@@ -24,14 +24,14 @@ func NewAppHandler(mgr *datasitemgr.DatasiteManger) *AppHandler {
 	}
 }
 
-//	@Summary		List apps
-//	@Description	List all installed apps
-//	@Tags			app
-//	@Produce		json
-//	@Success		200	{object}	AppListResponse
-//	@Failure		500	{object}	ControlPlaneError
-//	@Failure		503	{object}	ControlPlaneError
-//	@Router			/v1/app/list [get]
+// @Summary		List apps
+// @Description	List all installed apps
+// @Tags			app
+// @Produce		json
+// @Success		200	{object}	AppListResponse
+// @Failure		500	{object}	ControlPlaneError
+// @Failure		503	{object}	ControlPlaneError
+// @Router			/v1/app/list [get]
 func (h *AppHandler) List(c *gin.Context) {
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -56,17 +56,17 @@ func (h *AppHandler) List(c *gin.Context) {
 	})
 }
 
-//	@Summary		Install app
-//	@Description	Install an app
-//	@Tags			app
-//	@Accept			json
-//	@Produce		json
-//	@Param			request	body		AppInstallRequest	true	"Install request"
-//	@Success		200		{object}	ControlPlaneResponse
-//	@Failure		400		{object}	ControlPlaneError
-//	@Failure		500		{object}	ControlPlaneError
-//	@Failure		503		{object}	ControlPlaneError
-//	@Router			/v1/app/install [post]
+// @Summary		Install app
+// @Description	Install an app
+// @Tags			app
+// @Accept			json
+// @Produce		json
+// @Param			request	body		AppInstallRequest	true	"Install request"
+// @Success		200		{object}	ControlPlaneResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Failure		503		{object}	ControlPlaneError
+// @Router			/v1/app/install [post]
 func (h *AppHandler) Install(c *gin.Context) {
 	var req AppInstallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -105,16 +105,16 @@ func (h *AppHandler) Install(c *gin.Context) {
 	})
 }
 
-//	@Summary		Uninstall app
-//	@Description	Uninstall an app
-//	@Tags			app
-//	@Produce		json
-//	@Param			appName	query		string	true	"App name"
-//	@Success		200		{object}	ControlPlaneResponse
-//	@Failure		400		{object}	ControlPlaneError
-//	@Failure		500		{object}	ControlPlaneError
-//	@Failure		503		{object}	ControlPlaneError
-//	@Router			/v1/app/uninstall [post]
+// @Summary		Uninstall app
+// @Description	Uninstall an app
+// @Tags			app
+// @Produce		json
+// @Param			appName	query		string	true	"App name"
+// @Success		200		{object}	ControlPlaneResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Failure		503		{object}	ControlPlaneError
+// @Router			/v1/app/uninstall [post]
 func (h *AppHandler) Uninstall(c *gin.Context) {
 	var req AppUninstallRequest
 	if err := c.ShouldBindQuery(&req); err != nil {

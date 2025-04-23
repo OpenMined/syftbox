@@ -1,6 +1,6 @@
 package server
 
-import "github.com/yashgorana/syftbox-go/internal/server/blob"
+import "github.com/openmined/syftbox/internal/server/blob"
 
 const DefaultAddr = "127.0.0.1:8080"
 

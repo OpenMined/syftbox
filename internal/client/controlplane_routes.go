@@ -10,15 +10,15 @@ import (
 	"github.com/ulule/limiter/v3"
 	"github.com/ulule/limiter/v3/drivers/store/memory"
 
+	_ "github.com/openmined/syftbox/internal/client/docs"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	mgin "github.com/ulule/limiter/v3/drivers/middleware/gin"
-	_ "github.com/yashgorana/syftbox-go/internal/client/docs"
 
-	"github.com/yashgorana/syftbox-go/internal/client/datasitemgr"
-	"github.com/yashgorana/syftbox-go/internal/client/handlers"
-	"github.com/yashgorana/syftbox-go/internal/client/middleware"
-	"github.com/yashgorana/syftbox-go/internal/version"
+	"github.com/openmined/syftbox/internal/client/datasitemgr"
+	"github.com/openmined/syftbox/internal/client/handlers"
+	"github.com/openmined/syftbox/internal/client/middleware"
+	"github.com/openmined/syftbox/internal/version"
 )
 
 //	@title						SyftBox Control Plane API

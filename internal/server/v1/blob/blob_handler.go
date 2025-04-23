@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/blob"
 )
 
 type BlobHandler struct {

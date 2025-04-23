@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openmined/syftbox/internal/client/workspace"
+	"github.com/openmined/syftbox/internal/syftsdk"
 	"github.com/rjeczalik/notify"
-	"github.com/yashgorana/syftbox-go/internal/client/workspace"
-	"github.com/yashgorana/syftbox-go/internal/syftsdk"
 )
 
 type SyncManager struct {

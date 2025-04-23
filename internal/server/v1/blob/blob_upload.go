@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/blob"
 )
 
 func (h *BlobHandler) Upload(ctx *gin.Context) {

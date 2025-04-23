@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yashgorana/syftbox-go/internal/client/datasitemgr"
-	"github.com/yashgorana/syftbox-go/internal/client/middleware"
+	"github.com/openmined/syftbox/internal/client/datasitemgr"
+	"github.com/openmined/syftbox/internal/client/middleware"
 )
 
 type ControlPlaneServer struct {

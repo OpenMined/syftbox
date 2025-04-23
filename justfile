@@ -3,9 +3,9 @@ commit := `git rev-parse --short HEAD`
 build_date := `date -u +%Y-%m-%dT%H:%M:%SZ`
 
 LD_FLAGS := "-s -w" + \
-    " -X github.com/yashgorana/syftbox-go/internal/version.Version=" + syftbox_version + \
-    " -X github.com/yashgorana/syftbox-go/internal/version.Revision=" + commit + \
-    " -X github.com/yashgorana/syftbox-go/internal/version.BuildDate=" + build_date
+    " -X github.com/openmined/syftbox/internal/version.Version=" + syftbox_version + \
+    " -X github.com/openmined/syftbox/internal/version.Revision=" + commit + \
+    " -X github.com/openmined/syftbox/internal/version.BuildDate=" + build_date
 
 default:
     just --list

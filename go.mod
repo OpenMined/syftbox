@@ -1,4 +1,4 @@
-module github.com/yashgorana/syftbox-go
+module github.com/openmined/syftbox
 
 go 1.23.6
 

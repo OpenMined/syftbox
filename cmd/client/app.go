@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/yashgorana/syftbox-go/internal/client/apps"
-	"github.com/yashgorana/syftbox-go/internal/client/workspace"
 )
 
 func init() {

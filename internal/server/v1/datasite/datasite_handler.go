@@ -4,7 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/yashgorana/syftbox-go/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/datasite"
 )
 
 type DatasiteHandler struct {
