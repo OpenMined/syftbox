@@ -12,8 +12,8 @@ import (
 	"resty.dev/v3"
 )
 
-// Manager handles app installation, uninstallation, and listing operations
-type Manager struct {
+// AppManager handles app installation, uninstallation, and listing operations
+type AppManager struct {
 	AppsDir string // Directory where apps are stored
 }
 
@@ -25,12 +25,12 @@ type RepoOpts struct {
 }
 
 // NewManager creates a new Manager instance with the specified app directory
-func NewManager(appDir string) *Manager {
-	return &Manager{AppsDir: appDir}
+func NewManager(appDir string) *AppManager {
+	return &AppManager{AppsDir: appDir}
 }
 
 // ListApps returns a list of all installed app names
-func (a *Manager) ListApps() ([]string, error) {
+func (a *AppManager) ListApps() ([]string, error) {
 	apps, err := os.ReadDir(a.AppsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -50,7 +50,7 @@ func (a *Manager) ListApps() ([]string, error) {
 }
 
 // UninstallApp removes the specified app from the apps directory
-func (a *Manager) UninstallApp(appName string) error {
+func (a *AppManager) UninstallApp(appName string) error {
 	appDir := filepath.Join(a.AppsDir, appName)
 	if err := os.RemoveAll(appDir); err != nil {
 		return fmt.Errorf("failed to remove app: %w", err)
@@ -61,7 +61,7 @@ func (a *Manager) UninstallApp(appName string) error {
 // InstallRepo installs an app from a git repository URL
 // If force is true, it will remove any existing app with the same name
 // Returns the installed App and any error encountered
-func (a *Manager) InstallRepo(repoUrl string, opts *RepoOpts, force bool) (*App, error) {
+func (a *AppManager) InstallRepo(repoUrl string, opts *RepoOpts, force bool) (*App, error) {
 	// if url is not a valid git url, return an error
 	parsed, err := url.Parse(repoUrl)
 	if err != nil {
@@ -109,7 +109,7 @@ func (a *Manager) InstallRepo(repoUrl string, opts *RepoOpts, force bool) (*App,
 
 // InstallPath creates a symlink to a local directory in the apps directory
 // If force is true, it will remove any existing app with the same name
-func (a *Manager) InstallPath(path string, force bool) error {
+func (a *AppManager) InstallPath(path string, force bool) error {
 	target := filepath.Join(a.AppsDir, filepath.Base(path))
 
 	if force {
@@ -132,7 +132,7 @@ func (a *Manager) InstallPath(path string, force bool) error {
 
 // getArchiveUrl returns the URL for downloading the repository archive
 // based on the repository host and options provided
-func (a *Manager) getArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error) {
+func (a *AppManager) getArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error) {
 	switch repoUrl.Host {
 	case "github.com":
 		return a.githubArchiveUrl(repoUrl, opts)
@@ -144,7 +144,7 @@ func (a *Manager) getArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error
 }
 
 // githubArchiveUrl generates a GitHub archive URL based on the repository and options
-func (a *Manager) githubArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error) {
+func (a *AppManager) githubArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error) {
 	// github url scheme. supports zip, tar.gz
 	// https://github.com/OpenMined/syft/archive/refs/heads/main.tar.gz
 	// https://github.com/OpenMined/syft/archive/refs/tags/0.3.5.tar.gz
@@ -166,7 +166,7 @@ func (a *Manager) githubArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, er
 }
 
 // gitlabArchiveUrl generates a GitLab archive URL based on the repository and options
-func (a *Manager) gitlabArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error) {
+func (a *AppManager) gitlabArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string, error) {
 	// gitlab url scheme. supports zip, tar.gz
 	// https://gitlab.com/gitlab-org/gitlab-runner/-/archive/main/archive.zip
 	// https://gitlab.com/gitlab-org/gitlab-runner/-/archive/1dd26e1beea4eea6610ecd8cee97667ad6498145/archive.zip

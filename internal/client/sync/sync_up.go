@@ -45,7 +45,7 @@ func (sm *SyncManager) writePriority(path string) {
 	}
 
 	timeTaken := timeNow.Sub(fileInfo.ModTime)
-	relPath := sm.datasite.RelativePath(path)
+	relPath := sm.datasite.DatasiteRelPath(path)
 	slog.Info("priority write", "path", relPath,
 		"size", fileInfo.Size,
 		"etag", fileInfo.Etag,

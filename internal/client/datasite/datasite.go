@@ -1,114 +1,100 @@
 package datasite
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 
-	"github.com/yashgorana/syftbox-go/internal/aclspec"
-	"github.com/yashgorana/syftbox-go/internal/utils"
+	"github.com/yashgorana/syftbox-go/internal/client/apps"
+	"github.com/yashgorana/syftbox-go/internal/client/config"
+	"github.com/yashgorana/syftbox-go/internal/client/sync"
+	"github.com/yashgorana/syftbox-go/internal/client/workspace"
+	"github.com/yashgorana/syftbox-go/internal/syftsdk"
 )
 
-const (
-	appsDir      = "apps"
-	logsDir      = "logs"
-	datasitesDir = "datasites"
-	publicDir    = "public"
-	pathSep      = string(filepath.Separator)
-)
-
-type LocalDatasite struct {
-	Owner         string
-	Root          string
-	DatasitesDir  string
-	AppsDir       string
-	LogsDir       string
-	UserDir       string
-	UserPublicDir string
+type Datasite struct {
+	config       *config.Config
+	sdk          *syftsdk.SyftSDK
+	workspace    *workspace.Workspace
+	appScheduler *apps.AppScheduler
+	appManager   *apps.AppManager
+	sync         *sync.SyncManager
 }
 
-func NewLocalDatasite(rootDir string, user string) (*LocalDatasite, error) {
-	root, err := utils.ResolvePath(rootDir)
+func New(config *config.Config) (*Datasite, error) {
+	ds, err := workspace.NewWorkspace(config.DataDir, config.Email)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve path %s: %w", rootDir, err)
+		return nil, fmt.Errorf("failed to create datasite: %w", err)
 	}
 
-	return &LocalDatasite{
-		Owner:         user,
-		Root:          root,
-		AppsDir:       filepath.Join(root, appsDir),
-		LogsDir:       filepath.Join(root, logsDir),
-		DatasitesDir:  filepath.Join(root, datasitesDir),
-		UserDir:       filepath.Join(root, datasitesDir, user),
-		UserPublicDir: filepath.Join(root, datasitesDir, user, publicDir),
+	sdk, err := syftsdk.New(config.ServerURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sdk: %w", err)
+	}
+
+	appSched := apps.NewScheduler(ds.AppsDir, config.Path)
+	appMgr := apps.NewManager(ds.AppsDir)
+
+	sync := sync.NewManager(sdk, ds)
+
+	return &Datasite{
+		config:       config,
+		sdk:          sdk,
+		workspace:    ds,
+		appScheduler: appSched,
+		appManager:   appMgr,
+		sync:         sync,
 	}, nil
 }
 
-func (w *LocalDatasite) Bootstrap() error {
-	slog.Info("datasite bootstrap", "root", w.Root)
-
-	// Create required directories
-	dirs := []string{w.AppsDir, w.LogsDir, w.UserPublicDir}
-	for _, dir := range dirs {
-		if err := utils.EnsureDir(dir); err != nil {
-			return fmt.Errorf("failed to create directory %s: %w", dir, err)
-		}
+func (d *Datasite) Start(ctx context.Context) error {
+	slog.Info("syftgo client start", "datadir", d.config.DataDir, "email", d.config.Email, "server", d.config.ServerURL)
+	// Setup local datasite first
+	if err := d.workspace.Bootstrap(); err != nil {
+		return fmt.Errorf("failed to bootstrap datasite: %w", err)
+	}
+	if err := d.sdk.Login(d.config.Email); err != nil {
+		return fmt.Errorf("failed to login: %w", err)
 	}
 
-	// TODO: write a .syftignore file
+	// Start sync manager
+	if err := d.sync.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start sync manager: %w", err)
+	}
 
-	// Setup ACL files
-	if err := w.createDefaultAcl(); err != nil {
-		return fmt.Errorf("failed to create default ACL: %w", err)
+	// Start app scheduler
+	if d.config.AppsEnabled {
+		if err := d.appScheduler.Start(ctx); err != nil {
+			slog.Error("failed to start app scheduler", "error", err)
+		}
+	} else {
+		slog.Info("apps disabled")
 	}
 
 	return nil
 }
 
-func (w *LocalDatasite) createDefaultAcl() error {
-	// Create root ACL file
-	if !aclspec.Exists(w.UserDir) {
-		rootRuleset := aclspec.NewRuleSet(
-			w.UserDir,
-			aclspec.UnsetTerminal,
-			aclspec.NewDefaultRule(aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		)
-		if err := rootRuleset.Save(); err != nil {
-			return fmt.Errorf("root acl create error: %w", err)
-		}
-	}
-
-	// Create public ACL file
-	if !aclspec.Exists(w.UserPublicDir) {
-		publicRuleset := aclspec.NewRuleSet(
-			w.UserPublicDir,
-			aclspec.UnsetTerminal,
-			aclspec.NewDefaultRule(aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		)
-		if err := publicRuleset.Save(); err != nil {
-			return fmt.Errorf("public acl create error: %w", err)
-		}
-	}
-
-	return nil
+func (d *Datasite) Stop() {
+	d.sync.Stop()
+	d.sdk.Close()
 }
 
-func (w *LocalDatasite) AbsolutePath(path string) string {
-	return filepath.Join(w.DatasitesDir, path)
+func (d *Datasite) GetSDK() *syftsdk.SyftSDK {
+	return d.sdk
 }
 
-func (w *LocalDatasite) RelativePath(path string) string {
-	path, _ = utils.ResolvePath(path)
-	path = strings.Replace(path, w.DatasitesDir, "", 1)
-	return strings.ReplaceAll(strings.TrimLeft(filepath.Clean(path), pathSep), pathSep, "/")
+func (d *Datasite) GetWorkspace() *workspace.Workspace {
+	return d.workspace
 }
 
-func (w *LocalDatasite) PathOwner(path string) string {
-	p := w.RelativePath(path)
-	parts := strings.Split(p, "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[1]
+func (d *Datasite) GetAppScheduler() *apps.AppScheduler {
+	return d.appScheduler
+}
+
+func (d *Datasite) GetAppManager() *apps.AppManager {
+	return d.appManager
+}
+
+func (d *Datasite) GetSyncManager() *sync.SyncManager {
+	return d.sync
 }

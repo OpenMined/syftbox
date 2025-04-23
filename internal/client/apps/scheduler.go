@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	scanInterval = 5 * time.Second
+	scanInterval = 2 * time.Second
 )
 
 // AppScheduler watches a directory for apps and manages their lifecycle

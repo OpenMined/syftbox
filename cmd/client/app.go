@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/internal/client/apps"
-	"github.com/yashgorana/syftbox-go/internal/client/datasite"
+	"github.com/yashgorana/syftbox-go/internal/client/workspace"
 )
 
 var (
@@ -44,6 +44,9 @@ func newAppCmdInstall() *cobra.Command {
 		Aliases: []string{"i", "add"},
 		Short:   "Install a SyftBox app",
 		Args:    cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			return loadConfig(cmd)
+		},
 		Run: func(cmd *cobra.Command, args []string) {
 			repo := args[0]
 			installer, err := getAppManager()
@@ -132,11 +135,11 @@ func newAppCmdList() *cobra.Command {
 	return appCmdList
 }
 
-func getAppManager() (*apps.Manager, error) {
+func getAppManager() (*apps.AppManager, error) {
 	user := viper.GetString("user")
 	dataDir := viper.GetString("data_dir")
 
-	datasite, err := datasite.NewLocalDatasite(dataDir, user)
+	datasite, err := workspace.NewWorkspace(dataDir, user)
 	if err != nil {
 		return nil, err
 	}

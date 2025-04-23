@@ -13,12 +13,33 @@ default:
 [group('dev')]
 gen-certs:
     #!/bin/bash
+    set -eou pipefail
     # if certs.key and certs.pem exist, exit\
     if [ -f certs/cert.key ] && [ -f certs/cert.pem ]; then
         exit 0;
     fi
     mkdir certs
     mkcert -install -cert-file certs/cert.pem -key-file certs/cert.key localhost 127.0.0.1
+
+[group('dev')]
+gen-swagger:
+    #!/bin/bash
+    set -eou pipefail
+    cd internal/client
+    swag fmt -g -d ./
+    swag init -g controlplane_routes.go -o docs -ot go
+
+[group('dev')]
+run-server *ARGS: gen-swagger
+    go run -tags="sonic avx" ./cmd/server {{ARGS}}
+
+[group('dev')]
+run-server-tls *ARGS: gen-certs gen-swagger
+    go run -tags="sonic avx" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ARGS}}
+
+[group('dev')]
+run-client *ARGS: gen-swagger
+    go run -tags="sonic avx" ./cmd/client {{ARGS}}
 
 [group('dev')] 
 run-minio:
@@ -41,14 +62,6 @@ destroy-minio:
 [group('dev')]
 ssh-minio:
     docker exec -it syftbox-minio bash
-
-[group('dev')]
-run-server *ARGS: gen-certs
-    go run -tags="sonic avx" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ARGS}}
-
-[group('dev')]
-run-client *ARGS:
-    go run -tags="sonic avx" ./cmd/client {{ARGS}}
 
 [group('dev')]
 run-tests:
@@ -91,3 +104,5 @@ deploy: build-all
 [group('utils')]
 setup-toolchain:
     brew install FiloSottile/musl-cross/musl-cross
+    go install github.com/air-verse/air@latest
+    go install github.com/swaggo/swag/cmd/swag@latest

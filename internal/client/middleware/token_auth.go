@@ -16,17 +16,19 @@ type TokenAuthConfig struct {
 
 // TokenAuth creates a middleware for token authentication.
 func TokenAuth(config TokenAuthConfig) gin.HandlerFunc {
+	if config.Token == "" {
+		slog.Info("auth disabled")
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	} else {
+		slog.Info("auth enabled")
+	}
+
 	return func(c *gin.Context) {
 		// Get token from query parameter or header
-		token := c.Query("token")
-		if token == "" {
-			token = c.GetHeader("Authorization")
-			// Remove "Bearer " prefix if present (case-insensitive)
-			tokenLower := strings.ToLower(token)
-			if strings.HasPrefix(tokenLower, "bearer ") {
-				token = token[7:]
-			}
-		}
+		token := c.GetHeader("Authorization")
+		token = strings.TrimPrefix(token, "Bearer ")
 
 		// Validate token
 		if token != config.Token {

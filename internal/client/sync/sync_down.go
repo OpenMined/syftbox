@@ -47,7 +47,7 @@ func (sm *SyncManager) handleError(msg *syftmsg.Message) {
 
 	switch errMsg.Code {
 	case 403:
-		if err := RejectFile(sm.datasite.AbsolutePath(errMsg.Path)); err != nil {
+		if err := RejectFile(sm.datasite.DatasiteAbsPath(errMsg.Path)); err != nil {
 			slog.Warn("reject file error", "error", err)
 		}
 	default:
@@ -59,7 +59,7 @@ func (sm *SyncManager) handleFileWrite(msg *syftmsg.Message) {
 	createMsg, _ := msg.Data.(syftmsg.FileWrite)
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.Etag)
 
-	fullPath := sm.datasite.AbsolutePath(createMsg.Path)
+	fullPath := sm.datasite.DatasiteAbsPath(createMsg.Path)
 	sm.ignorePath(fullPath)
 	etag, err := WriteFile(fullPath, createMsg.Content)
 	if err != nil {

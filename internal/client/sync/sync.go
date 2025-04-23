@@ -12,13 +12,13 @@ import (
 	"time"
 
 	"github.com/rjeczalik/notify"
-	"github.com/yashgorana/syftbox-go/internal/client/datasite"
+	"github.com/yashgorana/syftbox-go/internal/client/workspace"
 	"github.com/yashgorana/syftbox-go/internal/syftsdk"
 )
 
 type SyncManager struct {
 	sdk      *syftsdk.SyftSDK
-	datasite *datasite.LocalDatasite
+	datasite *workspace.Workspace
 
 	watchedEvents chan notify.EventInfo
 
@@ -27,7 +27,7 @@ type SyncManager struct {
 	wg    sync.WaitGroup
 }
 
-func NewManager(sdk *syftsdk.SyftSDK, datasite *datasite.LocalDatasite) *SyncManager {
+func NewManager(sdk *syftsdk.SyftSDK, datasite *workspace.Workspace) *SyncManager {
 	return &SyncManager{
 		sdk:           sdk,
 		datasite:      datasite,
