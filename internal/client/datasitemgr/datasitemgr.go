@@ -25,7 +25,7 @@ type DatasiteManger struct {
 	mu     sync.RWMutex
 }
 
-func NewDatasiteManger(opts ...DatasiteManagerOpts) *DatasiteManger {
+func New(opts ...DatasiteManagerOpts) *DatasiteManger {
 	ds := &DatasiteManger{}
 	for _, opt := range opts {
 		opt(ds)

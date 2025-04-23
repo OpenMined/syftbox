@@ -17,7 +17,6 @@ type ControlPlaneServer struct {
 	datasiteMgr *datasitemgr.DatasiteManger
 }
 
-// New creates a new UI bridge server with the given configuration
 func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.DatasiteManger) (*ControlPlaneServer, error) {
 	routes := SetupRoutes(datasiteMgr, &RouteConfig{
 		Swagger: config.EnableSwagger,

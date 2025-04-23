@@ -18,7 +18,7 @@ type Downloader struct {
 }
 
 func NewDownloader(numWorkers int) (*Downloader, error) {
-	tempDir, err := os.MkdirTemp("", "syftgo-*")
+	tempDir, err := os.MkdirTemp("", "syftbox-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}

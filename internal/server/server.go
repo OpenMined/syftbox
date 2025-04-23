@@ -65,7 +65,7 @@ func New(config *Config) (*Server, error) {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	slog.Info("syftgo server start")
+	slog.Info("syftbox server start")
 
 	// Create errgroup with derived context
 	eg, egCtx := errgroup.WithContext(ctx)
@@ -119,11 +119,11 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Wait for all goroutines to complete or error
 	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("syftgo server failure", "error", err)
+		slog.Error("syftbox server failure", "error", err)
 		return err
 	}
 
-	slog.Info("syftgo server stop")
+	slog.Info("syftbox server stop")
 	return nil
 }
 

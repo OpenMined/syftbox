@@ -17,7 +17,7 @@ type ClientDaemon struct {
 }
 
 func NewClientDaemon(config *ControlPlaneConfig) (*ClientDaemon, error) {
-	mgr := datasitemgr.NewDatasiteManger()
+	mgr := datasitemgr.New()
 	cps, err := NewControlPlaneServer(config, mgr)
 	if err != nil {
 		return nil, err

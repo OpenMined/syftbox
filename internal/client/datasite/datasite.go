@@ -48,7 +48,7 @@ func New(config *config.Config) (*Datasite, error) {
 }
 
 func (d *Datasite) Start(ctx context.Context) error {
-	slog.Info("syftgo client start", "datadir", d.config.DataDir, "email", d.config.Email, "server", d.config.ServerURL)
+	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "server", d.config.ServerURL)
 	// Setup local datasite first
 	if err := d.workspace.Bootstrap(); err != nil {
 		return fmt.Errorf("failed to bootstrap datasite: %w", err)
@@ -77,6 +77,7 @@ func (d *Datasite) Start(ctx context.Context) error {
 func (d *Datasite) Stop() {
 	d.sync.Stop()
 	d.sdk.Close()
+	slog.Info("syftbox client stop")
 }
 
 func (d *Datasite) GetSDK() *syftsdk.SyftSDK {

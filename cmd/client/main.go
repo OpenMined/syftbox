@@ -15,6 +15,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/lmittmann/tint"
 	"github.com/openmined/syftbox/internal/client"
+	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
@@ -42,8 +43,7 @@ var rootCmd = &cobra.Command{
 		return loadConfig(cmd)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		loadConfig(cmd)
-		c, err := client.New(&client.Config{
+		c, err := client.New(&config.Config{
 			Path:        viper.ConfigFileUsed(),
 			Email:       viper.GetString("email"),
 			DataDir:     viper.GetString("data_dir"),
