@@ -12,6 +12,7 @@ var (
 	home, _           = os.UserHomeDir()
 	DefaultConfigPath = filepath.Join(home, ".syftbox", "config.json")
 	DefaultServerURL  = "https://syftboxdev.openmined.org"
+	DefaultClientURL  = "http://localhost:8080"
 )
 
 type Config struct {
@@ -27,6 +28,8 @@ func (c *Config) Save(path string) error {
 	if err := utils.EnsureParent(path); err != nil {
 		return err
 	}
+
+	c.ClientURL = DefaultClientURL
 
 	data, err := json.Marshal(c)
 	if err != nil {

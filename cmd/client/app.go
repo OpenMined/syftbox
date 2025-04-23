@@ -4,17 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"github.com/yashgorana/syftbox-go/internal/client/apps"
 	"github.com/yashgorana/syftbox-go/internal/client/workspace"
-)
-
-var (
-	red   = color.New(color.FgHiRed, color.Bold).SprintFunc()
-	green = color.New(color.FgHiGreen).SprintFunc()
-	cyan  = color.New(color.FgHiCyan).SprintFunc()
 )
 
 func init() {

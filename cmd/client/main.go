@@ -28,6 +28,12 @@ var (
 	configFileName   = "config"
 )
 
+var (
+	red   = color.New(color.FgHiRed, color.Bold).SprintFunc()
+	green = color.New(color.FgHiGreen).SprintFunc()
+	cyan  = color.New(color.FgHiCyan).SprintFunc()
+)
+
 var rootCmd = &cobra.Command{
 	Use:     "syftbox",
 	Short:   "SyftBox CLI",
