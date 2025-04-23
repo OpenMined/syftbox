@@ -1,0 +1,30 @@
+package syftsdk
+
+import (
+	"errors"
+
+	"github.com/yashgorana/syftbox-go/internal/syftmsg"
+)
+
+var (
+	// ErrEventsNotConnected is returned when trying to use events without an active connection
+	ErrEventsNotConnected = errors.New("events: not connected")
+	// ErrEventsMessageQueueFull is returned when the message queue is full
+	ErrEventsMessageQueueFull = errors.New("events: message queue full")
+)
+
+// EventMessage represents a message sent or received via the events system
+type EventMessage struct {
+	// The message payload
+	Message *syftmsg.Message
+}
+
+// wsConfig configures the WebSocket connection
+type wsConfig struct {
+	// User identifier for authentication
+	User string
+	// Headers contains HTTP headers for the WebSocket connection
+	Headers map[string]string
+	// BufferSize is the size of the message buffer (default: 256)
+	BufferSize int
+}

@@ -31,12 +31,6 @@ func (sm *SyncManager) handleFileEvents(ctx context.Context) {
 			} else {
 				// sm.handleEvent(ctx, event.Path)
 			}
-
-		case _, ok := <-sm.pollEvents:
-			if !ok {
-				return
-			}
-			// sm.handleEvent(ctx, event.Path)
 		}
 	}
 }
@@ -64,7 +58,7 @@ func (sm *SyncManager) writePriority(path string) {
 		fileInfo.Content,
 	)
 
-	if err := sm.api.SendMessage(message); err != nil {
+	if err := sm.sdk.Events.Send(message); err != nil {
 		slog.Error("priority write error", "error", err)
 	}
 }
