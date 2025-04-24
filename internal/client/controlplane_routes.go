@@ -59,6 +59,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	r.GET("/", IndexHandler)
 	r.GET("/status", handlers.Status)
 
+	// @Security APIToken
 	v1 := r.Group("/v1")
 	v1.Use(middleware.TokenAuth(routeConfig.Auth))
 	{
