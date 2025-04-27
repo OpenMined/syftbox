@@ -7,4 +7,5 @@ type StatusResponse struct {
 	Version   string `json:"version"`   // version of the client.
 	Revision  string `json:"revision"`  // revision of the client.
 	BuildDate string `json:"buildDate"` // build date of the client.
+	HasConfig bool   `json:"hasConfig"` // whether the datasite has a config.
 }
