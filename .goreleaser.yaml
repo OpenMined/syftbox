@@ -15,6 +15,8 @@ builds:
   ldflags:
   - -s
   - -w
+  - -linkmode external
+  - -extldflags '-static'
   - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
   - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
@@ -22,10 +24,16 @@ builds:
   - sonic # for gin with sonic json
   - avx # for sonic
   env:
-  - CGO_ENABLED=0
+  - CGO_ENABLED=1
+  - CGO_CFLAGS=-Ofast
+  - >-
+    {{- if eq .Os "linux" }}
+      {{- if eq .Arch "amd64" }}CC=x86_64-linux-musl-gcc{{- end }}
+      {{- if eq .Arch "arm64"}}CC=aarch64-linux-musl-gcc{{- end }}
+    {{- end }}
   goos:
   - linux
-  - windows
+  # - windows
   goarch:
   - amd64
   - arm64

@@ -90,7 +90,7 @@ build-all:
 [group('deploy')]
 deploy: build-all
     rm -rf releases && mkdir releases
-    cp -r .out/syftbox_client_*.{tar.gz,zip} releases
+    cp -r .out/syftbox_client_*.{tar.gz,zip} releases || true
 
     ssh syftbox-yash "rm -rfv /home/azureuser/releases"
     scp -r ./releases syftbox-yash:/home/azureuser/releases
