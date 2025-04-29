@@ -89,7 +89,6 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 				err := se.runFullSync(ctx)
 				if err != nil && !errors.Is(err, context.Canceled) {
 					slog.Error("failed to run sync", "error", err)
-					return
 				}
 				timer.Reset(fullSyncInterval)
 			}
