@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/ulule/limiter/v3"
 	"github.com/ulule/limiter/v3/drivers/store/memory"
@@ -52,16 +51,18 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	initH := handlers.NewInitHandler(datasiteMgr)
 
 	r.Use(gin.Recovery())
-	r.Use(cors.Default())
+	r.Use(middleware.CORS())
 	r.Use(middleware.Gzip())
 	r.Use(mgin.NewMiddleware(rateLimiter))
 
 	r.GET("/", IndexHandler)
-	r.GET("/status", handlers.Status)
 
+	// @Security APIToken
 	v1 := r.Group("/v1")
 	v1.Use(middleware.TokenAuth(routeConfig.Auth))
 	{
+		v1.GET("/status", handlers.Status)
+
 		v1Init := v1.Group("/init")
 		{
 			v1Init.GET("/token", initH.GetToken)
