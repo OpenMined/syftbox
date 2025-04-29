@@ -15,11 +15,10 @@ import (
 )
 
 const (
-	wsClientChannelSize    = 8
-	wsClientPingPeriod     = 120 * time.Second
-	wsClientPingTimeout    = 5 * time.Second
-	wsClientWriteTimeout   = 20 * time.Second
-	wsClientMaxMessageSize = 4 * 1024 * 1024
+	wsClientChannelSize  = 8
+	wsClientPingPeriod   = 120 * time.Second
+	wsClientPingTimeout  = 5 * time.Second
+	wsClientWriteTimeout = 20 * time.Second
 )
 
 // wsClient represents a connected WebSocket client.

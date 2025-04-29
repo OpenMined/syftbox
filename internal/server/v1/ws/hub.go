@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	maxMessageSize = 4 * 1024 * 1024 // 1MB
+	maxMessageSize = 4 * 1024 * 1024 // 4MB
 )
 
 type ClientMessage struct {

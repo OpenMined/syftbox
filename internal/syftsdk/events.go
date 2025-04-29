@@ -18,6 +18,7 @@ const (
 	eventsReconnectDelay    = 1 * time.Second
 	eventsMaxReconnectDelay = 8 * time.Second
 	eventsReconnectTimeout  = 10 * time.Second
+	wsClientMaxMessageSize  = 4 * 1024 * 1024 // 4MB
 	eventsPath              = "/api/v1/events"
 )
 
@@ -173,6 +174,7 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn.SetReadLimit(wsClientMaxMessageSize)
 
 	// Create and start client
 	wsClient := newWSClient(conn)
