@@ -77,7 +77,7 @@ func (s *SyncJournal) Close() error {
 		slog.Error("Failed to close sync journal database", "error", err)
 		return err
 	}
-	slog.Debug("sync journal closed")
+	slog.Info("sync journal closed")
 	return nil
 }
 

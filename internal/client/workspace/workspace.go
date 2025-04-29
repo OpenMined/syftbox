@@ -76,8 +76,6 @@ func (w *Workspace) Lock() error {
 		return ErrWorkspaceLocked
 	}
 
-	slog.Info("locked workspace")
-
 	return nil
 }
 
@@ -89,12 +87,19 @@ func (w *Workspace) Unlock() error {
 	return os.Remove(w.flock.Path())
 }
 
-func (w *Workspace) Bootstrap() error {
+func (w *Workspace) Setup() error {
+	if w.isLegacyWorkspace() {
+		slog.Info("legacy workspace detected, cleaning up")
+		if err := os.RemoveAll(w.Root); err != nil {
+			return fmt.Errorf("failed to clean up legacy workspace: %w", err)
+		}
+	}
+
 	if err := w.Lock(); err != nil {
 		return err
 	}
 
-	slog.Info("datasite bootstrap", "root", w.Root)
+	slog.Info("workspace", "root", w.Root)
 
 	// Create required directories
 	dirs := []string{w.AppsDir, w.InternalDataDir, w.UserPublicDir}
@@ -159,4 +164,8 @@ func (w *Workspace) PathOwner(path string) string {
 		return ""
 	}
 	return parts[1]
+}
+
+func (w *Workspace) isLegacyWorkspace() bool {
+	return utils.DirExists(filepath.Join(w.Root, "plugins"))
 }

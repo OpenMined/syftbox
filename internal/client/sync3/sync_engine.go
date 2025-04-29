@@ -65,6 +65,8 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	slog.Info("running initial sync")
 	se.runFullSync(ctx)
 
+	// connect to websocket
+	slog.Info("listening for websocket events")
 	if err := se.sdk.Events.Connect(ctx); err != nil {
 		return fmt.Errorf("failed to connect websocket: %w", err)
 	}
@@ -110,7 +112,7 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 }
 
 func (se *SyncEngine) Stop() error {
-	slog.Debug("sync stop")
+	slog.Info("sync stop")
 	return se.journal.Close()
 }
 

@@ -53,7 +53,7 @@ func New(config *config.Config) (*Datasite, error) {
 func (d *Datasite) Start(ctx context.Context) error {
 	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "server", d.config.ServerURL)
 	// Setup local datasite first
-	if err := d.workspace.Bootstrap(); err != nil {
+	if err := d.workspace.Setup(); err != nil {
 		return fmt.Errorf("failed to bootstrap datasite: %w", err)
 	}
 	if err := d.sdk.Login(d.config.Email); err != nil {
