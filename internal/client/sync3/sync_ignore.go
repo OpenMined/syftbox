@@ -56,17 +56,17 @@ var defaultIgnoreLines = []string{
 	"Icon",
 }
 
-type SyncIgnore struct {
+type SyncIgnoreList struct {
 	baseDir string
 	ignore  *gitignore.GitIgnore
 }
 
-func NewSyncIgnore(baseDir string) *SyncIgnore {
+func NewSyncIgnoreList(baseDir string) *SyncIgnoreList {
 	ignore := gitignore.CompileIgnoreLines(defaultIgnoreLines...)
-	return &SyncIgnore{baseDir: baseDir, ignore: ignore}
+	return &SyncIgnoreList{baseDir: baseDir, ignore: ignore}
 }
 
-func (s *SyncIgnore) ShouldIgnore(path string) bool {
+func (s *SyncIgnoreList) ShouldIgnore(path string) bool {
 	// todo strip baseDir from relPath
 	return s.ignore.MatchesPath(path)
 }

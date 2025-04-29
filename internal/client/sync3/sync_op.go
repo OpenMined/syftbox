@@ -3,14 +3,14 @@ package sync3
 type OpType uint8
 
 var opTypeNames = []string{
-	"OpWriteRemote",
-	"OpWriteLocal",
-	"OpDeleteRemote",
-	"OpDeleteLocal",
-	"OpRenameRemote",
-	"OpRenameLocal",
-	"OpConflict",
-	"OpError",
+	"WriteRemote",
+	"WriteLocal",
+	"DeleteRemote",
+	"DeleteLocal",
+	"RenameRemote",
+	"RenameLocal",
+	"Conflict",
+	"Error",
 }
 
 const (

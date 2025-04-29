@@ -20,7 +20,6 @@ import (
 
 const (
 	fullSyncInterval = 5 * time.Second
-	maxPrioritySize  = 1024 * 1024 // 1MB
 )
 
 var (
@@ -33,15 +32,18 @@ type SyncEngine struct {
 	journal        *SyncJournal
 	watcher        *FileWatcher
 	lastLocalState map[string]*FileMetadata
-	ignore         *SyncIgnore
-	priority       *SyncPriority
+	ignoreList     *SyncIgnoreList
+	priorityList   *SyncPriorityList
 	wg             sync.WaitGroup
 	muSync         sync.Mutex
 }
 
-func NewSyncEngine(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, ignore *SyncIgnore, priority *SyncPriority, watcher *FileWatcher) *SyncEngine {
+func NewSyncEngine(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, ignore *SyncIgnoreList, priority *SyncPriorityList, watcher *FileWatcher) (*SyncEngine, error) {
 	journalDir := filepath.Join(workspace.InternalDataDir, "sync.db")
 	journal, err := NewSyncJournal(journalDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync journal: %w", err)
+	}
 	if err != nil {
 		slog.Error("failed to create sync journal", "error", err)
 		os.Exit(1)
@@ -51,10 +53,10 @@ func NewSyncEngine(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, ignore 
 		workspace:      workspace,
 		journal:        journal,
 		watcher:        watcher,
-		ignore:         ignore,
-		priority:       priority,
+		ignoreList:     ignore,
+		priorityList:   priority,
 		lastLocalState: make(map[string]*FileMetadata),
-	}
+	}, nil
 }
 
 func (se *SyncEngine) Start(ctx context.Context) error {
@@ -161,17 +163,9 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	return nil
 }
 
-func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string]*FileMetadata) *ReconcileResult {
+func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string]*FileMetadata) *ReconcileOperations {
 	allPaths := make(map[string]struct{})
-	result := &ReconcileResult{
-		LocalWrites:    make(BatchLocalWrite),
-		RemoteWrites:   make(BatchRemoteWrite),
-		LocalDeletes:   make(BatchLocalDelete),
-		RemoteDeletes:  make(BatchRemoteDelete),
-		Conflicts:      make(BatchConflict),
-		UnchangedPaths: make([]string, 0),
-		Cleanups:       make([]string, 0),
-	}
+	reconcileOps := NewReconcileOperations()
 
 	for path := range journalState {
 		allPaths[path] = struct{}{}
@@ -191,7 +185,7 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 		journal, journalExists := journalState[path]
 
 		// check if it's already in conflict
-		if se.isConflict(path) || se.isSyncing(path) || se.ignore.ShouldIgnore(path) {
+		if se.isConflict(path) || se.isSyncing(path) || se.ignoreList.ShouldIgnore(path) {
 			ignored++
 			continue
 		}
@@ -206,7 +200,7 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 		// early checks
 		if !localExists && !remoteExists && journalExists {
 			// Both deleted cleanly (relative to journal)
-			result.Cleanups = append(result.Cleanups, path)
+			reconcileOps.Cleanups[path] = struct{}{}
 			continue
 		}
 
@@ -215,34 +209,34 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 			(localCreated && remoteCreated) {
 			// Conflict Case: Local Create/Modify + Remote Create/Modify
 			// todo we can also consider local modify + remote delete or local delete + remote modify as conflict
-			result.Conflicts[path] = &SyncOperation{Op: OpConflict, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.Conflicts[path] = &SyncOperation{Op: OpConflict, Path: path, Local: local, Remote: remote, LastSynced: journal}
 			continue
 		}
 
 		// Regular Sync
 		if localCreated || localModified {
 			// Local New/Modify + Remote Unchanged
-			result.RemoteWrites[path] = &SyncOperation{Op: OpWriteRemote, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.RemoteWrites[path] = &SyncOperation{Op: OpWriteRemote, Path: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteCreated || remoteModified {
 			// Local Unchanged + Remote New/Modify
-			result.LocalWrites[path] = &SyncOperation{Op: OpWriteLocal, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.LocalWrites[path] = &SyncOperation{Op: OpWriteLocal, Path: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if localDeleted {
 			// Local Delete + Remote Exists
-			result.RemoteDeletes[path] = &SyncOperation{Op: OpDeleteRemote, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.RemoteDeletes[path] = &SyncOperation{Op: OpDeleteRemote, Path: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteDeleted {
 			// Remote Delete + Local Exists
-			result.LocalDeletes[path] = &SyncOperation{Op: OpDeleteLocal, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.LocalDeletes[path] = &SyncOperation{Op: OpDeleteLocal, Path: path, Local: local, Remote: remote, LastSynced: journal}
 		} else {
 			// Local Unchanged + Remote Unchanged
-			result.UnchangedPaths = append(result.UnchangedPaths, path)
+			reconcileOps.UnchangedPaths[path] = struct{}{}
 			continue
 		}
 	}
 
-	return result
+	return reconcileOps
 }
 
-func (se *SyncEngine) executeReconcileOperations(ctx context.Context, result *ReconcileResult) {
+func (se *SyncEngine) executeReconcileOperations(ctx context.Context, result *ReconcileOperations) {
 	var wg sync.WaitGroup
 	// run batch operations in parallel
 	wg.Add(1)
@@ -280,7 +274,7 @@ func (se *SyncEngine) executeReconcileOperations(ctx context.Context, result *Re
 		defer wg.Done()
 
 		// cleanup the journal
-		for _, path := range result.Cleanups {
+		for path := range result.Cleanups {
 			se.journal.Delete(path)
 		}
 	}()
@@ -321,7 +315,7 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 	}
 
 	// Option 4: Fallback to ModTime (use cautiously, with tolerance?)
-	if !f1.LastModified.Equal(f2.LastModified) {
+	if f1.LastModified != f2.LastModified {
 		return true
 	}
 
@@ -500,11 +494,11 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 
 			path := event.Path()
 
-			if se.ignore.ShouldIgnore(path) {
+			if se.ignoreList.ShouldIgnore(path) {
 				continue
 			}
 
-			if se.priority.ShouldPrioritize(path) {
+			if se.priorityList.ShouldPrioritize(path) {
 				se.handlePriorityUpload(path)
 			}
 		}

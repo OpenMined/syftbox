@@ -13,15 +13,18 @@ type SyncManager struct {
 	workspace *workspace.Workspace
 	engine    *SyncEngine
 	watcher   *FileWatcher
-	ignore    *SyncIgnore
-	priority  *SyncPriority
+	ignore    *SyncIgnoreList
+	priority  *SyncPriorityList
 }
 
 func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK) (*SyncManager, error) {
 	watcher := NewFileWatcher(workspace.DatasitesDir)
-	ignore := NewSyncIgnore(workspace.DatasitesDir)
-	priority := NewSyncPriority(workspace.DatasitesDir)
-	engine := NewSyncEngine(workspace, sdk, ignore, priority, watcher)
+	ignore := NewSyncIgnoreList(workspace.DatasitesDir)
+	priority := NewSyncPriorityList(workspace.DatasitesDir)
+	engine, err := NewSyncEngine(workspace, sdk, ignore, priority, watcher)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync engine: %w", err)
+	}
 
 	return &SyncManager{
 		sdk:       sdk,

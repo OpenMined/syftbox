@@ -8,12 +8,12 @@ import (
 	"os"
 )
 
-type PriorityFileMetadata struct {
+type FileContent struct {
 	FileMetadata
 	Content []byte
 }
 
-func ReadPriorityFile(path string) (*PriorityFileMetadata, error) {
+func NewFileContent(path string) (*FileContent, error) {
 	stat, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func ReadPriorityFile(path string) (*PriorityFileMetadata, error) {
 		return nil, err
 	}
 
-	return &PriorityFileMetadata{
+	return &FileContent{
 		FileMetadata: FileMetadata{
 			Size:         size,
 			ETag:         fmt.Sprintf("%x", hasher.Sum(nil)),

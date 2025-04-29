@@ -7,16 +7,16 @@ var defaultPriorityFiles = []string{
 	"**/*.response",
 }
 
-type SyncPriority struct {
+type SyncPriorityList struct {
 	baseDir  string
 	priority *gitignore.GitIgnore
 }
 
-func NewSyncPriority(baseDir string) *SyncPriority {
+func NewSyncPriorityList(baseDir string) *SyncPriorityList {
 	priority := gitignore.CompileIgnoreLines(defaultPriorityFiles...)
-	return &SyncPriority{baseDir: baseDir, priority: priority}
+	return &SyncPriorityList{baseDir: baseDir, priority: priority}
 }
 
-func (s *SyncPriority) ShouldPrioritize(path string) bool {
+func (s *SyncPriorityList) ShouldPrioritize(path string) bool {
 	return s.priority.MatchesPath(path)
 }

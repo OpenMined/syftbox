@@ -5,9 +5,9 @@ import (
 )
 
 type FileMetadata struct {
-	Path         string
-	Size         int64
-	ETag         string
-	Version      string
-	LastModified time.Time
+	Path         string    `db:"path"`
+	Size         int64     `db:"size"`
+	ETag         string    `db:"etag"`
+	Version      string    `db:"version"`
+	LastModified time.Time `db:"last_modified"`
 }

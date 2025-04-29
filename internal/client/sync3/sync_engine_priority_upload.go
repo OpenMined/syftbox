@@ -7,9 +7,13 @@ import (
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
+const (
+	maxPrioritySize = 1024 * 1024 // 1MB
+)
+
 func (se *SyncEngine) handlePriorityUpload(path string) {
 	timeNow := time.Now()
-	file, err := ReadPriorityFile(path)
+	file, err := NewFileContent(path)
 	if err != nil {
 		slog.Error("sync priority", "op", OpWriteRemote, "error", err)
 		return
@@ -20,11 +24,12 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		return
 	}
 
-	// todo - if file is unchanged, just random events, then skip
-	// if se.journal.HasETag(file.ETag) {
-	// 	slog.Warn("priority file unchanged", "path", path)
-	// 	return
-	// }
+	if lastSynced, err := se.journal.Get(path); err != nil {
+		slog.Warn("priority file journal check", "error", err)
+	} else if lastSynced.ETag == file.ETag {
+		slog.Info("priority file contents unchanged. skipping.", "path", path)
+		return
+	}
 
 	timeTaken := timeNow.Sub(file.LastModified)
 	relPath := se.workspace.DatasiteRelPath(path)

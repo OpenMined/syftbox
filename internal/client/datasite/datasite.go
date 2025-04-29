@@ -80,6 +80,7 @@ func (d *Datasite) Start(ctx context.Context) error {
 func (d *Datasite) Stop() {
 	d.sync.Stop()
 	d.sdk.Close()
+	d.workspace.Unlock()
 	slog.Info("syftbox client stop")
 }
 
