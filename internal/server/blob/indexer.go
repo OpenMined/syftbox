@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const indexInterval = 5 * time.Minute
+const indexInterval = 15 * time.Minute
 
 // blobIndexer handles the periodic updating of the blob index
 type blobIndexer struct {
