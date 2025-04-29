@@ -70,20 +70,17 @@ func (s *Server) Start(ctx context.Context) error {
 	// Create errgroup with derived context
 	eg, egCtx := errgroup.WithContext(ctx)
 
+	// Start services
+	if err := s.svc.Start(egCtx); err != nil {
+		return fmt.Errorf("start services: %w", err)
+	}
+
 	// Start HTTP server
 	eg.Go(func() error {
 		if err := s.runHttpServer(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
 		}
 		slog.Info("http server stopped")
-		return nil
-	})
-
-	// Start services
-	eg.Go(func() error {
-		if err := s.svc.Start(egCtx); err != nil {
-			return fmt.Errorf("start services: %w", err)
-		}
 		return nil
 	})
 
