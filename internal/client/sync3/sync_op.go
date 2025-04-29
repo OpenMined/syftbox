@@ -26,7 +26,7 @@ const (
 
 type SyncOperation struct {
 	Op         OpType
-	Path       string
+	RelPath    string // Datasite relative path
 	Local      *FileMetadata
 	Remote     *FileMetadata
 	LastSynced *FileMetadata

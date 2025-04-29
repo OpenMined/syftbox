@@ -2,6 +2,7 @@ package sync3
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -83,11 +84,10 @@ func (s *SyncJournal) Close() error {
 // Get retrieves the metadata for a specific path.
 func (s *SyncJournal) Get(path string) (*FileMetadata, error) {
 	var dbMeta dbFileMetadata
-	// Use Get which combines QueryRow and Scan
 	err := s.db.Get(&dbMeta, "SELECT path, size, etag, version, last_modified FROM sync_journal WHERE path = ?", path)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, err // Return standard ErrNoRows if not found
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to query path %s: %w", path, err)
 	}
@@ -95,13 +95,10 @@ func (s *SyncJournal) Get(path string) (*FileMetadata, error) {
 	// Convert the string timestamp to time.Time
 	modTime, err := time.Parse(time.RFC3339, dbMeta.LastModified)
 	if err != nil {
-		// Log the error, but potentially return the metadata with zero time? Or return error?
 		slog.Error("Failed to parse last_modified timestamp", "path", path, "value", dbMeta.LastModified, "error", err)
-		// Returning error might be safer, depends on desired behavior for corrupt data.
 		return nil, fmt.Errorf("failed to parse stored timestamp for %s: %w", path, err)
 	}
 
-	// Populate the final FileMetadata struct
 	metadata := &FileMetadata{
 		Path:         dbMeta.Path,
 		Size:         dbMeta.Size,
@@ -118,16 +115,14 @@ func (s *SyncJournal) Set(state *FileMetadata) error {
 		return fmt.Errorf("cannot set nil state")
 	}
 
-	// Prepare data for insertion, converting time to RFC3339 string
-	data := map[string]interface{}{
-		"path":          state.Path,
-		"size":          state.Size,
-		"etag":          state.ETag,
-		"version":       state.Version,
-		"last_modified": state.LastModified.Format(time.RFC3339),
+	data := dbFileMetadata{
+		Path:         state.Path,
+		Size:         state.Size,
+		ETag:         state.ETag,
+		Version:      state.Version,
+		LastModified: state.LastModified.Format(time.RFC3339),
 	}
 
-	// Use NamedExec for cleaner inserts/updates with struct tags or maps
 	query := `INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) 
 	          VALUES (:path, :size, :etag, :version, :last_modified)`
 	_, err := s.db.NamedExec(query, data)
@@ -140,7 +135,6 @@ func (s *SyncJournal) Set(state *FileMetadata) error {
 // GetPaths retrieves all paths known to the journal.
 func (s *SyncJournal) GetPaths() ([]string, error) {
 	var paths []string
-	// Use Select for querying multiple rows into a slice
 	err := s.db.Select(&paths, "SELECT path FROM sync_journal")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query paths: %w", err)
@@ -151,7 +145,6 @@ func (s *SyncJournal) GetPaths() ([]string, error) {
 // GetState retrieves the entire state map from the journal.
 func (s *SyncJournal) GetState() (map[string]*FileMetadata, error) {
 	var dbMetas []dbFileMetadata
-	// Select all rows into the slice of dbFileMetadata
 	err := s.db.Select(&dbMetas, "SELECT path, size, etag, version, last_modified FROM sync_journal")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query full state: %w", err)
@@ -162,9 +155,7 @@ func (s *SyncJournal) GetState() (map[string]*FileMetadata, error) {
 	for _, dbMeta := range dbMetas {
 		modTime, err := time.Parse(time.RFC3339, dbMeta.LastModified)
 		if err != nil {
-			// Log error for the specific row, maybe skip it or return partial results?
-			slog.Error("Failed to parse last_modified timestamp during full state retrieval", "path", dbMeta.Path, "value", dbMeta.LastModified, "error", err)
-			// Skipping the entry for now, could accumulate errors and return them.
+			slog.Error("Failed to parse last_modified timestamp", "path", dbMeta.Path, "value", dbMeta.LastModified, "error", err)
 			continue // Skip this entry if timestamp is corrupt
 		}
 		state[dbMeta.Path] = &FileMetadata{ // Store pointer
@@ -182,7 +173,6 @@ func (s *SyncJournal) GetState() (map[string]*FileMetadata, error) {
 // Count returns the number of entries in the journal.
 func (s *SyncJournal) Count() (int, error) {
 	var count int
-	// Use Get for single-row queries expecting a single value
 	err := s.db.Get(&count, "SELECT COUNT(*) FROM sync_journal")
 	if err != nil {
 		return 0, fmt.Errorf("failed to count entries: %w", err)
@@ -192,7 +182,6 @@ func (s *SyncJournal) Count() (int, error) {
 
 // Delete removes an entry from the journal by its key (path).
 func (s *SyncJournal) Delete(path string) error {
-	// Exec is suitable for DELETE operations
 	_, err := s.db.Exec("DELETE FROM sync_journal WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("failed to delete path %s: %w", path, err)

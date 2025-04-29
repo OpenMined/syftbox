@@ -9,6 +9,8 @@ import (
 func (se *SyncEngine) handlePriorityError(msg *syftmsg.Message) {
 	errMsg, _ := msg.Data.(syftmsg.Error)
 	slog.Info("sync priority", "op", OpError, "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "message", errMsg.Message)
+	se.syncStatus.SetSyncing(errMsg.Path)
+	defer se.syncStatus.UnsetSyncing(errMsg.Path)
 
 	switch errMsg.Code {
 	case 403:

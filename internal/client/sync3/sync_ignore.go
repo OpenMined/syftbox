@@ -4,53 +4,26 @@ import (
 	gitignore "github.com/sabhiram/go-gitignore"
 )
 
-const defaultIgnoreFile = `
-# Syft
-syftignore
-apps/
-private/
-
-# Python
-.ipynb_checkpoints/
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-dist/
-
-# OS-specific
-.DS_Store
-Thumbds.db
-Icon
-
-# IDE/Editor-specific
-*.swp
-*.swo
-.vscode/
-.idea/
-*.iml
-
-# General excludes
-*.tmp
-*.log
-
-# excluded datasites
-# example:
-# /user_to_exclude@example.com/
-`
-
 var defaultIgnoreLines = []string{
+	// syft
 	"syftignore",
 	"**/*syftrejected*",
 	"**/*syftconflict*",
 	"logs/",
+	// python
 	".ipynb_checkpoints/",
 	"__pycache__/",
 	"*.py[cod]",
 	"dist/",
 	"venv/",
 	".venv/",
+	// IDE/Editor-specific
+	".vscode",
+	".idea",
+	// General excludes
+	"*.tmp",
+	"*.log",
+	// OS-specific
 	".DS_Store",
 	"Thumbds.db",
 	"Icon",

@@ -125,6 +125,7 @@ func (e *EventsAPI) Send(msg *syftmsg.Message) error {
 
 	select {
 	case wsClient.msgTx <- msg:
+		slog.Debug("socketmgr tx", "id", msg.Id, "type", msg.Type)
 		return nil
 	default:
 		return ErrEventsMessageQueueFull
@@ -224,17 +225,17 @@ func (e *EventsAPI) consumeMessages(wsClient *wsClient) {
 
 		case msg, ok := <-wsClient.msgRx:
 			if !ok {
-				slog.Debug("socketmgr client rx closed")
+				slog.Debug("socketmgr rx closed")
 				return
 			}
 
-			slog.Debug("socketmgr received message", "id", msg.Id, "type", msg.Type)
+			slog.Debug("socketmgr rx", "id", msg.Id, "type", msg.Type)
 
 			select {
 			case e.messages <- msg:
 				// Successfully delivered
 			default:
-				slog.Warn("socketmgr buffer full, dropping message", "id", msg.Id, "type", msg.Type)
+				slog.Warn("socketmgr rx buffer full. dropped", "id", msg.Id, "type", msg.Type)
 			}
 		}
 	}

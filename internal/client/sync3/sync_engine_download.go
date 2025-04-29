@@ -15,13 +15,17 @@ import (
 	"github.com/openmined/syftbox/internal/utils"
 )
 
+const (
+	maxDownloadConcurrency = 4
+)
+
 // download
 func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWrite) {
 	if len(batch) == 0 {
 		return
 	}
 
-	downloader, err := syftsdk.NewDownloader(4)
+	downloader, err := syftsdk.NewDownloader(maxDownloadConcurrency)
 	if err != nil {
 		slog.Error("sync", "op", OpWriteLocal, "error", err)
 		return
@@ -33,9 +37,11 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 	etagMap := make(map[string][]string)
 	pathMap := make(map[string]*FileMetadata)
 	for _, op := range batch {
-		uniqueFiles[op.Remote.ETag] = op.Path
-		etagMap[op.Remote.ETag] = append(etagMap[op.Remote.ETag], op.Path)
-		pathMap[op.Path] = op.Remote
+		uniqueFiles[op.Remote.ETag] = op.RelPath
+		etagMap[op.Remote.ETag] = append(etagMap[op.Remote.ETag], op.RelPath)
+		pathMap[op.RelPath] = op.Remote
+
+		se.syncStatus.SetSyncing(op.RelPath)
 	}
 
 	// get presigned urls
@@ -96,9 +102,10 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 				if err != nil {
 					slog.Error("downloaded but failed to copy file", "from", res.DownloadPath, "to", targetPath, "error", err)
 				} else {
-					meta := pathMap[key]
-					se.journal.Set(meta)
-					slog.Info("sync", "op", OpWriteLocal, "path", key, "size", meta.Size)
+					fileMeta := pathMap[key]
+					se.journal.Set(fileMeta)
+					se.syncStatus.UnsetSyncing(fileMeta.Path)
+					slog.Info("sync", "op", OpWriteLocal, "path", key, "size", fileMeta.Size)
 				}
 			}
 		}

@@ -30,6 +30,7 @@ type SyncEngine struct {
 	workspace      *workspace.Workspace
 	sdk            *syftsdk.SyftSDK
 	journal        *SyncJournal
+	syncStatus     *SyncStatus
 	watcher        *FileWatcher
 	lastLocalState map[string]*FileMetadata
 	ignoreList     *SyncIgnoreList
@@ -44,10 +45,7 @@ func NewSyncEngine(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, ignore 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync journal: %w", err)
 	}
-	if err != nil {
-		slog.Error("failed to create sync journal", "error", err)
-		os.Exit(1)
-	}
+
 	return &SyncEngine{
 		sdk:            sdk,
 		workspace:      workspace,
@@ -56,6 +54,7 @@ func NewSyncEngine(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, ignore 
 		ignoreList:     ignore,
 		priorityList:   priority,
 		lastLocalState: make(map[string]*FileMetadata),
+		syncStatus:     NewSyncStatus(),
 	}, nil
 }
 
@@ -157,6 +156,7 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 			"conflicts", len(result.Conflicts),
 			"unchanged", len(result.UnchangedPaths),
 			"cleanups", len(result.Cleanups),
+			"syncing", se.syncStatus.Count(),
 		)
 	}
 
@@ -209,23 +209,23 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 			(localCreated && remoteCreated) {
 			// Conflict Case: Local Create/Modify + Remote Create/Modify
 			// todo we can also consider local modify + remote delete or local delete + remote modify as conflict
-			reconcileOps.Conflicts[path] = &SyncOperation{Op: OpConflict, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.Conflicts[path] = &SyncOperation{Op: OpConflict, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 			continue
 		}
 
 		// Regular Sync
 		if localCreated || localModified {
 			// Local New/Modify + Remote Unchanged
-			reconcileOps.RemoteWrites[path] = &SyncOperation{Op: OpWriteRemote, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.RemoteWrites[path] = &SyncOperation{Op: OpWriteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteCreated || remoteModified {
 			// Local Unchanged + Remote New/Modify
-			reconcileOps.LocalWrites[path] = &SyncOperation{Op: OpWriteLocal, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.LocalWrites[path] = &SyncOperation{Op: OpWriteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if localDeleted {
 			// Local Delete + Remote Exists
-			reconcileOps.RemoteDeletes[path] = &SyncOperation{Op: OpDeleteRemote, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.RemoteDeletes[path] = &SyncOperation{Op: OpDeleteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteDeleted {
 			// Remote Delete + Local Exists
-			reconcileOps.LocalDeletes[path] = &SyncOperation{Op: OpDeleteLocal, Path: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.LocalDeletes[path] = &SyncOperation{Op: OpDeleteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else {
 			// Local Unchanged + Remote Unchanged
 			reconcileOps.UnchangedPaths[path] = struct{}{}
@@ -324,8 +324,7 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 }
 
 func (se *SyncEngine) isSyncing(path string) bool {
-	// todo
-	return false
+	return se.syncStatus.IsSyncing(path)
 }
 
 func (se *SyncEngine) isConflict(path string) bool {

@@ -7,10 +7,14 @@ import (
 
 func (se *SyncEngine) handleConflicts(_ context.Context, batch BatchConflict) {
 	for _, op := range batch {
-		if err := MarkConflicted(op.Local.Path); err != nil {
-			slog.Warn("sync", "op", OpConflict, "key", op.Local.Path, "error", err)
+		se.syncStatus.SetSyncing(op.RelPath)
+		defer se.syncStatus.UnsetSyncing(op.RelPath)
+
+		localPath := se.workspace.DatasiteAbsPath(op.RelPath)
+		if err := MarkConflicted(localPath); err != nil {
+			slog.Warn("sync", "op", OpConflict, "key", op.RelPath, "error", err)
 		} else {
-			slog.Warn("sync", "op", OpConflict, "key", op.Local.Path)
+			slog.Warn("sync", "op", OpConflict, "key", op.RelPath)
 		}
 		// todo trigger a re-download, or wait for the next sync cycle to re-download
 	}
