@@ -50,6 +50,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	appH := handlers.NewAppHandler(datasiteMgr)
 	initH := handlers.NewInitHandler(datasiteMgr)
 	statusH := handlers.NewStatusHandler(datasiteMgr)
+	workspaceH := handlers.NewWorkspaceHandler(datasiteMgr)
 
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
@@ -75,6 +76,11 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 			v1App.GET("/list", appH.List)
 			v1App.POST("/install", appH.Install)
 			v1App.DELETE("/uninstall", appH.Uninstall)
+		}
+
+		v1Workspace := v1.Group("/workspace")
+		{
+			v1Workspace.GET("/items", workspaceH.GetItems)
 		}
 
 		// v1Fs := v1.Group("/datasite")

@@ -255,6 +255,54 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/workspace/items": {
+            "get": {
+                "description": "Get files and folders at a specified path",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Get workspace items",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to the directory (default is root)",
+                        "name": "path",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)",
+                        "name": "depth",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -344,12 +392,40 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.Permission": {
+            "type": "object",
+            "properties": {
+                "avatar": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"read\", \"write\", or \"admin\"",
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.StatusResponse": {
             "type": "object",
             "properties": {
                 "buildDate": {
                     "description": "build date of the client.",
                     "type": "string"
+                },
+                "hasConfig": {
+                    "description": "whether the datasite has a config.",
+                    "type": "boolean"
                 },
                 "revision": {
                     "description": "revision of the client.",
@@ -366,6 +442,90 @@ const docTemplate = `{
                 "version": {
                     "description": "version of the client.",
                     "type": "string"
+                }
+            }
+        },
+        "handlers.SyncStatus": {
+            "type": "string",
+            "enum": [
+                "synced",
+                "syncing",
+                "pending",
+                "rejected",
+                "error",
+                "ignored",
+                "hidden"
+            ],
+            "x-enum-varnames": [
+                "SyncStatusSynced",
+                "SyncStatusSyncing",
+                "SyncStatusPending",
+                "SyncStatusRejected",
+                "SyncStatusError",
+                "SyncStatusIgnored",
+                "SyncStatusHidden"
+            ]
+        },
+        "handlers.WorkspaceItem": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.WorkspaceItem"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "modifiedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.Permission"
+                    }
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "syncStatus": {
+                    "$ref": "#/definitions/handlers.SyncStatus"
+                },
+                "type": {
+                    "$ref": "#/definitions/handlers.WorkspaceItemType"
+                }
+            }
+        },
+        "handlers.WorkspaceItemType": {
+            "type": "string",
+            "enum": [
+                "file",
+                "folder"
+            ],
+            "x-enum-varnames": [
+                "WorkspaceItemTypeFile",
+                "WorkspaceItemTypeFolder"
+            ]
+        },
+        "handlers.WorkspaceItemsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.WorkspaceItem"
+                    }
                 }
             }
         }
