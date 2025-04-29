@@ -22,7 +22,7 @@ type Datasite struct {
 }
 
 func New(config *config.Config) (*Datasite, error) {
-	ds, err := workspace.NewWorkspace(config.DataDir, config.Email)
+	ws, err := workspace.NewWorkspace(config.DataDir, config.Email)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create datasite: %w", err)
 	}
@@ -32,15 +32,18 @@ func New(config *config.Config) (*Datasite, error) {
 		return nil, fmt.Errorf("failed to create sdk: %w", err)
 	}
 
-	appSched := apps.NewScheduler(ds.AppsDir, config.Path)
-	appMgr := apps.NewManager(ds.AppsDir)
+	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
+	appMgr := apps.NewManager(ws.AppsDir)
 
-	sync := sync.NewManager(sdk, ds)
+	sync, err := sync.NewManager(ws, sdk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sync manager: %w", err)
+	}
 
 	return &Datasite{
 		config:       config,
 		sdk:          sdk,
-		workspace:    ds,
+		workspace:    ws,
 		appScheduler: appSched,
 		appManager:   appMgr,
 		sync:         sync,
@@ -50,7 +53,7 @@ func New(config *config.Config) (*Datasite, error) {
 func (d *Datasite) Start(ctx context.Context) error {
 	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "server", d.config.ServerURL)
 	// Setup local datasite first
-	if err := d.workspace.Bootstrap(); err != nil {
+	if err := d.workspace.Setup(); err != nil {
 		return fmt.Errorf("failed to bootstrap datasite: %w", err)
 	}
 	if err := d.sdk.Login(d.config.Email); err != nil {
@@ -77,6 +80,7 @@ func (d *Datasite) Start(ctx context.Context) error {
 func (d *Datasite) Stop() {
 	d.sync.Stop()
 	d.sdk.Close()
+	d.workspace.Unlock()
 	slog.Info("syftbox client stop")
 }
 

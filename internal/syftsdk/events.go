@@ -18,6 +18,7 @@ const (
 	eventsReconnectDelay    = 1 * time.Second
 	eventsMaxReconnectDelay = 8 * time.Second
 	eventsReconnectTimeout  = 10 * time.Second
+	wsClientMaxMessageSize  = 4 * 1024 * 1024 // 4MB
 	eventsPath              = "/api/v1/events"
 )
 
@@ -125,6 +126,7 @@ func (e *EventsAPI) Send(msg *syftmsg.Message) error {
 
 	select {
 	case wsClient.msgTx <- msg:
+		slog.Debug("socketmgr tx", "id", msg.Id, "type", msg.Type)
 		return nil
 	default:
 		return ErrEventsMessageQueueFull
@@ -172,6 +174,7 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	conn.SetReadLimit(wsClientMaxMessageSize)
 
 	// Create and start client
 	wsClient := newWSClient(conn)
@@ -224,17 +227,17 @@ func (e *EventsAPI) consumeMessages(wsClient *wsClient) {
 
 		case msg, ok := <-wsClient.msgRx:
 			if !ok {
-				slog.Debug("socketmgr client rx closed")
+				slog.Debug("socketmgr rx closed")
 				return
 			}
 
-			slog.Debug("socketmgr received message", "id", msg.Id, "type", msg.Type)
+			slog.Debug("socketmgr rx", "id", msg.Id, "type", msg.Type)
 
 			select {
 			case e.messages <- msg:
 				// Successfully delivered
 			default:
-				slog.Warn("socketmgr buffer full, dropping message", "id", msg.Id, "type", msg.Type)
+				slog.Warn("socketmgr rx buffer full. dropped", "id", msg.Id, "type", msg.Type)
 			}
 		}
 	}

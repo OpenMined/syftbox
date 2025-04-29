@@ -22,6 +22,9 @@ func newAppCmd() *cobra.Command {
 	appCmd := &cobra.Command{
 		Use:   "app",
 		Short: "Manage SyftBox apps",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return loadConfig(cmd)
+		},
 	}
 	return appCmd
 }
@@ -37,9 +40,6 @@ func newAppCmdInstall() *cobra.Command {
 		Aliases: []string{"i", "add"},
 		Short:   "Install a SyftBox app",
 		Args:    cobra.ExactArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			return loadConfig(cmd)
-		},
 		Run: func(cmd *cobra.Command, args []string) {
 			repo := args[0]
 			installer, err := getAppManager()
@@ -129,7 +129,7 @@ func newAppCmdList() *cobra.Command {
 }
 
 func getAppManager() (*apps.AppManager, error) {
-	user := viper.GetString("user")
+	user := viper.GetString("email")
 	dataDir := viper.GetString("data_dir")
 
 	datasite, err := workspace.NewWorkspace(dataDir, user)
