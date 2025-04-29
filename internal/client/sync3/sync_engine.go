@@ -62,6 +62,7 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	slog.Info("sync start")
 
 	// run sync once and wait before starting watcher//websocket
+	slog.Info("running initial sync")
 	se.runFullSync(ctx)
 
 	if err := se.sdk.Events.Connect(ctx); err != nil {
@@ -71,11 +72,16 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	se.wg.Add(1)
 	go func() {
 		defer se.wg.Done()
-		timer := time.NewTicker(fullSyncInterval)
+
+		// using a timer and not a ticker to avoid queued ticks when
+		// runFullSync takes more than fullSyncInterval to complete
+		timer := time.NewTimer(fullSyncInterval)
+		defer timer.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
+
 				return
 			case <-timer.C:
 				err := se.runFullSync(ctx)
@@ -83,6 +89,7 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 					slog.Error("failed to run sync", "error", err)
 					return
 				}
+				timer.Reset(fullSyncInterval)
 			}
 		}
 	}()
