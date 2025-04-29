@@ -1,4 +1,4 @@
-package sync3
+package sync
 
 type BatchLocalDelete map[string]*SyncOperation
 type BatchRemoteDelete map[string]*SyncOperation

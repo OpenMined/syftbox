@@ -1,4 +1,4 @@
-package sync3
+package sync
 
 // func TestSyncEngineFullSync(t *testing.T) {
 // 	dummyDatasite, err := datasite.NewLocalDatasite("~/SyftBox", "yash@openmined.org")

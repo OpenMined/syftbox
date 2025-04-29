@@ -11,31 +11,23 @@ import (
 	"github.com/openmined/syftbox/internal/utils"
 )
 
-func (sm *SyncManager) ignorePath(path string) {
-	sm.mu.Lock()
-	sm.syncd[path] = true
-	sm.mu.Unlock()
-}
+var (
+	rejectedExt = ".syftrejected"
+	conflictExt = ".syftconflict"
+)
 
-func (sm *SyncManager) shouldIgnorePath(path string) bool {
-	if strings.Contains(path, "syftrejected") {
-		return true
-	}
-	// ignore just pulled files and then pop them
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if _, ok := sm.syncd[path]; ok {
-		delete(sm.syncd, path)
-		return true
-	}
-	return false
-}
-
-func RejectFile(path string) error {
+func MarkRejected(localPath string) error {
 	// rename file from <path>/file.whatever to <path>/file.syftrejected.whatever
-	ext := filepath.Ext(path)
-	newPath := strings.Replace(path, ext, ".syftrejected"+ext, 1)
-	return os.Rename(path, newPath)
+	ext := filepath.Ext(localPath)
+	newPath := strings.Replace(localPath, ext, rejectedExt+ext, 1)
+	return os.Rename(localPath, newPath)
+}
+
+func MarkConflicted(localPath string) error {
+	// rename file from <path>/file.whatever to <path>/file.syftconflict.whatever
+	ext := filepath.Ext(localPath)
+	newPath := strings.Replace(localPath, ext, conflictExt+ext, 1)
+	return os.Rename(localPath, newPath)
 }
 
 // WriteFile writes the body to the file at path and returns the md5 hash of the body

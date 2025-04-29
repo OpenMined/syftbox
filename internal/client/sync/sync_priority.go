@@ -1,4 +1,4 @@
-package sync3
+package sync
 
 import gitignore "github.com/sabhiram/go-gitignore"
 

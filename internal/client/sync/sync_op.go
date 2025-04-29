@@ -1,4 +1,4 @@
-package sync3
+package sync
 
 type OpType uint8
 

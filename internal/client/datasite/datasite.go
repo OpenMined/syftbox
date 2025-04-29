@@ -7,7 +7,7 @@ import (
 
 	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/config"
-	"github.com/openmined/syftbox/internal/client/sync3"
+	"github.com/openmined/syftbox/internal/client/sync"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
 )
@@ -18,7 +18,7 @@ type Datasite struct {
 	workspace    *workspace.Workspace
 	appScheduler *apps.AppScheduler
 	appManager   *apps.AppManager
-	sync         *sync3.SyncManager
+	sync         *sync.SyncManager
 }
 
 func New(config *config.Config) (*Datasite, error) {
@@ -35,7 +35,7 @@ func New(config *config.Config) (*Datasite, error) {
 	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
 	appMgr := apps.NewManager(ws.AppsDir)
 
-	sync, err := sync3.NewManager(ws, sdk)
+	sync, err := sync.NewManager(ws, sdk)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync manager: %w", err)
 	}
@@ -100,6 +100,6 @@ func (d *Datasite) GetAppManager() *apps.AppManager {
 	return d.appManager
 }
 
-func (d *Datasite) GetSyncManager() *sync3.SyncManager {
+func (d *Datasite) GetSyncManager() *sync.SyncManager {
 	return d.sync
 }
