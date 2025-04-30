@@ -82,6 +82,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 		{
 			v1Workspace.GET("/items", workspaceH.GetItems)
 			v1Workspace.POST("/items", workspaceH.CreateItem)
+			v1Workspace.DELETE("/items", workspaceH.DeleteItems)
 		}
 
 		// v1Fs := v1.Group("/datasite")
