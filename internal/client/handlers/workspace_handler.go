@@ -10,7 +10,8 @@ import (
 )
 
 const (
-	ErrCodeListWorkspaceItemsFailed = "ERR_LIST_WORKSPACE_ITEMS_FAILED"
+	ErrCodeListWorkspaceItemsFailed  = "ERR_LIST_WORKSPACE_ITEMS_FAILED"
+	ErrCodeCreateWorkspaceItemFailed = "ERR_CREATE_WORKSPACE_ITEM_FAILED"
 )
 
 type WorkspaceHandler struct {
@@ -70,6 +71,131 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 
 	c.PureJSON(http.StatusOK, &WorkspaceItemsResponse{
 		Items: items,
+	})
+}
+
+// @Summary		Create workspace item
+// @Description	Create a new file or folder in the workspace
+// @Tags			Files and Folders
+// @Accept			json
+// @Produce		json
+// @Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
+// @Success		201		{object}	WorkspaceItemCreateResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Failure		503		{object}	ControlPlaneError
+// @Router			/v1/workspace/items [post]
+func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
+	var req WorkspaceItemCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the workspace
+	ws := ds.GetWorkspace()
+
+	// Make sure req.Path is a absolute path
+	if !filepath.IsAbs(req.Path) {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "path must be an absolute path",
+		})
+		return
+	}
+
+	// Resolve the path
+	absPath := filepath.Join(ws.Root, req.Path)
+
+	// Create the item
+	var itemInfo os.FileInfo
+
+	dirToCreate := absPath
+	if req.Type == "file" {
+		dirToCreate = filepath.Dir(absPath)
+	}
+
+	// Create the directory
+	if err := os.MkdirAll(dirToCreate, 0755); err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+	info, err := os.Stat(dirToCreate)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+	itemInfo = info
+
+	if req.Type == "file" {
+		// Create a file
+		f, err := os.Create(absPath)
+		if err != nil {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+				Error:     err.Error(),
+			})
+			return
+		}
+		defer f.Close()
+
+		info, err := f.Stat()
+		if err != nil {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+				Error:     err.Error(),
+			})
+			return
+		}
+		itemInfo = info
+	}
+
+	// Get relative path for response
+	relPath, err := filepath.Rel(ws.Root, absPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+	relPath = filepath.Join("/", filepath.ToSlash(relPath))
+
+	// Create response item
+	item := WorkspaceItem{
+		Id:          relPath,
+		Name:        filepath.Base(absPath),
+		Type:        WorkspaceItemType(req.Type),
+		Path:        relPath,
+		CreatedAt:   itemInfo.ModTime(),
+		ModifiedAt:  itemInfo.ModTime(),
+		Size:        itemInfo.Size(),
+		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions: []Permission{},   // TODO: Replace with actual permissions
+		Children:    []WorkspaceItem{},
+	}
+
+	c.PureJSON(http.StatusCreated, &WorkspaceItemCreateResponse{
+		Item: item,
 	})
 }
 

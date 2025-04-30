@@ -56,3 +56,14 @@ type Permission struct {
 type WorkspaceItemsResponse struct {
 	Items []WorkspaceItem `json:"items"`
 }
+
+// WorkspaceItemCreateRequest represents the request for creating a workspace item
+type WorkspaceItemCreateRequest struct {
+	Path string            `json:"path" binding:"required"`
+	Type WorkspaceItemType `json:"type" binding:"required,oneof=file folder"`
+}
+
+// WorkspaceItemCreateResponse represents the response for creating a workspace item
+type WorkspaceItemCreateResponse struct {
+	Item WorkspaceItem `json:"item"`
+}

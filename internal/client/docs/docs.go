@@ -302,6 +302,56 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "post": {
+                "description": "Create a new file or folder in the workspace",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Create workspace item",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
             }
         }
     },
@@ -504,6 +554,29 @@ const docTemplate = `{
                 },
                 "type": {
                     "$ref": "#/definitions/handlers.WorkspaceItemType"
+                }
+            }
+        },
+        "handlers.WorkspaceItemCreateRequest": {
+            "type": "object",
+            "required": [
+                "path",
+                "type"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/handlers.WorkspaceItemType"
+                }
+            }
+        },
+        "handlers.WorkspaceItemCreateResponse": {
+            "type": "object",
+            "properties": {
+                "item": {
+                    "$ref": "#/definitions/handlers.WorkspaceItem"
                 }
             }
         },
