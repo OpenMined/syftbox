@@ -12,6 +12,7 @@ import (
 const (
 	ErrCodeListWorkspaceItemsFailed  = "ERR_LIST_WORKSPACE_ITEMS_FAILED"
 	ErrCodeCreateWorkspaceItemFailed = "ERR_CREATE_WORKSPACE_ITEM_FAILED"
+	ErrCodeDeleteWorkspaceItemFailed = "ERR_DELETE_WORKSPACE_ITEM_FAILED"
 )
 
 type WorkspaceHandler struct {
@@ -112,7 +113,7 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	if !filepath.IsAbs(req.Path) {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
-			Error:     "path must be an absolute path",
+			Error:     "path must be an absolute path and start with /",
 		})
 		return
 	}
@@ -197,6 +198,97 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	c.PureJSON(http.StatusCreated, &WorkspaceItemCreateResponse{
 		Item: item,
 	})
+}
+
+// @Summary		Delete workspace items
+// @Description	Delete multiple files or folders. The operation is similar to the Unix `rm -rf` command.
+// @Description	- If the path is a file, the file will be deleted.
+// @Description	- If the path is a folder, all its contents will also be deleted.
+// @Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
+// @Description	- If the path does not exist, the operation will be a no-op.
+// @Tags			Files and Folders
+// @Accept			json
+// @Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
+// @Success		204		{object}	nil
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Failure		503		{object}	ControlPlaneError
+// @Router			/v1/workspace/items [delete]
+func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
+	var req WorkspaceItemDeleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the workspace
+	ws := ds.GetWorkspace()
+
+	// Process each path
+	for _, path := range req.Paths {
+		// Make sure path is an absolute path
+		if !filepath.IsAbs(path) {
+			c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+				ErrorCode: ErrCodeBadRequest,
+				Error:     "all paths must be absolute paths and start with /",
+			})
+			return
+		}
+
+		// Resolve the path
+		absPath := filepath.Join(ws.Root, path)
+
+		// Check if the path exists and get info
+		fileInfo, err := os.Lstat(absPath)
+		if err != nil {
+			// If the path doesn't exist, skip it (no-op)
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			// For other errors, return an error
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeDeleteWorkspaceItemFailed,
+				Error:     err.Error(),
+			})
+			return
+		}
+
+		// Handle different types of paths
+		if fileInfo.Mode()&os.ModeSymlink != 0 {
+			// For symlinks, only delete the link itself
+			err = os.Remove(absPath)
+		} else if fileInfo.IsDir() {
+			// For directories, use RemoveAll to delete recursively
+			err = os.RemoveAll(absPath)
+		} else {
+			// For regular files, use Remove
+			err = os.Remove(absPath)
+		}
+		if err != nil {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeDeleteWorkspaceItemFailed,
+				Error:     err.Error(),
+			})
+			return
+		}
+	}
+
+	// Return 204 No Content
+	c.Status(http.StatusNoContent)
 }
 
 func (h *WorkspaceHandler) listItems(path string, rootPath string, depth int) ([]WorkspaceItem, error) {

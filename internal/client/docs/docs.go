@@ -352,6 +352,50 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "delete": {
+                "description": "Delete multiple files or folders. The operation is similar to the Unix ` + "`" + `rm -rf` + "`" + ` command.\n- If the path is a file, the file will be deleted.\n- If the path is a folder, all its contents will also be deleted.\n- If the path is a symlink, the symlink will be deleted without deleting the target.\n- If the path does not exist, the operation will be a no-op.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Delete workspace items",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
             }
         }
     },
@@ -568,7 +612,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "type": {
-                    "$ref": "#/definitions/handlers.WorkspaceItemType"
+                    "enum": [
+                        "file",
+                        "folder"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handlers.WorkspaceItemType"
+                        }
+                    ]
                 }
             }
         },
@@ -577,6 +629,20 @@ const docTemplate = `{
             "properties": {
                 "item": {
                     "$ref": "#/definitions/handlers.WorkspaceItem"
+                }
+            }
+        },
+        "handlers.WorkspaceItemDeleteRequest": {
+            "type": "object",
+            "required": [
+                "paths"
+            ],
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

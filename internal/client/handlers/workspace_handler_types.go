@@ -67,3 +67,8 @@ type WorkspaceItemCreateRequest struct {
 type WorkspaceItemCreateResponse struct {
 	Item WorkspaceItem `json:"item"`
 }
+
+// WorkspaceItemDeleteRequest represents the request for deleting workspace items
+type WorkspaceItemDeleteRequest struct {
+	Paths []string `json:"paths" binding:"required"`
+}
