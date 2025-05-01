@@ -26,6 +26,7 @@ dist/
 
 # Go coverage tool output
 *.out
+coverage.html
 
 # Go workspace files
 go.work
