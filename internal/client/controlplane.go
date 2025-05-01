@@ -9,6 +9,7 @@ import (
 
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
 	"github.com/openmined/syftbox/internal/client/middleware"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 type ControlPlaneServer struct {
@@ -18,6 +19,10 @@ type ControlPlaneServer struct {
 }
 
 func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.DatasiteManger) (*ControlPlaneServer, error) {
+	if config.AuthToken == "" {
+		config.AuthToken = utils.TokenHex(16)
+	}
+
 	routes := SetupRoutes(datasiteMgr, &RouteConfig{
 		Swagger: config.EnableSwagger,
 		Auth: middleware.TokenAuthConfig{
