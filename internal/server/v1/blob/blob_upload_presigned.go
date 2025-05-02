@@ -25,6 +25,13 @@ func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
 	urls := make([]*BlobUrl, 0, len(req.Keys))
 	errors := make([]*BlobError, 0)
 	for _, key := range req.Keys {
+		if !isValidDatasiteKey(key) {
+			errors = append(errors, &BlobError{
+				Key:   key,
+				Error: "invalid key",
+			})
+			continue
+		}
 		url, err := h.svc.Client().PutObjectPresigned(ctx, key)
 		if err != nil {
 			errors = append(errors, &BlobError{

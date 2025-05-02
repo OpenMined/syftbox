@@ -2,6 +2,7 @@ package blob
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,10 @@ import (
 const (
 	uploadExpiry   = 5 * time.Minute
 	downloadExpiry = 5 * time.Minute
+)
+
+var (
+	ErrInvalidKey = errors.New("invalid key")
 )
 
 type blobClientHooks struct {
@@ -122,6 +127,10 @@ func (s *BlobClient) GetObjectPresigned(ctx context.Context, key string) (string
 
 // Add an object to a bucket
 func (s *BlobClient) PutObject(ctx context.Context, params *PutObjectParams) (*PutObjectResponse, error) {
+	if !ValidateKey(params.Key) {
+		return nil, ErrInvalidKey
+	}
+
 	s3Params := &s3.PutObjectInput{
 		Bucket:        &s.config.BucketName,
 		Key:           &params.Key,
@@ -155,6 +164,10 @@ func (s *BlobClient) PutObjectPresigned(ctx context.Context, key string) (string
 }
 
 func (s *BlobClient) PutObjectMultipart(ctx context.Context, params *PutObjectMultipartParams) (*PutObjectMultipartResponse, error) {
+	if !ValidateKey(params.Key) {
+		return nil, ErrInvalidKey
+	}
+
 	// Create a multipart upload
 	result, err := s.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: &s.config.BucketName,
@@ -190,6 +203,10 @@ func (s *BlobClient) PutObjectMultipart(ctx context.Context, params *PutObjectMu
 }
 
 func (s *BlobClient) CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error) {
+	if !ValidateKey(params.Key) {
+		return nil, ErrInvalidKey
+	}
+
 	completedParts := make([]types.CompletedPart, len(params.Parts))
 	for i, part := range params.Parts {
 		completedParts[i] = types.CompletedPart{
@@ -221,6 +238,12 @@ func (s *BlobClient) CompleteMultipartUpload(ctx context.Context, params *Comple
 // ===================================================================================================
 
 func (s *BlobClient) CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error) {
+	if !ValidateKey(params.SourceKey) {
+		return nil, fmt.Errorf("invalid source key: %s", params.SourceKey)
+	}
+	if !ValidateKey(params.DestinationKey) {
+		return nil, fmt.Errorf("invalid destination key: %s", params.DestinationKey)
+	}
 	resp, err := s.s3Client.CopyObject(ctx, &s3.CopyObjectInput{
 		Bucket:     &s.config.BucketName,
 		CopySource: aws.String(fmt.Sprintf("%s/%s", s.config.BucketName, params.SourceKey)),
@@ -294,6 +317,10 @@ func (s *BlobClient) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
 // ===================================================================================================
 
 func (s *BlobClient) generatePutObjectURL(ctx context.Context, key string) (string, error) {
+	if !ValidateKey(key) {
+		return "", ErrInvalidKey
+	}
+
 	url, err := s.s3Presigner.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: &s.config.BucketName,
 		Key:    &key,
@@ -307,6 +334,10 @@ func (s *BlobClient) generatePutObjectURL(ctx context.Context, key string) (stri
 }
 
 func (s *BlobClient) generateGetObjectURL(ctx context.Context, key string) (string, error) {
+	if !ValidateKey(key) {
+		return "", ErrInvalidKey
+	}
+
 	url, err := s.s3Presigner.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.config.BucketName,
 		Key:    &key,

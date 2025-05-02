@@ -1,6 +1,8 @@
 package blob
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -17,11 +19,18 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		return
 	}
 
+	if !isValidDatasiteKey(req.Key) {
+		ctx.PureJSON(http.StatusBadRequest, gin.H{
+			"error": "invalid key",
+		})
+		return
+	}
+
 	// get form file
 	file, err := ctx.FormFile("file")
 	if err != nil {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
+			"error": fmt.Sprintf("invalid file: %s", err),
 		})
 		return
 	}
@@ -29,15 +38,15 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 	// check file size
 	if file.Size <= 0 {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "invalid content length",
+			"error": "invalid file: size is 0",
 		})
 		return
 	}
 
 	fd, err := file.Open()
 	if err != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+		ctx.PureJSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("invalid file: %s", err),
 		})
 		return
 	}
@@ -49,8 +58,9 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		Body: fd,
 	})
 	if err != nil {
+		slog.Error("failed to put object", "error", err)
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
+			"error": "server error: could not persist file",
 		})
 		return
 	}

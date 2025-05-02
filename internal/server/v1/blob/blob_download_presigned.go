@@ -27,6 +27,14 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 	errors := make([]*BlobError, 0)
 	index := h.svc.Index()
 	for _, key := range req.Keys {
+		if !isValidDatasiteKey(key) {
+			errors = append(errors, &BlobError{
+				Key:   key,
+				Error: "invalid key",
+			})
+			continue
+		}
+
 		_, ok := index.Get(key)
 		if !ok {
 			errors = append(errors, &BlobError{

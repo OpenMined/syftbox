@@ -2,9 +2,14 @@ package blob
 
 import (
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/blob"
+)
+
+var (
+	regexDatasiteKey = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+/`)
 )
 
 type BlobHandler struct {
@@ -39,4 +44,8 @@ func (h *BlobHandler) ListObjects(ctx *gin.Context) {
 	}
 
 	ctx.PureJSON(http.StatusOK, res)
+}
+
+func isValidDatasiteKey(key string) bool {
+	return regexDatasiteKey.MatchString(key)
 }

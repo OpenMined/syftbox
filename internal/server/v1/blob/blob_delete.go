@@ -25,6 +25,13 @@ func (h *BlobHandler) DeleteObjects(ctx *gin.Context) {
 	deleted := make([]string, 0, len(req.Keys))
 	errors := make([]*BlobError, 0)
 	for _, key := range req.Keys {
+		if !isValidDatasiteKey(key) {
+			errors = append(errors, &BlobError{
+				Key:   key,
+				Error: "invalid key",
+			})
+			continue
+		}
 		_, err := h.svc.Client().DeleteObject(ctx.Request.Context(), key)
 		if err != nil {
 			errors = append(errors, &BlobError{
