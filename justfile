@@ -89,6 +89,12 @@ build-all:
     goreleaser release --snapshot --clean
 
 [group('deploy')]
+deploy-server: build-server
+    ssh syftbox-yash "rm -fv /home/azureuser/syftbox_server"
+    scp .out/syftbox_server_linux_amd64_v1/syftbox_server syftbox-yash:/home/azureuser/syftbox_server
+    ssh syftbox-yash "sudo systemctl restart syftgo"
+
+[group('deploy')]
 deploy: build-all
     rm -rf releases && mkdir releases
     cp -r .out/syftbox_client_*.{tar.gz,zip} releases || true
