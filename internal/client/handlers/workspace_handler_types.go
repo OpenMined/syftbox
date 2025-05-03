@@ -59,8 +59,9 @@ type WorkspaceItemsResponse struct {
 
 // WorkspaceItemCreateRequest represents the request for creating a workspace item
 type WorkspaceItemCreateRequest struct {
-	Path string            `json:"path" binding:"required"`
-	Type WorkspaceItemType `json:"type" binding:"required,oneof=file folder"`
+	Path      string            `json:"path" binding:"required"`
+	Type      WorkspaceItemType `json:"type" binding:"required,oneof=file folder"`
+	Overwrite bool              `json:"overwrite,omitempty" default:"false"`
 }
 
 // WorkspaceItemCreateResponse represents the response for creating a workspace item

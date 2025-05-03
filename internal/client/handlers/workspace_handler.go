@@ -85,6 +85,10 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 // @Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
 // @Success		201		{object}	WorkspaceItemCreateResponse
 // @Failure		400		{object}	ControlPlaneError
+// @Failure		401		{object}	ControlPlaneError
+// @Failure		403		{object}	ControlPlaneError
+// @Failure		409		{object}	ControlPlaneError
+// @Failure		429		{object}	ControlPlaneError
 // @Failure		500		{object}	ControlPlaneError
 // @Failure		503		{object}	ControlPlaneError
 // @Router			/v1/workspace/items [post]
@@ -122,6 +126,39 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 
 	// Resolve the path
 	absPath := filepath.Join(ws.Root, req.Path)
+
+	// Check if the item already exists
+	if existingInfo, err := os.Stat(absPath); err == nil {
+		if req.Overwrite {
+			// If overwrite is true, remove the existing file/directory
+			if existingInfo.IsDir() {
+				err = os.RemoveAll(absPath)
+			} else {
+				err = os.Remove(absPath)
+			}
+
+			if err != nil {
+				c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+					ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+					Error:     "failed to remove existing item: " + err.Error(),
+				})
+				return
+			}
+		} else {
+			// If overwrite is false, return conflict error
+			c.PureJSON(http.StatusConflict, &ControlPlaneError{
+				ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+				Error:     "item already exists: " + req.Path,
+			})
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCreateWorkspaceItemFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
 
 	// Create the item
 	var itemInfo os.FileInfo
