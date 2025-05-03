@@ -62,10 +62,8 @@ ssh-minio:
 
 [group('dev')]
 test:
-    go test -cover -coverprofile=cover.out ./...
-    go tool cover -func=cover.out
-    go tool cover -html=cover.out -o coverage.html
-    open coverage.html
+    go test -coverprofile=cover.out ./...
+    go tool cover -html=cover.out
 
 [doc('Needs a platform specific compiler. Example: CC="aarch64-linux-musl-gcc" just build-client-target goos=linux goarch=arm64')]
 [group('build')]
