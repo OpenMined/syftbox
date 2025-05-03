@@ -14,6 +14,7 @@ const (
 	ErrCodeCreateWorkspaceItemFailed = "ERR_CREATE_WORKSPACE_ITEM_FAILED"
 	ErrCodeDeleteWorkspaceItemFailed = "ERR_DELETE_WORKSPACE_ITEM_FAILED"
 	ErrCodeMoveWorkspaceItemsFailed  = "ERR_MOVE_WORKSPACE_ITEMS_FAILED"
+	ErrCodeCopyWorkspaceItemsFailed  = "ERR_COPY_WORKSPACE_ITEMS_FAILED"
 )
 
 type WorkspaceHandler struct {
@@ -534,4 +535,258 @@ func (h *WorkspaceHandler) listItems(path string, rootPath string, depth int) ([
 	}
 
 	return items, nil
+}
+
+// Recursively copy a directory and its contents
+func copyDir(src, dst string) error {
+	// Create the destination directory
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	// Read the source directory
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	// Process each entry
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			// Recursively copy subdirectories
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			// Copy files
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// Copy a single file
+func copyFile(src, dst string) error {
+	// Open the source file
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	// Create the destination file
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	// Copy the contents
+	_, err = dstFile.ReadFrom(srcFile)
+	return err
+}
+
+// @Summary		Copy a file or folder
+// @Description	Create a copy of a file or folder
+// @Tags			Files and Folders
+// @Accept			json
+// @Produce		json
+// @Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
+// @Success		200		{object}	WorkspaceItemCopyResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		401		{object}	ControlPlaneError
+// @Failure		403		{object}	ControlPlaneError
+// @Failure		404		{object}	ControlPlaneError
+// @Failure		409		{object}	ControlPlaneError
+// @Failure		429		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Router			/v1/workspace/items/copy [post]
+func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
+	var req WorkspaceItemCopyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the workspace
+	ws := ds.GetWorkspace()
+
+	// Validate source path
+	if !filepath.IsAbs(req.SourcePath) {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "source path must be an absolute path and start with /",
+		})
+		return
+	}
+
+	// Validate destination path
+	if !filepath.IsAbs(req.NewPath) {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "destination path must be an absolute path and start with /",
+		})
+		return
+	}
+
+	// Resolve the source path
+	absSourcePath := filepath.Join(ws.Root, req.SourcePath)
+
+	// Resolve the destination path
+	absNewPath := filepath.Join(ws.Root, req.NewPath)
+	newDir := filepath.Dir(absNewPath)
+
+	// Check if the source exists
+	srcInfo, err := os.Stat(absSourcePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+				ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+				Error:     "source file or directory does not exist",
+			})
+			return
+		}
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Check if the destination parent directory exists
+	newDirInfo, err := os.Stat(newDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+				ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+				Error:     "destination parent directory does not exist",
+			})
+			return
+		}
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Make sure destination parent is a directory
+	if !newDirInfo.IsDir() {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "destination's parent is not a directory",
+		})
+		return
+	}
+
+	// Check if the destination already exists
+	if _, err := os.Stat(absNewPath); err == nil {
+		if req.Overwrite {
+			// If overwrite is true, remove the existing file/directory
+			if err := os.RemoveAll(absNewPath); err != nil {
+				c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+					ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+					Error:     "failed to remove existing item: " + err.Error(),
+				})
+				return
+			}
+		} else {
+			// If overwrite is false, return conflict error
+			c.PureJSON(http.StatusConflict, &ControlPlaneError{
+				ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+				Error:     "destination already exists: " + req.NewPath,
+			})
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Copy the file or directory
+	if srcInfo.IsDir() {
+		// Copy directory recursively
+		if err := copyDir(absSourcePath, absNewPath); err != nil {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+				Error:     "failed to copy directory: " + err.Error(),
+			})
+			return
+		}
+	} else {
+		// Copy file
+		if err := copyFile(absSourcePath, absNewPath); err != nil {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+				Error:     "failed to copy file: " + err.Error(),
+			})
+			return
+		}
+	}
+
+	// Get updated file info
+	updatedInfo, err := os.Stat(absNewPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get relative path for response
+	relNewPath, err := filepath.Rel(ws.Root, absNewPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+	relNewPath = filepath.Join("/", filepath.ToSlash(relNewPath))
+
+	// Create response item
+	itemType := WorkspaceItemTypeFile
+	if updatedInfo.IsDir() {
+		itemType = WorkspaceItemTypeFolder
+	}
+
+	item := WorkspaceItem{
+		Id:          relNewPath,
+		Name:        filepath.Base(absNewPath),
+		Type:        itemType,
+		Path:        relNewPath,
+		CreatedAt:   updatedInfo.ModTime(),
+		ModifiedAt:  updatedInfo.ModTime(),
+		Size:        updatedInfo.Size(),
+		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions: []Permission{},   // TODO: Replace with actual permissions
+		Children:    []WorkspaceItem{},
+	}
+
+	c.PureJSON(http.StatusOK, &WorkspaceItemCopyResponse{
+		Item: item,
+	})
 }

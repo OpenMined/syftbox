@@ -87,3 +87,18 @@ type WorkspaceItemMoveRequest struct {
 type WorkspaceItemMoveResponse struct {
 	Item WorkspaceItem `json:"item"`
 }
+
+// WorkspaceItemCopyRequest represents the request for copying a workspace item
+type WorkspaceItemCopyRequest struct {
+	// Full path of the item to copy
+	SourcePath string `json:"sourcePath" binding:"required"`
+	// Full path of the new item location, including the item name
+	NewPath string `json:"newPath" binding:"required"`
+	// Overwrite the destination item if it exists
+	Overwrite bool `json:"overwrite,omitempty" default:"false"`
+}
+
+// WorkspaceItemCopyResponse represents the response for copying a workspace item
+type WorkspaceItemCopyResponse struct {
+	Item WorkspaceItem `json:"item"`
+}
