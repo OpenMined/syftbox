@@ -103,3 +103,10 @@ type WorkspaceItemCopyRequest struct {
 type WorkspaceItemCopyResponse struct {
 	Item WorkspaceItem `json:"item"`
 }
+
+// WorkspaceConflictError represents an error response when there is a conflict with an existing item
+type WorkspaceConflictError struct {
+	ErrorCode    string        `json:"errorCode"`
+	Error        string        `json:"error"`
+	ExistingItem WorkspaceItem `json:"existingItem"`
+}
