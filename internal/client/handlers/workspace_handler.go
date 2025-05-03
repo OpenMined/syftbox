@@ -13,6 +13,7 @@ const (
 	ErrCodeListWorkspaceItemsFailed  = "ERR_LIST_WORKSPACE_ITEMS_FAILED"
 	ErrCodeCreateWorkspaceItemFailed = "ERR_CREATE_WORKSPACE_ITEM_FAILED"
 	ErrCodeDeleteWorkspaceItemFailed = "ERR_DELETE_WORKSPACE_ITEM_FAILED"
+	ErrCodeMoveWorkspaceItemsFailed  = "ERR_MOVE_WORKSPACE_ITEMS_FAILED"
 )
 
 type WorkspaceHandler struct {
@@ -268,16 +269,14 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 		}
 
 		// Handle different types of paths
-		if fileInfo.Mode()&os.ModeSymlink != 0 {
-			// For symlinks, only delete the link itself
-			err = os.Remove(absPath)
-		} else if fileInfo.IsDir() {
+		if fileInfo.IsDir() {
 			// For directories, use RemoveAll to delete recursively
 			err = os.RemoveAll(absPath)
 		} else {
-			// For regular files, use Remove
+			// For regular files and symlinks, use Remove
 			err = os.Remove(absPath)
 		}
+
 		if err != nil {
 			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
 				ErrorCode: ErrCodeDeleteWorkspaceItemFailed,
@@ -289,6 +288,201 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 
 	// Return 204 No Content
 	c.Status(http.StatusNoContent)
+}
+
+// @Summary		Move item
+// @Description	Move an item to a new location. Can also be used for renaming an item.
+// @Tags			Files and Folders
+// @Accept			json
+// @Produce		json
+// @Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
+// @Success		200		{object}	WorkspaceItemMoveResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		401		{object}	ControlPlaneError
+// @Failure		403		{object}	ControlPlaneError
+// @Failure		404		{object}	ControlPlaneError
+// @Failure		409		{object}	ControlPlaneError
+// @Failure		429		{object}	ControlPlaneError
+// @Failure		500		{object}	ControlPlaneError
+// @Router			/v1/workspace/items/move [post]
+func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
+	var req WorkspaceItemMoveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the workspace
+	ws := ds.GetWorkspace()
+
+	// Validate source path
+	if !filepath.IsAbs(req.OldPath) {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "source path must be an absolute path and start with /",
+		})
+		return
+	}
+
+	// Validate destination path
+	if !filepath.IsAbs(req.NewPath) {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "destination path must be an absolute path and start with /",
+		})
+		return
+	}
+
+	// Resolve the source path
+	absOldPath := filepath.Join(ws.Root, req.OldPath)
+
+	// Resolve the destination path
+	absNewPath := filepath.Join(ws.Root, req.NewPath)
+	newDir := filepath.Dir(absNewPath)
+
+	// Check if the source exists
+	_, err = os.Stat(absOldPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+				ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+				Error:     "source file or directory does not exist",
+			})
+			return
+		}
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Check if the destination parent directory exists
+	newDirInfo, err := os.Stat(newDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+				ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+				Error:     "destination parent directory does not exist",
+			})
+			return
+		}
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Make sure destination parent is a directory
+	if !newDirInfo.IsDir() {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "destination's parent is not a directory",
+		})
+		return
+	}
+
+	// Check if the destination already exists
+	if newDirInfo, err := os.Stat(absNewPath); err == nil {
+		if req.Overwrite {
+			// If overwrite is true, remove the existing file/directory
+
+			if newDirInfo.IsDir() {
+				err = os.RemoveAll(absNewPath)
+			} else {
+				err = os.Remove(absNewPath)
+			}
+
+			if err != nil {
+				c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+					ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+					Error:     "failed to remove existing item: " + err.Error(),
+				})
+				return
+			}
+		} else {
+			// If overwrite is false, return conflict error
+			c.PureJSON(http.StatusConflict, &ControlPlaneError{
+				ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+				Error:     "destination already exists: " + req.NewPath,
+			})
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Move the file or directory
+	err = os.Rename(absOldPath, absNewPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get updated file info
+	updatedInfo, err := os.Stat(absNewPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get relative path for response
+	relNewPath, err := filepath.Rel(ws.Root, absNewPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+	relNewPath = filepath.Join("/", filepath.ToSlash(relNewPath))
+
+	// Create response item
+	itemType := WorkspaceItemTypeFile
+	if updatedInfo.IsDir() {
+		itemType = WorkspaceItemTypeFolder
+	}
+
+	item := WorkspaceItem{
+		Id:          relNewPath,
+		Name:        filepath.Base(absNewPath),
+		Type:        itemType,
+		Path:        relNewPath,
+		CreatedAt:   updatedInfo.ModTime(),
+		ModifiedAt:  updatedInfo.ModTime(),
+		Size:        updatedInfo.Size(),
+		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions: []Permission{},   // TODO: Replace with actual permissions
+		Children:    []WorkspaceItem{},
+	}
+
+	c.PureJSON(http.StatusOK, &WorkspaceItemMoveResponse{
+		Item: item,
+	})
 }
 
 func (h *WorkspaceHandler) listItems(path string, rootPath string, depth int) ([]WorkspaceItem, error) {
