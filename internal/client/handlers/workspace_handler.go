@@ -389,7 +389,7 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	ws := ds.GetWorkspace()
 
 	// Validate source path
-	if !filepath.IsAbs(req.OldPath) {
+	if !filepath.IsAbs(req.SourcePath) {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "source path must be an absolute path and start with /",
@@ -407,14 +407,14 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	}
 
 	// Resolve the source path
-	absOldPath := filepath.Join(ws.Root, req.OldPath)
+	absSourcePath := filepath.Join(ws.Root, req.SourcePath)
 
 	// Resolve the destination path
 	absNewPath := filepath.Join(ws.Root, req.NewPath)
 	newDir := filepath.Dir(absNewPath)
 
 	// Check if the source exists
-	_, err = os.Stat(absOldPath)
+	_, err = os.Stat(absSourcePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
@@ -513,7 +513,7 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	}
 
 	// Move the file or directory
-	err = os.Rename(absOldPath, absNewPath)
+	err = os.Rename(absSourcePath, absNewPath)
 	if err != nil {
 		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
 			ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
