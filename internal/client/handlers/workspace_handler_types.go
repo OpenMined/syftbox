@@ -77,7 +77,7 @@ type WorkspaceItemDeleteRequest struct {
 // WorkspaceItemMoveRequest represents the request for moving a workspace item
 type WorkspaceItemMoveRequest struct {
 	// Full path to the source item
-	OldPath string `json:"oldPath" binding:"required"`
+	SourcePath string `json:"sourcePath" binding:"required"`
 	// Full path to the new item location, including the item name
 	NewPath string `json:"newPath" binding:"required"`
 	// Overwrite the destination item if it exists
