@@ -145,10 +145,32 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 				return
 			}
 		} else {
-			// If overwrite is false, return conflict error
-			c.PureJSON(http.StatusConflict, &ControlPlaneError{
-				ErrorCode: ErrCodeCreateWorkspaceItemFailed,
-				Error:     "item already exists: " + req.Path,
+			// If overwrite is false, return conflict error with the existing item
+			relPath, _ := filepath.Rel(ws.Root, absPath)
+			relPath = filepath.Join("/", filepath.ToSlash(relPath))
+
+			itemType := WorkspaceItemTypeFile
+			if existingInfo.IsDir() {
+				itemType = WorkspaceItemTypeFolder
+			}
+
+			existingItem := WorkspaceItem{
+				Id:          relPath,
+				Name:        filepath.Base(absPath),
+				Type:        itemType,
+				Path:        relPath,
+				CreatedAt:   existingInfo.ModTime(),
+				ModifiedAt:  existingInfo.ModTime(),
+				Size:        existingInfo.Size(),
+				SyncStatus:  SyncStatusHidden,
+				Permissions: []Permission{},
+				Children:    []WorkspaceItem{},
+			}
+
+			c.PureJSON(http.StatusConflict, &WorkspaceConflictError{
+				ErrorCode:    ErrCodeCreateWorkspaceItemFailed,
+				Error:        "item already exists: " + req.Path,
+				ExistingItem: existingItem,
 			})
 			return
 		}
@@ -453,10 +475,32 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 				return
 			}
 		} else {
-			// If overwrite is false, return conflict error
-			c.PureJSON(http.StatusConflict, &ControlPlaneError{
-				ErrorCode: ErrCodeMoveWorkspaceItemsFailed,
-				Error:     "destination already exists: " + req.NewPath,
+			// If overwrite is false, return conflict error with the existing item
+			relPath, _ := filepath.Rel(ws.Root, absNewPath)
+			relPath = filepath.Join("/", filepath.ToSlash(relPath))
+
+			itemType := WorkspaceItemTypeFile
+			if newDirInfo.IsDir() {
+				itemType = WorkspaceItemTypeFolder
+			}
+
+			existingItem := WorkspaceItem{
+				Id:          relPath,
+				Name:        filepath.Base(absNewPath),
+				Type:        itemType,
+				Path:        relPath,
+				CreatedAt:   newDirInfo.ModTime(),
+				ModifiedAt:  newDirInfo.ModTime(),
+				Size:        newDirInfo.Size(),
+				SyncStatus:  SyncStatusHidden,
+				Permissions: []Permission{},
+				Children:    []WorkspaceItem{},
+			}
+
+			c.PureJSON(http.StatusConflict, &WorkspaceConflictError{
+				ErrorCode:    ErrCodeMoveWorkspaceItemsFailed,
+				Error:        "destination already exists: " + req.NewPath,
+				ExistingItem: existingItem,
 			})
 			return
 		}
@@ -736,7 +780,7 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	}
 
 	// Check if the destination already exists
-	if _, err := os.Stat(absNewPath); err == nil {
+	if existingInfo, err := os.Stat(absNewPath); err == nil {
 		if req.Overwrite {
 			// If overwrite is true, remove the existing file/directory
 			if err := os.RemoveAll(absNewPath); err != nil {
@@ -747,10 +791,32 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 				return
 			}
 		} else {
-			// If overwrite is false, return conflict error
-			c.PureJSON(http.StatusConflict, &ControlPlaneError{
-				ErrorCode: ErrCodeCopyWorkspaceItemsFailed,
-				Error:     "destination already exists: " + req.NewPath,
+			// If overwrite is false, return conflict error with the existing item
+			relPath, _ := filepath.Rel(ws.Root, absNewPath)
+			relPath = filepath.Join("/", filepath.ToSlash(relPath))
+
+			itemType := WorkspaceItemTypeFile
+			if existingInfo.IsDir() {
+				itemType = WorkspaceItemTypeFolder
+			}
+
+			existingItem := WorkspaceItem{
+				Id:          relPath,
+				Name:        filepath.Base(absNewPath),
+				Type:        itemType,
+				Path:        relPath,
+				CreatedAt:   existingInfo.ModTime(),
+				ModifiedAt:  existingInfo.ModTime(),
+				Size:        existingInfo.Size(),
+				SyncStatus:  SyncStatusHidden,
+				Permissions: []Permission{},
+				Children:    []WorkspaceItem{},
+			}
+
+			c.PureJSON(http.StatusConflict, &WorkspaceConflictError{
+				ErrorCode:    ErrCodeCopyWorkspaceItemsFailed,
+				Error:        "destination already exists: " + req.NewPath,
+				ExistingItem: existingItem,
 			})
 			return
 		}
