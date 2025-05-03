@@ -72,3 +72,18 @@ type WorkspaceItemCreateResponse struct {
 type WorkspaceItemDeleteRequest struct {
 	Paths []string `json:"paths" binding:"required"`
 }
+
+// WorkspaceItemMoveRequest represents the request for moving a workspace item
+type WorkspaceItemMoveRequest struct {
+	// Full path to the source item
+	OldPath string `json:"oldPath" binding:"required"`
+	// Full path to the new item location, including the item name
+	NewPath string `json:"newPath" binding:"required"`
+	// Overwrite the destination item if it exists
+	Overwrite bool `json:"overwrite,omitempty" default:"false"`
+}
+
+// WorkspaceItemMoveResponse represents the response for moving a workspace item
+type WorkspaceItemMoveResponse struct {
+	Item WorkspaceItem `json:"item"`
+}

@@ -397,6 +397,82 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/workspace/items/move": {
+            "post": {
+                "description": "Move an item to a new location. Can also be used for renaming an item.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Move item",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemMoveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemMoveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -643,6 +719,36 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "handlers.WorkspaceItemMoveRequest": {
+            "type": "object",
+            "required": [
+                "destinationPath",
+                "sourcePath"
+            ],
+            "properties": {
+                "destinationPath": {
+                    "description": "Full path to the new item location, including the item name",
+                    "type": "string"
+                },
+                "overwrite": {
+                    "description": "Overwrite the destination item if it exists",
+                    "type": "boolean",
+                    "default": false
+                },
+                "sourcePath": {
+                    "description": "Full path to the source item",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.WorkspaceItemMoveResponse": {
+            "type": "object",
+            "properties": {
+                "item": {
+                    "$ref": "#/definitions/handlers.WorkspaceItem"
                 }
             }
         },
