@@ -32,7 +32,7 @@ func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
 			})
 			continue
 		}
-		url, err := h.svc.Client().PutObjectPresigned(ctx, key)
+		url, err := h.blob.Backend().PutObjectPresigned(ctx, key)
 		if err != nil {
 			errors = append(errors, &BlobError{
 				Key:   key,

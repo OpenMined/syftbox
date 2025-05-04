@@ -1,6 +1,6 @@
 package blob
 
-type S3BlobConfig struct {
+type S3Config struct {
 	BucketName    string
 	Region        string
 	AccessKey     string

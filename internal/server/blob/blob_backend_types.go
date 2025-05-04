@@ -6,8 +6,14 @@ import (
 	"time"
 )
 
+type blobBackendHooks struct {
+	AfterPutObject    func(req *PutObjectParams, resp *PutObjectResponse)
+	AfterCopyObject   func(req *CopyObjectParams, resp *CopyObjectResponse)
+	AfterDeleteObject func(req string, resp bool)
+}
+
 // not enforced yet
-type IBlobClient interface {
+type BlobBackend interface {
 	GetObject(ctx context.Context, key string) (*GetObjectResponse, error)
 	GetObjectPresigned(ctx context.Context, key string) (string, error)
 	PutObject(ctx context.Context, params *PutObjectParams) (*PutObjectResponse, error)
@@ -17,6 +23,10 @@ type IBlobClient interface {
 	CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error)
 	DeleteObject(ctx context.Context, key string) (bool, error)
 	ListObjects(ctx context.Context) ([]*BlobInfo, error)
+	Delegate() any
+
+	// private
+	setHooks(hooks *blobBackendHooks)
 }
 
 // ===================================================================================================

@@ -13,11 +13,11 @@ var (
 )
 
 type BlobHandler struct {
-	svc *blob.BlobService
+	blob *blob.BlobService
 }
 
-func New(svc *blob.BlobService) *BlobHandler {
-	return &BlobHandler{svc: svc}
+func New(blob *blob.BlobService) *BlobHandler {
+	return &BlobHandler{blob: blob}
 }
 
 func (h *BlobHandler) UploadMultipart(ctx *gin.Context) {
@@ -35,7 +35,7 @@ func (h *BlobHandler) UploadComplete(ctx *gin.Context) {
 }
 
 func (h *BlobHandler) ListObjects(ctx *gin.Context) {
-	res, err := h.svc.Index().List()
+	res, err := h.blob.Index().List()
 	if err != nil {
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),

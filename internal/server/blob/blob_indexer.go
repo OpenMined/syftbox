@@ -11,15 +11,15 @@ const indexInterval = 15 * time.Minute
 
 // blobIndexer handles the periodic updating of the blob index
 type blobIndexer struct {
-	api   *BlobClient
-	index *BlobIndex
+	backend *S3Backend
+	index   *BlobIndex
 }
 
 // newBlobIndexer creates a new indexer that updates the provided index
-func newBlobIndexer(api *BlobClient, index *BlobIndex) *blobIndexer {
+func newBlobIndexer(backend *S3Backend, index *BlobIndex) *blobIndexer {
 	return &blobIndexer{
-		api:   api,
-		index: index,
+		backend: backend,
+		index:   index,
 	}
 }
 
@@ -58,7 +58,7 @@ func (bi *blobIndexer) Start(ctx context.Context) error {
 func (bi *blobIndexer) buildIndex(ctx context.Context) error {
 	start := time.Now()
 
-	blobs, err := bi.api.ListObjects(ctx)
+	blobs, err := bi.backend.ListObjects(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}

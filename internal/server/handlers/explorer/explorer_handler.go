@@ -27,7 +27,7 @@ var indexOfTmpl string
 var notFoundOfTmpl string
 
 type ExplorerHandler struct {
-	svc      *blob.BlobService
+	blob     *blob.BlobService
 	acl      *acl.AclService
 	tplIndex *template.Template
 	tpl404   *template.Template
@@ -46,7 +46,7 @@ func New(svc *blob.BlobService, acl *acl.AclService) *ExplorerHandler {
 	tpl404 := template.Must(template.New("notfound").Funcs(funcMap).Parse(notFoundOfTmpl))
 
 	return &ExplorerHandler{
-		svc:      svc,
+		blob:     svc,
 		acl:      acl,
 		tplIndex: tplIndex,
 		tpl404:   tpl404,
@@ -87,7 +87,7 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 		filterPrefix = prefix
 	}
 
-	blobs, err := e.svc.Index().FilterByPrefix(filterPrefix)
+	blobs, err := e.blob.Index().FilterByPrefix(filterPrefix)
 	if err != nil {
 		slog.Error("Failed to filter blobs by prefix", "error", err)
 		return &directoryContents{
@@ -164,7 +164,7 @@ func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 		return
 	}
 
-	resp, err := e.svc.Client().GetObject(c.Request.Context(), key)
+	resp, err := e.blob.Backend().GetObject(c.Request.Context(), key)
 	if err != nil {
 		e.serve404(c, key)
 		return

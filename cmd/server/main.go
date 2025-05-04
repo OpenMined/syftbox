@@ -67,7 +67,7 @@ func main() {
 					CertFile: certFile,
 					KeyFile:  keyFile,
 				},
-				Blob: &blob.S3BlobConfig{
+				Blob: &blob.S3Config{
 					BucketName: viper.GetString("blob.bucket_name"),
 					Region:     viper.GetString("blob.region"),
 					Endpoint:   viper.GetString("blob.endpoint"),

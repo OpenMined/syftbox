@@ -25,7 +25,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 
 	urls := make([]*BlobUrl, 0, len(req.Keys))
 	errors := make([]*BlobError, 0)
-	index := h.svc.Index()
+	index := h.blob.Index()
 	for _, key := range req.Keys {
 		if !isValidDatasiteKey(key) {
 			errors = append(errors, &BlobError{
@@ -44,7 +44,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 			continue
 		}
 
-		url, err := h.svc.Client().GetObjectPresigned(ctx, key)
+		url, err := h.blob.Backend().GetObjectPresigned(ctx, key)
 		if err != nil {
 			errors = append(errors, &BlobError{
 				Key:   key,

@@ -32,7 +32,7 @@ func (h *BlobHandler) DeleteObjects(ctx *gin.Context) {
 			})
 			continue
 		}
-		_, err := h.svc.Client().DeleteObject(ctx.Request.Context(), key)
+		_, err := h.blob.Backend().DeleteObject(ctx.Request.Context(), key)
 		if err != nil {
 			errors = append(errors, &BlobError{
 				Key:   key,

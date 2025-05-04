@@ -52,7 +52,7 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 	}
 
 	defer fd.Close()
-	result, err := h.svc.Client().PutObject(ctx.Request.Context(), &blob.PutObjectParams{
+	result, err := h.blob.Backend().PutObject(ctx.Request.Context(), &blob.PutObjectParams{
 		Key:  req.Key,
 		Size: file.Size,
 		Body: fd,

@@ -24,26 +24,20 @@ var (
 	ErrInvalidKey = errors.New("invalid key")
 )
 
-type blobClientHooks struct {
-	AfterPutObject    func(req *PutObjectParams, resp *PutObjectResponse)
-	AfterCopyObject   func(req *CopyObjectParams, resp *CopyObjectResponse)
-	AfterDeleteObject func(req string, resp bool)
-}
-
-type BlobClient struct {
+type S3Backend struct {
 	s3Client    *s3.Client
 	s3Presigner *s3.PresignClient
-	config      *S3BlobConfig
-	hooks       *blobClientHooks
+	config      *S3Config
+	hooks       *blobBackendHooks
 }
 
-func NewBlobClient(s3Client *s3.Client, config *S3BlobConfig) *BlobClient {
+func NewS3Backend(s3Client *s3.Client, config *S3Config) *S3Backend {
 	s3Presigner := s3.NewPresignClient(s3Client)
-	return &BlobClient{
+	return &S3Backend{
 		s3Client:    s3Client,
 		s3Presigner: s3Presigner,
 		config:      config,
-		hooks: &blobClientHooks{
+		hooks: &blobBackendHooks{
 			AfterPutObject:    nil,
 			AfterDeleteObject: nil,
 			AfterCopyObject:   nil,
@@ -51,17 +45,17 @@ func NewBlobClient(s3Client *s3.Client, config *S3BlobConfig) *BlobClient {
 	}
 }
 
-func NewBlobClientWithS3Config(cfg *S3BlobConfig) *BlobClient {
+func NewS3BackendWithConfig(cfg *S3Config) *S3Backend {
 	// Create optimized HTTP client with HTTP/2 support
 	httpClient := &http.Client{
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			MaxIdleConns:          200,
-			MaxIdleConnsPerHost:   100, // Match your expected concurrency
+			MaxIdleConnsPerHost:   100,
 			IdleConnTimeout:       90 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
-			ForceAttemptHTTP2:     true, // Enforce HTTP/2
+			ForceAttemptHTTP2:     true,
 		},
 		Timeout: 30 * time.Second,
 	}
@@ -88,10 +82,10 @@ func NewBlobClientWithS3Config(cfg *S3BlobConfig) *BlobClient {
 		}
 	})
 
-	return NewBlobClient(awsClient, cfg)
+	return NewS3Backend(awsClient, cfg)
 }
 
-func (s *BlobClient) setHooks(hooks *blobClientHooks) {
+func (s *S3Backend) setHooks(hooks *blobBackendHooks) {
 	if hooks != nil {
 		s.hooks.AfterPutObject = hooks.AfterPutObject
 		s.hooks.AfterDeleteObject = hooks.AfterDeleteObject
@@ -101,7 +95,7 @@ func (s *BlobClient) setHooks(hooks *blobClientHooks) {
 
 // ===================================================================================================
 
-func (s *BlobClient) GetObject(ctx context.Context, key string) (*GetObjectResponse, error) {
+func (s *S3Backend) GetObject(ctx context.Context, key string) (*GetObjectResponse, error) {
 	resp, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket:       &s.config.BucketName,
 		Key:          &key,
@@ -119,14 +113,14 @@ func (s *BlobClient) GetObject(ctx context.Context, key string) (*GetObjectRespo
 	}, nil
 }
 
-func (s *BlobClient) GetObjectPresigned(ctx context.Context, key string) (string, error) {
+func (s *S3Backend) GetObjectPresigned(ctx context.Context, key string) (string, error) {
 	return s.generateGetObjectURL(ctx, key)
 }
 
 // ===================================================================================================
 
 // Add an object to a bucket
-func (s *BlobClient) PutObject(ctx context.Context, params *PutObjectParams) (*PutObjectResponse, error) {
+func (s *S3Backend) PutObject(ctx context.Context, params *PutObjectParams) (*PutObjectResponse, error) {
 	if !ValidateKey(params.Key) {
 		return nil, ErrInvalidKey
 	}
@@ -159,11 +153,11 @@ func (s *BlobClient) PutObject(ctx context.Context, params *PutObjectParams) (*P
 	return result, nil
 }
 
-func (s *BlobClient) PutObjectPresigned(ctx context.Context, key string) (string, error) {
+func (s *S3Backend) PutObjectPresigned(ctx context.Context, key string) (string, error) {
 	return s.generatePutObjectURL(ctx, key)
 }
 
-func (s *BlobClient) PutObjectMultipart(ctx context.Context, params *PutObjectMultipartParams) (*PutObjectMultipartResponse, error) {
+func (s *S3Backend) PutObjectMultipart(ctx context.Context, params *PutObjectMultipartParams) (*PutObjectMultipartResponse, error) {
 	if !ValidateKey(params.Key) {
 		return nil, ErrInvalidKey
 	}
@@ -202,7 +196,7 @@ func (s *BlobClient) PutObjectMultipart(ctx context.Context, params *PutObjectMu
 	}, nil
 }
 
-func (s *BlobClient) CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error) {
+func (s *S3Backend) CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error) {
 	if !ValidateKey(params.Key) {
 		return nil, ErrInvalidKey
 	}
@@ -237,7 +231,7 @@ func (s *BlobClient) CompleteMultipartUpload(ctx context.Context, params *Comple
 
 // ===================================================================================================
 
-func (s *BlobClient) CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error) {
+func (s *S3Backend) CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error) {
 	if !ValidateKey(params.SourceKey) {
 		return nil, fmt.Errorf("invalid source key: %s", params.SourceKey)
 	}
@@ -270,7 +264,7 @@ func (s *BlobClient) CopyObject(ctx context.Context, params *CopyObjectParams) (
 
 // ===================================================================================================
 
-func (s *BlobClient) DeleteObject(ctx context.Context, key string) (bool, error) {
+func (s *S3Backend) DeleteObject(ctx context.Context, key string) (bool, error) {
 	_, err := s.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: &s.config.BucketName,
 		Key:    &key,
@@ -286,7 +280,7 @@ func (s *BlobClient) DeleteObject(ctx context.Context, key string) (bool, error)
 
 // ===================================================================================================
 
-func (s *BlobClient) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
+func (s *S3Backend) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
 	var objects []*BlobInfo
 
 	// Create a paginator from the ListObjectsV2 API
@@ -316,7 +310,7 @@ func (s *BlobClient) ListObjects(ctx context.Context) ([]*BlobInfo, error) {
 
 // ===================================================================================================
 
-func (s *BlobClient) generatePutObjectURL(ctx context.Context, key string) (string, error) {
+func (s *S3Backend) generatePutObjectURL(ctx context.Context, key string) (string, error) {
 	if !ValidateKey(key) {
 		return "", ErrInvalidKey
 	}
@@ -333,7 +327,7 @@ func (s *BlobClient) generatePutObjectURL(ctx context.Context, key string) (stri
 	return url.URL, nil
 }
 
-func (s *BlobClient) generateGetObjectURL(ctx context.Context, key string) (string, error) {
+func (s *S3Backend) generateGetObjectURL(ctx context.Context, key string) (string, error) {
 	if !ValidateKey(key) {
 		return "", ErrInvalidKey
 	}
@@ -350,5 +344,9 @@ func (s *BlobClient) generateGetObjectURL(ctx context.Context, key string) (stri
 	return url.URL, nil
 }
 
+func (s *S3Backend) Delegate() any {
+	return s.s3Client
+}
+
 // check if BlobClient implements IBlobClient interface
-var _ IBlobClient = (*BlobClient)(nil)
+var _ BlobBackend = (*S3Backend)(nil)

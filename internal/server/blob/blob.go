@@ -9,53 +9,51 @@ import (
 )
 
 type BlobService struct {
-	config  *S3BlobConfig
-	client  *BlobClient
+	backend *S3Backend
 	index   *BlobIndex
 	indexer *blobIndexer
 }
 
-func NewBlobService(cfg *S3BlobConfig, db *sqlx.DB) (*BlobService, error) {
+func NewBlobService(cfg *S3Config, db *sqlx.DB) (*BlobService, error) {
 	index, err := newBlobIndex(db)
 	if err != nil {
 		return nil, err
 	}
 
 	svc := &BlobService{}
-	svc.config = cfg
 	svc.index = index
-	svc.client = NewBlobClientWithS3Config(svc.config)
-	svc.indexer = newBlobIndexer(svc.client, svc.index)
+	svc.backend = NewS3BackendWithConfig(cfg)
+	svc.indexer = newBlobIndexer(svc.backend, svc.index)
 
 	return svc, nil
 }
 
 // NewS3BucketConfig creates a configuration for an S3 bucket
-func WithS3Config(bucketName, region, accessKey, secretKey string, accelerate bool) *S3BlobConfig {
-	return &S3BlobConfig{
-		BucketName:    bucketName,
-		Region:        region,
-		AccessKey:     accessKey,
-		SecretKey:     secretKey,
-		UseAccelerate: accelerate,
-	}
-}
+// func WithS3Config(bucketName, region, accessKey, secretKey string, accelerate bool) *S3Config {
+// 	return &S3Config{
+// 		BucketName:    bucketName,
+// 		Region:        region,
+// 		AccessKey:     accessKey,
+// 		SecretKey:     secretKey,
+// 		UseAccelerate: accelerate,
+// 	}
+// }
 
 // NewMinioBucketConfig creates a configuration for a Minio bucket
-func WithMinioConfig(url, bucketName, accessKey, secretKey string) *S3BlobConfig {
-	return &S3BlobConfig{
-		BucketName:    bucketName,
-		Endpoint:      url,
-		Region:        "us-east-1",
-		AccessKey:     accessKey,
-		SecretKey:     secretKey,
-		UseAccelerate: false,
-	}
-}
+// func WithMinioConfig(url, bucketName, accessKey, secretKey string) *S3Config {
+// 	return &S3Config{
+// 		BucketName:    bucketName,
+// 		Endpoint:      url,
+// 		Region:        "us-east-1",
+// 		AccessKey:     accessKey,
+// 		SecretKey:     secretKey,
+// 		UseAccelerate: false,
+// 	}
+// }
 
 func (b *BlobService) Start(ctx context.Context) error {
 	slog.Debug("blob service start")
-	b.client.setHooks(&blobClientHooks{
+	b.backend.setHooks(&blobBackendHooks{
 		AfterPutObject:    b.afterPutObject,
 		AfterDeleteObject: b.afterDeleteObjects,
 		AfterCopyObject:   b.afterCopyObject,
@@ -69,9 +67,9 @@ func (b *BlobService) Shutdown(ctx context.Context) error {
 	return b.index.Close()
 }
 
-// Client returns the underlying BlobClient instance
-func (b *BlobService) Client() *BlobClient {
-	return b.client
+// Backend returns the underlying blob backend instance
+func (b *BlobService) Backend() BlobBackend {
+	return b.backend
 }
 
 // Index returns the blob index

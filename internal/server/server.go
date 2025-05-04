@@ -240,16 +240,19 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 		return true
 	})
 
-	s.svc.Blob.Client().PutObject(context.Background(), &blob.PutObjectParams{
+	_, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 		Key:  data.Path,
 		ETag: msg.Message.Id,
 		Body: bytes.NewReader(data.Content),
 		Size: data.Length,
 	})
+	if err != nil {
+		slog.Error("put object error", "error", err)
+	}
 }
 
 func (s *Server) checkPermission(user string, path string, access acl.AccessLevel) error {
-	// todo remove hax
+	// todo remove hax once perms can be updated through sync
 	if isRpc(path) {
 		return nil
 	}

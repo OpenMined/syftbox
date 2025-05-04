@@ -6,7 +6,7 @@ const DefaultAddr = "127.0.0.1:8080"
 
 type Config struct {
 	Http   *HttpServerConfig
-	Blob   *blob.S3BlobConfig
+	Blob   *blob.S3Config
 	DbPath string
 }
 
