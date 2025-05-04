@@ -33,8 +33,12 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
+	// r.POST("/auth/otp/request", auth.OTPRequest)
+	// r.POST("/auth/otp/verify", auth.OTPVerify)
+	// r.POST("/auth/refresh", auth.Refresh)
+
 	v1 := r.Group("/api/v1")
-	v1.Use(middlewares.Auth())
+	v1.Use(middlewares.JWTAuth(svc.Auth))
 	{
 		// blob
 		v1.GET("/blob/list", blobH.ListObjects)

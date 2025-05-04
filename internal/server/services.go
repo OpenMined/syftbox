@@ -6,6 +6,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/auth"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
 )
@@ -14,7 +15,7 @@ type Services struct {
 	Blob     *blob.BlobService
 	ACL      *acl.AclService
 	Datasite *datasite.DatasiteService
-	// Add other services as needed
+	Auth     *auth.AuthService
 }
 
 func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
@@ -27,10 +28,13 @@ func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
+	authSvc := auth.NewAuthService(config.Auth)
+
 	return &Services{
 		Blob:     blobSvc,
 		ACL:      aclSvc,
 		Datasite: datasiteSvc,
+		Auth:     authSvc,
 	}, nil
 }
 
