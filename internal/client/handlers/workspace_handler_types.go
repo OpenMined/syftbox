@@ -1,6 +1,10 @@
 package handlers
 
-import "time"
+import (
+	"encoding/json"
+	"strings"
+	"time"
+)
 
 // SyncStatus represents the synchronization status of a workspace item
 type SyncStatus string
@@ -40,6 +44,47 @@ type WorkspaceItem struct {
 	SyncStatus  SyncStatus        `json:"syncStatus"`
 	Permissions []Permission      `json:"permissions"`
 	Children    []WorkspaceItem   `json:"children"`
+}
+
+// NOTE:
+// SyftBoxD APIs use Unix path notation (forward slashes) as the standard path format across
+// all platforms for several important reasons:
+//  1. Cross-platform compatibility: Since SyftBox is a networked application that runs across
+//     different operating systems (Windows, macOS, Linux), using a consistent path format in
+//     API responses ensures that paths work correctly regardless of the platform.
+//  2. URL compatibility: Unix paths are compatible with URLs and web standards, making them
+//     suitable for sharing links and bookmarks across the network.
+//  3. Consistency: Using a single path format eliminates platform-specific path handling
+//     issues and ensures that paths and shareable links remain valid across different systems.
+//  4. Web standards: Forward slashes are the standard path separator in web technologies
+//     and APIs, making Unix paths more natural for web-based applications.
+
+// MarshalJSON implements json.Marshaler interface for WorkspaceItem
+func (w WorkspaceItem) MarshalJSON() ([]byte, error) {
+	type Alias WorkspaceItem
+	return json.Marshal(&struct {
+		Path string `json:"path"`
+		*Alias
+	}{
+		Path:  strings.ReplaceAll(w.Path, "\\", "/"),
+		Alias: (*Alias)(&w),
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface for WorkspaceItem
+func (w *WorkspaceItem) UnmarshalJSON(data []byte) error {
+	type Alias WorkspaceItem
+	aux := &struct {
+		Path string `json:"path"`
+		*Alias
+	}{
+		Alias: (*Alias)(w),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	w.Path = strings.ReplaceAll(aux.Path, "\\", "/")
+	return nil
 }
 
 // Permission represents a user's permission for a workspace item
