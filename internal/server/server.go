@@ -16,7 +16,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
-	"github.com/openmined/syftbox/internal/server/v1/ws"
+	"github.com/openmined/syftbox/internal/server/handlers/ws"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"golang.org/x/sync/errgroup"
 )

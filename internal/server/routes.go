@@ -6,54 +6,47 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
-	"github.com/openmined/syftbox/internal/server/explorer"
+	"github.com/openmined/syftbox/internal/server/handlers/blob"
+	"github.com/openmined/syftbox/internal/server/handlers/datasite"
+	"github.com/openmined/syftbox/internal/server/handlers/explorer"
+	"github.com/openmined/syftbox/internal/server/handlers/install"
+	"github.com/openmined/syftbox/internal/server/handlers/ws"
 	"github.com/openmined/syftbox/internal/server/middlewares"
-	blobHandler "github.com/openmined/syftbox/internal/server/v1/blob"
-	datasiteHandler "github.com/openmined/syftbox/internal/server/v1/datasite"
-	wsV1 "github.com/openmined/syftbox/internal/server/v1/ws"
 	"github.com/openmined/syftbox/internal/version"
-
-	_ "embed"
 )
 
-//go:embed templates/install.sh
-var installShell string
-
-//go:embed templates/install.ps1
-var installPowershell string
-
-func SetupRoutes(svc *Services, hub *wsV1.WebsocketHub) http.Handler {
+func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	r := gin.Default()
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
-	blob := blobHandler.New(svc.Blob)
-	ds := datasiteHandler.New(svc.Datasite)
-	explorer := explorer.New(svc.Blob, svc.ACL)
+	blobH := blob.New(svc.Blob)
+	dsH := datasite.New(svc.Datasite)
+	explorerH := explorer.New(svc.Blob, svc.ACL)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
-	r.GET("/install.sh", InstallShell)
-	r.GET("/install.ps1", InstallPowershell)
-	r.GET("/datasites/*filepath", explorer.Handler)
+	r.GET("/install.sh", install.InstallShell)
+	r.GET("/install.ps1", install.InstallPowershell)
+	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
 	v1 := r.Group("/api/v1")
 	v1.Use(middlewares.Auth())
 	{
 		// blob
-		v1.GET("/blob/list", blob.ListObjects)
-		v1.PUT("/blob/upload", blob.Upload)
-		v1.POST("/blob/upload/presigned", blob.UploadPresigned)
-		v1.POST("/blob/upload/multipart", blob.UploadMultipart)
-		v1.POST("/blob/upload/complete", blob.UploadComplete)
-		v1.POST("/blob/download", blob.DownloadObjectsPresigned)
-		v1.POST("/blob/delete", blob.DeleteObjects)
+		v1.GET("/blob/list", blobH.ListObjects)
+		v1.PUT("/blob/upload", blobH.Upload)
+		v1.POST("/blob/upload/presigned", blobH.UploadPresigned)
+		v1.POST("/blob/upload/multipart", blobH.UploadMultipart)
+		v1.POST("/blob/upload/complete", blobH.UploadComplete)
+		v1.POST("/blob/download", blobH.DownloadObjectsPresigned)
+		v1.POST("/blob/delete", blobH.DeleteObjects)
 
 		// datasite
-		v1.GET("/datasite/view", ds.GetView)
+		v1.GET("/datasite/view", dsH.GetView)
 		// v1.POST("/datasite/download", ds.DownloadFiles)
 
 		// websocket events
@@ -84,18 +77,6 @@ func HealthHandler(ctx *gin.Context) {
 	ctx.PureJSON(http.StatusOK, gin.H{
 		"status": "ok",
 	})
-}
-
-func InstallShell(ctx *gin.Context) {
-	ctx.Header("Content-Type", "application/x-sh")
-	ctx.Header("Content-Disposition", "attachment; filename=install.sh")
-	ctx.String(http.StatusOK, installShell)
-}
-
-func InstallPowershell(ctx *gin.Context) {
-	ctx.Header("Content-Type", "application/x-powershell")
-	ctx.Header("Content-Disposition", "attachment; filename=install.ps1")
-	ctx.String(http.StatusOK, installPowershell)
 }
 
 func init() {

@@ -20,28 +20,13 @@ import (
 	"github.com/openmined/syftbox/internal/server/blob"
 )
 
-//go:embed index.html.tpl
+//go:embed index.html.tmpl
 var indexOfTmpl string
 
-//go:embed notfound.html.tpl
+//go:embed not_found.html.tmpl
 var notFoundOfTmpl string
 
-// indexData contains data for the index template
-type indexData struct {
-	Path    string
-	Folders []string
-	Files   []*blob.BlobInfo
-}
-
-// directoryContents holds the result of listing a directory
-type directoryContents struct {
-	IsDir   bool
-	Files   []*blob.BlobInfo
-	Folders []string
-}
-
-// Explorer handles browsing and file downloads from a blob service
-type Explorer struct {
+type ExplorerHandler struct {
 	svc      *blob.BlobService
 	acl      *acl.AclService
 	tplIndex *template.Template
@@ -49,7 +34,7 @@ type Explorer struct {
 }
 
 // New creates a new Explorer instance
-func New(svc *blob.BlobService, acl *acl.AclService) *Explorer {
+func New(svc *blob.BlobService, acl *acl.AclService) *ExplorerHandler {
 	funcMap := template.FuncMap{
 		"basename": filepath.Base,
 		"humanizeSize": func(size int64) string {
@@ -60,7 +45,7 @@ func New(svc *blob.BlobService, acl *acl.AclService) *Explorer {
 	tplIndex := template.Must(template.New("index").Funcs(funcMap).Parse(indexOfTmpl))
 	tpl404 := template.Must(template.New("notfound").Funcs(funcMap).Parse(notFoundOfTmpl))
 
-	return &Explorer{
+	return &ExplorerHandler{
 		svc:      svc,
 		acl:      acl,
 		tplIndex: tplIndex,
@@ -68,13 +53,9 @@ func New(svc *blob.BlobService, acl *acl.AclService) *Explorer {
 	}
 }
 
-func (e *Explorer) Handler(c *gin.Context) {
+func (e *ExplorerHandler) Handler(c *gin.Context) {
 	path := strings.TrimPrefix(c.Param("filepath"), "/")
-
-	// todo - you must do permissions check else anyone can pull private content
-	// two ways - either get AclService.CanAccess or use DatasiteService.GetView("*")
 	contents := e.listContents(path)
-
 	if contents.IsDir {
 		e.serveDir(c, path, contents)
 	} else {
@@ -83,7 +64,7 @@ func (e *Explorer) Handler(c *gin.Context) {
 }
 
 // List files and folders from the blob index
-func (e *Explorer) listContents(prefix string) *directoryContents {
+func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	files := []*blob.BlobInfo{}
 	folders := map[string]bool{}
 	isDir := false
@@ -147,7 +128,7 @@ func (e *Explorer) listContents(prefix string) *directoryContents {
 }
 
 // Serve the "Index Of" page
-func (e *Explorer) serveDir(c *gin.Context, path string, contents *directoryContents) {
+func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *directoryContents) {
 	if path == "" {
 		path = "/"
 	}
@@ -172,7 +153,7 @@ func (e *Explorer) serveDir(c *gin.Context, path string, contents *directoryCont
 }
 
 // Serve a file from S3
-func (e *Explorer) serveFile(c *gin.Context, key string) {
+func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	if err := e.acl.CanAccess(
 		&acl.User{ID: aclspec.Everyone, IsOwner: false},
 		&acl.File{Path: key},
@@ -203,7 +184,7 @@ func (e *Explorer) serveFile(c *gin.Context, key string) {
 	}
 }
 
-func (e *Explorer) detectContentType(key string) string {
+func (e *ExplorerHandler) detectContentType(key string) string {
 	if isTextLike(key) {
 		return "text/plain; charset=utf-8"
 	} else if mimeType := mime.TypeByExtension(filepath.Ext(key)); mimeType != "" {
@@ -212,7 +193,7 @@ func (e *Explorer) detectContentType(key string) string {
 	return "application/octet-stream"
 }
 
-func (e *Explorer) serve404(c *gin.Context, key string) {
+func (e *ExplorerHandler) serve404(c *gin.Context, key string) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	if err := e.tpl404.Execute(c.Writer, map[string]any{"Key": key}); err != nil {
 		c.String(http.StatusInternalServerError, "internal server error")
