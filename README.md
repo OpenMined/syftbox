@@ -1,52 +1,27 @@
-# SyftBox Go
+# SyftBox
 
-## Quick Start
+SyftBox is an open-source protocol that enables developers and organizations to build, deploy, and federate privacy-preserving computations seamlessly across a network. Unlock the ability to run computations on distributed datasets without centralizing data—preserving security while gaining valuable insights.
 
-### Install Go (MacOS)
+Read the [documentation](https://syftbox-documentation.openmined.org/get-started) for more details.
 
-```
-brew install go
-```
+> [!WARNING]
+> This project is a rewrite of the [original Python version](https://github.com/OpenMined/syft). Consequently, the linked documentation may not fully reflect the current implementation.
 
-### Install Cursor
+## Installation
 
-To enhance your Go development experience, it's recommended to install the Cursor extension. After installing, add the following settings to your user settings JSON to ensure optimal configuration:
-```json
-"go.toolsManagement.autoUpdate": true,
-"gopls": {
-    "ui.semanticTokens": true,
-}
-```
+Using the GUI, from https://github.com/OpenMined/SyftUI/releases
 
 
-### Install mkcert
-
+On macOS and Linux.
 ```
-brew install mkcert
-```
-
-### Run Tests
-```
-just run-tests
+curl -fsSL https://syftboxdev.openmined.org/install.sh | sh
 ```
 
-### Start MinIO
+On Windows using Powershell
 ```
-just run-minio
-```
-
-### Run the Server
-```
-just run-server -f config/dev.yaml
+powershell -ExecutionPolicy ByPass -c "irm https://syftboxdev.openmined.org/install.ps1 | iex"
 ```
 
-### Destroy MinIO
-Deletes the data as well
-```
-just delete-minio
-```
+## Contributing
 
-### SSH into MinIO
-```
-just ssh-minio
-```
+See the [development guide](./DEVELOPMENT.md) to get started
