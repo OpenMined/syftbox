@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -32,7 +33,8 @@ type Server struct {
 
 // New creates a new server instance with the provided configuration
 func New(config *Config) (*Server, error) {
-	sqliteDb, err := db.NewSqliteDb(db.WithPath(config.DbPath))
+	dbPath := filepath.Join(config.DataDir, "state.db")
+	sqliteDb, err := db.NewSqliteDb(db.WithPath(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -51,7 +53,7 @@ func New(config *Config) (*Server, error) {
 		hub:    hub,
 		svc:    services,
 		server: &http.Server{
-			Addr:    config.Http.Addr,
+			Addr:    config.HTTP.Addr,
 			Handler: httpHandler,
 			// Timeouts to prevent slow client attacks
 			ReadTimeout:       30 * time.Second,
@@ -167,15 +169,15 @@ func (s *Server) Stop(ctx context.Context) error {
 }
 
 func (s *Server) runHttpServer() error {
-	if s.config.Http.CertFile != "" && s.config.Http.KeyFile != "" {
+	if s.config.HTTP.HasCerts() {
 		slog.Info("server start https",
-			"addr", fmt.Sprintf("https://%s", s.config.Http.Addr),
-			"cert", s.config.Http.CertFile,
-			"key", s.config.Http.KeyFile,
+			"addr", fmt.Sprintf("https://%s", s.config.HTTP.Addr),
+			"cert", s.config.HTTP.CertFile,
+			"key", s.config.HTTP.KeyFile,
 		)
-		return s.server.ListenAndServeTLS(s.config.Http.CertFile, s.config.Http.KeyFile)
+		return s.server.ListenAndServeTLS(s.config.HTTP.CertFile, s.config.HTTP.KeyFile)
 	} else {
-		slog.Info("server start http", "addr", fmt.Sprintf("http://%s", s.config.Http.Addr))
+		slog.Info("server start http", "addr", fmt.Sprintf("http://%s", s.config.HTTP.Addr))
 		return s.server.ListenAndServe()
 	}
 }

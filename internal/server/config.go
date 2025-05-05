@@ -1,21 +1,61 @@
 package server
 
 import (
+	"fmt"
+
 	"github.com/openmined/syftbox/internal/server/auth"
 	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
-const DefaultAddr = "127.0.0.1:8080"
-
+// Config holds the overall server configuration.
 type Config struct {
-	Http   *HttpServerConfig
-	Blob   *blob.S3Config
-	Auth   *auth.Config
-	DbPath string
+	HTTP    HTTPConfig    `mapstructure:"http"`
+	Blob    blob.S3Config `mapstructure:"blob"`
+	Auth    auth.Config   `mapstructure:"auth"`
+	DataDir string        `mapstructure:"data_dir"`
 }
 
-type HttpServerConfig struct {
-	Addr     string
-	CertFile string
-	KeyFile  string
+// Validate checks the configuration for essential values and consistency.
+func (c *Config) Validate() error {
+	var err error
+	c.DataDir, err = utils.ResolvePath(c.DataDir)
+	if err != nil {
+		return fmt.Errorf("invalid data dir: %w", err)
+	}
+
+	if err := c.HTTP.Validate(); err != nil {
+		return fmt.Errorf("http config validation: %w", err)
+	}
+
+	if err := c.Blob.Validate(); err != nil {
+		return fmt.Errorf("blob config validation: %w", err)
+	}
+
+	if err := c.Auth.Validate(); err != nil {
+		return fmt.Errorf("auth config validation: %w", err)
+	}
+
+	return nil
+}
+
+// HTTPConfig holds HTTP server specific configuration.
+type HTTPConfig struct {
+	Addr     string `mapstructure:"addr"`
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
+}
+
+func (c *HTTPConfig) HasCerts() bool {
+	return c.CertFile != "" && c.KeyFile != ""
+}
+
+func (c *HTTPConfig) Validate() error {
+	if c.Addr == "" {
+		return fmt.Errorf("http `addr` is required")
+	}
+	if (c.CertFile != "" && c.KeyFile == "") || (c.CertFile == "" && c.KeyFile != "") {
+		return fmt.Errorf("http `cert_file` and `key_file` must be provided")
+	}
+	return nil
 }

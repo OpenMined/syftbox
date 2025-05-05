@@ -4,3 +4,6 @@ blob:
   endpoint: http://localhost:9000
   access_key: ptSLdKiwOi2LYQFZYEZ6
   secret_key: GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8
+
+auth:
+  enabled: false

@@ -21,14 +21,14 @@ type Services struct {
 func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 	aclSvc := acl.NewAclService()
 
-	blobSvc, err := blob.NewBlobService(config.Blob, db)
+	blobSvc, err := blob.NewBlobService(&config.Blob, db)
 	if err != nil {
 		return nil, err
 	}
 
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
-	authSvc := auth.NewAuthService(config.Auth)
+	authSvc := auth.NewAuthService(&config.Auth)
 
 	return &Services{
 		Blob:     blobSvc,

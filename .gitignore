@@ -45,3 +45,4 @@ go.work.sum
 **/syft.pub.*
 .data
 releases
+.env
