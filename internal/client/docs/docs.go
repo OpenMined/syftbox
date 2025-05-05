@@ -255,6 +255,224 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/v1/workspace/items": {
+            "get": {
+                "description": "Get files and folders at a specified path",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Get workspace items",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to the directory (default is root)",
+                        "name": "path",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)",
+                        "name": "depth",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Create a new file or folder in the workspace",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Create workspace item",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Delete multiple files or folders. The operation is similar to the Unix ` + "`" + `rm -rf` + "`" + ` command.\n- If the path is a file, the file will be deleted.\n- If the path is a folder, all its contents will also be deleted.\n- If the path is a symlink, the symlink will be deleted without deleting the target.\n- If the path does not exist, the operation will be a no-op.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Delete workspace items",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemDeleteRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/workspace/items/move": {
+            "post": {
+                "description": "Move an item to a new location. Can also be used for renaming an item.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Move item",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemMoveRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemMoveResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -344,12 +562,40 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.Permission": {
+            "type": "object",
+            "properties": {
+                "avatar": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "\"read\", \"write\", or \"admin\"",
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.StatusResponse": {
             "type": "object",
             "properties": {
                 "buildDate": {
                     "description": "build date of the client.",
                     "type": "string"
+                },
+                "hasConfig": {
+                    "description": "whether the datasite has a config.",
+                    "type": "boolean"
                 },
                 "revision": {
                     "description": "revision of the client.",
@@ -366,6 +612,165 @@ const docTemplate = `{
                 "version": {
                     "description": "version of the client.",
                     "type": "string"
+                }
+            }
+        },
+        "handlers.SyncStatus": {
+            "type": "string",
+            "enum": [
+                "synced",
+                "syncing",
+                "pending",
+                "rejected",
+                "error",
+                "ignored",
+                "hidden"
+            ],
+            "x-enum-varnames": [
+                "SyncStatusSynced",
+                "SyncStatusSyncing",
+                "SyncStatusPending",
+                "SyncStatusRejected",
+                "SyncStatusError",
+                "SyncStatusIgnored",
+                "SyncStatusHidden"
+            ]
+        },
+        "handlers.WorkspaceItem": {
+            "type": "object",
+            "properties": {
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.WorkspaceItem"
+                    }
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "modifiedAt": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.Permission"
+                    }
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "syncStatus": {
+                    "$ref": "#/definitions/handlers.SyncStatus"
+                },
+                "type": {
+                    "$ref": "#/definitions/handlers.WorkspaceItemType"
+                }
+            }
+        },
+        "handlers.WorkspaceItemCreateRequest": {
+            "type": "object",
+            "required": [
+                "path",
+                "type"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string"
+                },
+                "type": {
+                    "enum": [
+                        "file",
+                        "folder"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handlers.WorkspaceItemType"
+                        }
+                    ]
+                }
+            }
+        },
+        "handlers.WorkspaceItemCreateResponse": {
+            "type": "object",
+            "properties": {
+                "item": {
+                    "$ref": "#/definitions/handlers.WorkspaceItem"
+                }
+            }
+        },
+        "handlers.WorkspaceItemDeleteRequest": {
+            "type": "object",
+            "required": [
+                "paths"
+            ],
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "handlers.WorkspaceItemMoveRequest": {
+            "type": "object",
+            "required": [
+                "destinationPath",
+                "sourcePath"
+            ],
+            "properties": {
+                "destinationPath": {
+                    "description": "Full path to the new item location, including the item name",
+                    "type": "string"
+                },
+                "overwrite": {
+                    "description": "Overwrite the destination item if it exists",
+                    "type": "boolean",
+                    "default": false
+                },
+                "sourcePath": {
+                    "description": "Full path to the source item",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.WorkspaceItemMoveResponse": {
+            "type": "object",
+            "properties": {
+                "item": {
+                    "$ref": "#/definitions/handlers.WorkspaceItem"
+                }
+            }
+        },
+        "handlers.WorkspaceItemType": {
+            "type": "string",
+            "enum": [
+                "file",
+                "folder"
+            ],
+            "x-enum-varnames": [
+                "WorkspaceItemTypeFile",
+                "WorkspaceItemTypeFolder"
+            ]
+        },
+        "handlers.WorkspaceItemsResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.WorkspaceItem"
+                    }
                 }
             }
         }

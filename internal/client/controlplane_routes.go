@@ -49,6 +49,8 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	// fsH := handlers.NewFsHandler(datasiteMgr)
 	appH := handlers.NewAppHandler(datasiteMgr)
 	initH := handlers.NewInitHandler(datasiteMgr)
+	statusH := handlers.NewStatusHandler(datasiteMgr)
+	workspaceH := handlers.NewWorkspaceHandler(datasiteMgr)
 
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
@@ -61,7 +63,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	v1 := r.Group("/v1")
 	v1.Use(middleware.TokenAuth(routeConfig.Auth))
 	{
-		v1.GET("/status", handlers.Status)
+		v1.GET("/status", statusH.Status)
 
 		v1Init := v1.Group("/init")
 		{
@@ -74,6 +76,15 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 			v1App.GET("/list", appH.List)
 			v1App.POST("/install", appH.Install)
 			v1App.DELETE("/uninstall", appH.Uninstall)
+		}
+
+		v1Workspace := v1.Group("/workspace")
+		{
+			v1Workspace.GET("/items", workspaceH.GetItems)
+			v1Workspace.POST("/items", workspaceH.CreateItem)
+			v1Workspace.DELETE("/items", workspaceH.DeleteItems)
+			v1Workspace.POST("/items/move", workspaceH.MoveItems)
+			v1Workspace.POST("/items/copy", workspaceH.CopyItems)
 		}
 
 		// v1Fs := v1.Group("/datasite")
