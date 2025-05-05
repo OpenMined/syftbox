@@ -81,6 +81,8 @@ auth:
 	}
 	defer os.Remove(dummyConfigFile) // Clean up after test
 
+	rootCmd.Flags().Set("config", dummyConfigFile)
+
 	// Call loadConfig
 	cfg, err := loadConfig(rootCmd)
 	assert.NoError(t, err)
@@ -136,6 +138,8 @@ func TestLoadConfigJSON(t *testing.T) {
 		t.Fatalf("Failed to write dummy config file: %v", err)
 	}
 	defer os.Remove(dummyConfigFile) // Clean up after test
+
+	rootCmd.Flags().Set("config", dummyConfigFile)
 
 	// Call loadConfig
 	cfg, err := loadConfig(rootCmd)
