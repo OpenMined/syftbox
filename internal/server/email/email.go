@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrKeyMissing   = errors.New("sendgrid api key is not set")
-	ErrInvalidInput = errors.New("invalid input")
+	ErrKeyMissing           = errors.New("sendgrid api key is not set")
+	ErrInvalidMailSender    = errors.New("invalid mail sender")
+	ErrInvalidMailRecipient = errors.New("invalid mail recipient")
 )
 
 func Send(ctx context.Context, data *EmailData) error {
@@ -23,8 +24,12 @@ func Send(ctx context.Context, data *EmailData) error {
 		return ErrKeyMissing
 	}
 
-	if data.FromEmail == "" || data.ToEmail == "" {
-		return ErrInvalidInput
+	if data.FromEmail == "" {
+		return ErrInvalidMailSender
+	}
+
+	if data.ToEmail == "" {
+		return ErrInvalidMailRecipient
 	}
 
 	if data.FromName == "" {
@@ -47,6 +52,6 @@ func Send(ctx context.Context, data *EmailData) error {
 		return fmt.Errorf("failed to send email: %w", err)
 	}
 
-	slog.Debug("email sent", "status", resp.StatusCode, "message", resp.Body)
+	slog.Debug("email sent", "to", data.ToEmail, "status", resp.StatusCode, "message", resp.Body, "messageId", resp.Headers["X-Message-Id"])
 	return nil
 }

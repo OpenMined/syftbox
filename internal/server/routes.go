@@ -6,6 +6,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/explorer"
@@ -22,6 +23,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	blobH := blob.New(svc.Blob)
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
+	authH := auth.New(svc.Auth)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
@@ -33,9 +35,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
-	// r.POST("/auth/otp/request", auth.OTPRequest)
-	// r.POST("/auth/otp/verify", auth.OTPVerify)
-	// r.POST("/auth/refresh", auth.Refresh)
+	r.POST("/auth/otp/request", authH.OTPRequest)
+	r.POST("/auth/otp/verify", authH.OTPVerify)
+	r.POST("/auth/refresh", authH.Refresh)
 
 	v1 := r.Group("/api/v1")
 	v1.Use(middlewares.JWTAuth(svc.Auth))

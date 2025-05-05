@@ -2,6 +2,8 @@ package auth
 
 import (
 	"bytes"
+	"errors"
+	"log/slog"
 	"net/http"
 	"text/template"
 	"time"
@@ -39,15 +41,23 @@ func (h *AuthHandler) OTPRequest(ctx *gin.Context) {
 
 	emailOTP, err := h.auth.GenerateOTP(ctx, req.Email)
 	if err != nil {
+		if errors.Is(err, auth.ErrInvalidEmail) {
+			ctx.JSON(http.StatusBadRequest, gin.H{
+				"error": err.Error(),
+			})
+			return
+		}
+		slog.Error("Failed to generate verification code", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to generate verification code",
+			"error": err.Error(),
 		})
 		return
 	}
 
 	if err := h.sendEmailOTP(ctx, req.Email, emailOTP); err != nil {
+		slog.Error("Failed to send email", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to send verification code",
+			"error": err.Error(),
 		})
 		return
 	}
@@ -65,6 +75,7 @@ func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 	}
 
 	if err := h.auth.VerifyOTP(ctx, req.Email, req.Code); err != nil {
+		slog.Error("Failed to verify OTP", "error", err)
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -73,8 +84,9 @@ func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 
 	accessToken, refreshToken, err := h.auth.GenerateTokens(ctx, req.Email)
 	if err != nil {
+		slog.Error("Failed to generate tokens", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Failed to generate token",
+			"error": err.Error(),
 		})
 		return
 	}
@@ -96,6 +108,7 @@ func (h *AuthHandler) Refresh(ctx *gin.Context) {
 
 	accessToken, refreshToken, err := h.auth.RefreshToken(ctx, req.OldRefreshToken)
 	if err != nil {
+		slog.Error("Failed to refresh token", "error", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -119,8 +132,10 @@ func (h *AuthHandler) sendEmailOTP(ctx *gin.Context, to, code string) error {
 	}
 
 	return email.Send(ctx.Request.Context(), &email.EmailData{
-		ToEmail:  to,
-		Subject:  "Syftbox Verification Code",
-		HTMLBody: buf.String(),
+		FromName:  "SyftBox",
+		FromEmail: "auth@syftbox.openmined.org",
+		ToEmail:   to,
+		Subject:   "SyftBox Verification Code",
+		HTMLBody:  buf.String(),
 	})
 }

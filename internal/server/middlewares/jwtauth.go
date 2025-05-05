@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	bearerPrefix   = "Bearer "
-	authHeader     = "Authorization"
-	userContextKey = "user" // Key to store user identifier in Gin context
+	bearerPrefix = "Bearer "
+	authHeader   = "Authorization"
 )
 
 // JWTAuth creates a Gin middleware function that validates access tokens.
@@ -55,18 +54,13 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		// Validate the token using the method added to AuthService
 		claims, err := authService.ValidateAccessToken(ctx, tokenString)
 		if err != nil {
-			// Consider mapping specific errors (expired, invalid signature etc.)
-			// For now, a general unauthorized error
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": err.Error(), // Provide more detail from the validation error
+				"error": err.Error(),
 			})
 			return
 		}
 
-		// Token is valid, set the user identifier in the context
-		ctx.Set(userContextKey, claims.Subject) // Store the Subject (user email/ID)
-
-		// Continue to the next handler
+		ctx.Set("user", claims.Subject)
 		ctx.Next()
 	}
 }

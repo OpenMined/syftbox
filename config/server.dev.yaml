@@ -1,3 +1,6 @@
+http:
+  address: 127.0.0.1:8080
+
 blob:
   bucket_name: syftbox-local
   region: us-east-1
@@ -6,4 +9,11 @@ blob:
   secret_key: GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8
 
 auth:
-  enabled: false
+  enabled: false # <--!!!
+  issuer: http://127.0.0.1:8080
+  refresh_token_secret: refresh_token_secret
+  refresh_token_expiry: 7d
+  access_token_secret: access_token_secret
+  access_token_expiry: 1h
+  email_otp_length: 8
+  email_otp_expiry: 5m
