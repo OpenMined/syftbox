@@ -71,12 +71,36 @@ func init() {
 }
 
 func main() {
-	handler := tint.NewHandler(os.Stdout, &tint.Options{
+	logFile := config.DefaultLogFilePath
+
+	logDir := filepath.Dir(logFile)
+	// Create log directory
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create new log file for this instance
+	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	// Setup handlers for both outputs
+	stdoutHandler := tint.NewHandler(os.Stdout, &tint.Options{
 		AddSource:  true,
 		Level:      slog.LevelDebug,
 		TimeFormat: time.RFC3339,
 	})
-	logger := slog.New(handler)
+	fileHandler := slog.NewTextHandler(file, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	})
+
+	// Create multi-handler
+	multiLogHandler := utils.NewMultiLogHandler(stdoutHandler, fileHandler)
+	logger := slog.New(multiLogHandler)
 	slog.SetDefault(logger)
 
 	// Setup root context with signal handling

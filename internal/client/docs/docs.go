@@ -256,6 +256,54 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/logs": {
+            "get": {
+                "description": "Get system logs with pagination support",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Logs"
+                ],
+                "summary": "Get logs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Number of bytes to skip",
+                        "name": "startingToken",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Maximum number of lines to read",
+                        "name": "maxResults",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.LogsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/workspace/items": {
             "get": {
                 "description": "Get files and folders at a specified path",
@@ -339,6 +387,30 @@ const docTemplate = `{
                             "$ref": "#/definitions/handlers.ControlPlaneError"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -391,6 +463,82 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/workspace/items/copy": {
+            "post": {
+                "description": "Create a copy of a file or folder",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Copy a file or folder",
+                "parameters": [
+                    {
+                        "description": "Request body",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemCopyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.WorkspaceItemCopyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/handlers.ControlPlaneError"
                         }
@@ -562,6 +710,51 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.LogEntry": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "$ref": "#/definitions/handlers.LogLevel"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.LogLevel": {
+            "type": "string",
+            "enum": [
+                "debug",
+                "info",
+                "warn",
+                "error"
+            ],
+            "x-enum-varnames": [
+                "LogLevelDebug",
+                "LogLevelInfo",
+                "LogLevelWarn",
+                "LogLevelError"
+            ]
+        },
+        "handlers.LogsResponse": {
+            "type": "object",
+            "properties": {
+                "logs": {
+                    "description": "A list of log items.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.LogEntry"
+                    }
+                },
+                "next_token": {
+                    "description": "A pagination token to retrieve the next page of logs.",
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.Permission": {
             "type": "object",
             "properties": {
@@ -677,6 +870,36 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.WorkspaceItemCopyRequest": {
+            "type": "object",
+            "required": [
+                "newPath",
+                "sourcePath"
+            ],
+            "properties": {
+                "newPath": {
+                    "description": "Full path of the new item location, including the item name",
+                    "type": "string"
+                },
+                "overwrite": {
+                    "description": "Overwrite the destination item if it exists",
+                    "type": "boolean",
+                    "default": false
+                },
+                "sourcePath": {
+                    "description": "Full path of the item to copy",
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.WorkspaceItemCopyResponse": {
+            "type": "object",
+            "properties": {
+                "item": {
+                    "$ref": "#/definitions/handlers.WorkspaceItem"
+                }
+            }
+        },
         "handlers.WorkspaceItemCreateRequest": {
             "type": "object",
             "required": [
@@ -684,6 +907,10 @@ const docTemplate = `{
                 "type"
             ],
             "properties": {
+                "overwrite": {
+                    "type": "boolean",
+                    "default": false
+                },
                 "path": {
                     "type": "string"
                 },
@@ -725,11 +952,11 @@ const docTemplate = `{
         "handlers.WorkspaceItemMoveRequest": {
             "type": "object",
             "required": [
-                "destinationPath",
+                "newPath",
                 "sourcePath"
             ],
             "properties": {
-                "destinationPath": {
+                "newPath": {
                     "description": "Full path to the new item location, including the item name",
                     "type": "string"
                 },

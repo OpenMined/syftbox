@@ -12,9 +12,11 @@ import (
 )
 
 var (
-	home, _           = os.UserHomeDir()
-	DefaultConfigPath = filepath.Join(home, ".syftbox", "config.json")
-	DefaultServerURL  = "https://syftboxdev.openmined.org"
+	home, _            = os.UserHomeDir()
+	DefaultConfigPath  = filepath.Join(home, ".syftbox", "config.json")
+	DefaultServerURL   = "https://syftboxdev.openmined.org"
+	DefaultClientURL   = "http://localhost:8080"
+	DefaultLogFilePath = filepath.Join(home, ".syftbox", "logs", "SyftBoxDaemon.log")
 )
 
 type Config struct {

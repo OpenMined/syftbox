@@ -52,6 +52,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	initH := handlers.NewInitHandler(datasiteMgr, routeConfig.ControlPlaneURL)
 	statusH := handlers.NewStatusHandler(datasiteMgr)
 	workspaceH := handlers.NewWorkspaceHandler(datasiteMgr)
+	logsH := handlers.NewLogsHandler()
 
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
@@ -87,6 +88,17 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 			v1Workspace.POST("/items/move", workspaceH.MoveItems)
 			v1Workspace.POST("/items/copy", workspaceH.CopyItems)
 		}
+
+		// Logs endpoint
+		v1.GET("/logs", logsH.GetLogs)
+
+		// v1Fs := v1.Group("/datasite")
+		// {
+		// 	v1Fs.GET("/ls", fsH.List)
+		// 	v1Fs.POST("/rm", fsH.Remove)
+		// 	v1Fs.POST("/cp", fsH.Copy)
+		// 	v1Fs.POST("/mv", fsH.Move)
+		// }
 
 		// v1Sync := v1.Group("/sync")
 		// {
