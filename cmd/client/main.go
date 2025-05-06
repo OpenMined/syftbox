@@ -44,11 +44,14 @@ var rootCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := client.New(&config.Config{
-			Path:        viper.ConfigFileUsed(),
-			Email:       viper.GetString("email"),
-			DataDir:     viper.GetString("data_dir"),
-			ServerURL:   viper.GetString("server_url"),
-			AppsEnabled: viper.GetBool("apps_enabled"),
+			Path:         viper.ConfigFileUsed(),
+			Email:        viper.GetString("email"),
+			DataDir:      viper.GetString("data_dir"),
+			ServerURL:    viper.GetString("server_url"),
+			RefreshToken: viper.GetString("refresh_token"),
+			AppsEnabled:  viper.GetBool("apps_enabled"),
+			AccessToken:  viper.GetString("access_token"),
+			ClientURL:    "http://localhost:8080", // dummy value to make sure apps dont break
 		})
 		if err != nil {
 			return err

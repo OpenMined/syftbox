@@ -32,8 +32,9 @@ import (
 // @license.url				http://www.apache.org/licenses/LICENSE-2.0.html
 
 type RouteConfig struct {
-	Auth    middleware.TokenAuthConfig
-	Swagger bool
+	Auth            middleware.TokenAuthConfig
+	ControlPlaneURL string
+	Swagger         bool
 }
 
 func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConfig) http.Handler {
@@ -48,7 +49,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 	// syncH := handlers.NewSyncHandler(datasiteMgr)
 	// fsH := handlers.NewFsHandler(datasiteMgr)
 	appH := handlers.NewAppHandler(datasiteMgr)
-	initH := handlers.NewInitHandler(datasiteMgr)
+	initH := handlers.NewInitHandler(datasiteMgr, routeConfig.ControlPlaneURL)
 	statusH := handlers.NewStatusHandler(datasiteMgr)
 	workspaceH := handlers.NewWorkspaceHandler(datasiteMgr)
 
@@ -86,14 +87,6 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 			v1Workspace.POST("/items/move", workspaceH.MoveItems)
 			v1Workspace.POST("/items/copy", workspaceH.CopyItems)
 		}
-
-		// v1Fs := v1.Group("/datasite")
-		// {
-		// 	v1Fs.GET("/ls", fsH.List)
-		// 	v1Fs.POST("/rm", fsH.Remove)
-		// 	v1Fs.POST("/cp", fsH.Copy)
-		// 	v1Fs.POST("/mv", fsH.Move)
-		// }
 
 		// v1Sync := v1.Group("/sync")
 		// {

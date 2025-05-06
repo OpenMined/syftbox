@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/mail"
 	"os"
 
 	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/syftsdk"
 	"github.com/spf13/cobra"
 )
 
@@ -32,11 +35,6 @@ func newInitCmd() *cobra.Command {
 				os.Exit(0)
 			}
 
-			if email == "" {
-				fmt.Printf("%s: %s\n", red("ERROR"), "email is required")
-				os.Exit(1)
-			}
-
 			if dataDir == "" {
 				fmt.Printf("%s: %s\n", red("ERROR"), "data-dir is required")
 				os.Exit(1)
@@ -47,15 +45,34 @@ func newInitCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			cfg := &config.Config{
-				Email:       email,
-				DataDir:     dataDir,
-				ServerURL:   serverURL,
-				ClientURL:   "http://localhost:8080",
-				AppsEnabled: true,
+			if email == "" {
+				fmt.Printf("Enter your email: ")
+				fmt.Scanln(&email)
 			}
 
-			if err := cfg.Save(config.DefaultConfigPath); err != nil {
+			if _, err := mail.ParseAddress(email); err != nil {
+				fmt.Printf("%s: %s\n", red("ERROR"), "invalid email")
+				os.Exit(1)
+			}
+
+			authToken, err := doLogin(cmd.Context(), serverURL, email)
+			if err != nil {
+				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				os.Exit(1)
+			}
+
+			cfg := &config.Config{
+				Email:        email,
+				DataDir:      dataDir,
+				ServerURL:    serverURL,
+				ClientURL:    "http://localhost:8080",
+				AccessToken:  authToken.AccessToken,
+				RefreshToken: authToken.RefreshToken,
+				AppsEnabled:  true,
+				Path:         config.DefaultConfigPath,
+			}
+
+			if err := cfg.Save(); err != nil {
 				fmt.Printf("%s: %s\n", red("ERROR"), err)
 				os.Exit(1)
 			}
@@ -74,4 +91,26 @@ func newInitCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&serverURL, "server-url", "u", defaultServerURL, "server URL")
 
 	return cmd
+}
+
+func doLogin(ctx context.Context, serverURL string, email string) (*syftsdk.AuthTokenResponse, error) {
+	if err := syftsdk.VerifyEmail(ctx, serverURL, email); err != nil {
+		return nil, err
+	}
+
+	// prompt for the OTP code
+	fmt.Printf("Enter the OTP code sent to %s: ", email)
+	var emailCode string
+	fmt.Scanln(&emailCode)
+
+	authToken, err := syftsdk.VerifyEmailCode(ctx, serverURL, &syftsdk.VerifyEmailCodeRequest{
+		Email: email,
+		Code:  emailCode,
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return authToken, nil
 }
