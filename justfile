@@ -76,7 +76,7 @@ build-client-target goos=`go env GOOS` goarch=`go env GOARCH`:
 
 [group('build')]
 build-client:
-    goreleaser build --snapshot --clean --id syftbox_client --id syftbox_client_macos
+    goreleaser build --snapshot --clean --id syftbox_client --id syftbox_client_macos --id syftbox_client_windows
 
 [group('build')]
 build-server:
@@ -87,24 +87,21 @@ build-all:
     goreleaser release --snapshot --clean
 
 [group('deploy')]
+deploy-client:
+    rm -rf releases && mkdir releases
+    cp -r .out/syftbox_client_*.{tar.gz,zip} releases
+    ssh syftbox-yash "rm -rfv /home/azureuser/releases"
+    scp -r ./releases syftbox-yash:/home/azureuser/releases
+
+[group('deploy')]
 deploy-server: build-server
     ssh syftbox-yash "rm -fv /home/azureuser/syftbox_server"
     scp .out/syftbox_server_linux_amd64_v1/syftbox_server syftbox-yash:/home/azureuser/syftbox_server
     ssh syftbox-yash "sudo systemctl restart syftgo"
 
 [group('deploy')]
-deploy: build-all
-    rm -rf releases && mkdir releases
-    cp -r .out/syftbox_client_*.{tar.gz,zip} releases || true
-
-    ssh syftbox-yash "rm -rfv /home/azureuser/releases"
-    scp -r ./releases syftbox-yash:/home/azureuser/releases
-
-    ssh syftbox-yash "rm -fv /home/azureuser/syftbox_server"
-    scp .out/syftbox_server_linux_amd64_v1/syftbox_server syftbox-yash:/home/azureuser/syftbox_server
-    ssh syftbox-yash "sudo systemctl restart syftgo"
-
-    rm -rf releases
+deploy: deploy-client deploy-server
+    echo "Done!"
 
 [group('utils')]
 setup-toolchain:
