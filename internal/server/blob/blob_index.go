@@ -47,6 +47,7 @@ func (bi *BlobIndex) Get(key string) (*BlobInfo, bool) {
 	var blob BlobInfo
 	err := bi.db.Get(&blob, "SELECT key, etag, size, last_modified FROM blobs WHERE key = ?", key)
 	if err != nil {
+		slog.Error("sqlite error", "op", "Get", "key", key, "error", err)
 		return nil, false
 	}
 
@@ -59,6 +60,9 @@ func (bi *BlobIndex) Set(blob *BlobInfo) error {
 		`INSERT OR REPLACE INTO blobs (key, etag, size, last_modified) VALUES (?, ?, ?, ?)`,
 		blob.Key, blob.ETag, blob.Size, blob.LastModified,
 	)
+	if err != nil {
+		slog.Error("sqlite error", "op", "Set", "key", blob.Key, "error", err)
+	}
 	return err
 }
 
@@ -70,6 +74,7 @@ func (bi *BlobIndex) SetMany(blobs []*BlobInfo) error {
 
 	tx, err := bi.db.Beginx()
 	if err != nil {
+		slog.Error("sqlite error", "op", "SetMany", "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 
@@ -78,6 +83,7 @@ func (bi *BlobIndex) SetMany(blobs []*BlobInfo) error {
 	)
 	if err != nil {
 		tx.Rollback()
+		slog.Error("sqlite error preparex", "op", "SetMany", "error", err)
 		return fmt.Errorf("failed to prepare statement: %w", err)
 	}
 
@@ -85,11 +91,13 @@ func (bi *BlobIndex) SetMany(blobs []*BlobInfo) error {
 		_, err := stmt.Exec(blob.Key, blob.ETag, blob.Size, blob.LastModified)
 		if err != nil {
 			tx.Rollback()
+			slog.Error("sqlite error exec insert", "op", "SetMany", "key", blob.Key, "error", err)
 			return fmt.Errorf("failed to insert blob %s: %w", blob.Key, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
+		slog.Error("sqlite error commit", "op", "SetMany", "error", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
@@ -99,6 +107,9 @@ func (bi *BlobIndex) SetMany(blobs []*BlobInfo) error {
 // Remove deletes a blob from the index
 func (bi *BlobIndex) Remove(key string) error {
 	_, err := bi.db.Exec("DELETE FROM blobs WHERE key = ?", key)
+	if err != nil {
+		slog.Error("sqlite error", "op", "Remove", "key", key, "error", err)
+	}
 	return err
 }
 
@@ -107,6 +118,7 @@ func (bi *BlobIndex) List() ([]*BlobInfo, error) {
 	var blobs []*BlobInfo
 	err := bi.db.Select(&blobs, "SELECT key, etag, size, last_modified FROM blobs")
 	if err != nil {
+		slog.Error("sqlite error", "op", "List", "error", err)
 		return nil, fmt.Errorf("failed to list blobs: %w", err)
 	}
 
@@ -167,6 +179,7 @@ func (bi *BlobIndex) Iter() iter.Seq[*BlobInfo] {
 func (bi *BlobIndex) Count() int {
 	var count int
 	if err := bi.db.Get(&count, "SELECT COUNT(*) FROM blobs"); err != nil {
+		slog.Error("sqlite error", "op", "Count", "error", err)
 		return 0
 	}
 	return count
@@ -177,6 +190,7 @@ func (bi *BlobIndex) FilterByKeyGlob(pattern string) ([]*BlobInfo, error) {
 	var blobs []*BlobInfo
 	err := bi.db.Select(&blobs, "SELECT key, etag, size, last_modified FROM blobs WHERE key GLOB ?", pattern)
 	if err != nil {
+		slog.Error("sqlite error", "op", "FilterByKeyGlob", "pattern", pattern, "error", err)
 		return nil, fmt.Errorf("failed to filter blobs by pattern: %w", err)
 	}
 	return blobs, nil
@@ -205,6 +219,7 @@ func (bi *BlobIndex) FilterByTime(filter TimeFilter) ([]*BlobInfo, error) {
 	var blobs []*BlobInfo
 	err := bi.db.Select(&blobs, query)
 	if err != nil {
+		slog.Error("sqlite error", "op", "FilterByTime", "error", err)
 		return nil, fmt.Errorf("failed to filter blobs by time: %w", err)
 	}
 	return blobs, nil
@@ -226,10 +241,12 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 	// Begin transaction for the entire update process
 	tx, err := bi.db.Beginx()
 	if err != nil {
+		slog.Error("sqlite error", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
+			slog.Error("sqlite error", "op", "bulkUpdate", "error", err)
 			tx.Rollback()
 		}
 	}()
@@ -244,6 +261,7 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		)
 	`)
 	if err != nil {
+		slog.Error("sqlite error exec temp table", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to create temporary table: %w", err)
 	}
 
@@ -252,12 +270,14 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		`INSERT INTO temp_blobs (key, etag, size, last_modified) VALUES (?, ?, ?, ?)`,
 	)
 	if err != nil {
+		slog.Error("sqlite error preparex", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to prepare statement: %w", err)
 	}
 
 	for _, blob := range blobs {
 		_, err := insertStmt.Exec(blob.Key, blob.ETag, blob.Size, blob.LastModified)
 		if err != nil {
+			slog.Error("sqlite error exec insert", "op", "bulkUpdate", "key", blob.Key, "error", err)
 			return nil, fmt.Errorf("failed to insert blob %s into temp table: %w", blob.Key, err)
 		}
 	}
@@ -271,6 +291,7 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		WHERE t.key IS NULL
 	`)
 	if err != nil {
+		slog.Error("sqlite error get", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to count deleted blobs: %w", err)
 	}
 
@@ -284,6 +305,7 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		)
 	`)
 	if err != nil {
+		slog.Error("sqlite error exec delete", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to remove deleted blobs: %w", err)
 	}
 
@@ -294,6 +316,7 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		WHERE b.key IS NULL
 	`)
 	if err != nil {
+		slog.Error("sqlite error count new blobs", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to count new blobs: %w", err)
 	}
 
@@ -304,6 +327,7 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		WHERE t.etag != b.etag OR t.last_modified != b.last_modified OR t.size != b.size
 	`)
 	if err != nil {
+		slog.Error("sqlite error count updated blobs", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to count updated blobs: %w", err)
 	}
 
@@ -316,16 +340,19 @@ func (bi *BlobIndex) bulkUpdate(blobs []*BlobInfo) (*bulkUpdateResult, error) {
 		WHERE b.key IS NULL OR t.etag != b.etag OR t.last_modified != b.last_modified OR t.size != b.size
 	`)
 	if err != nil {
+		slog.Error("sqlite error exec update or insert", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to update or insert blobs: %w", err)
 	}
 
 	_, err = tx.Exec(`DROP TABLE temp_blobs`)
 	if err != nil {
+		slog.Error("sqlite error exec drop table", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to drop temporary table: %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
+		slog.Error("sqlite error commit", "op", "bulkUpdate", "error", err)
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
