@@ -22,14 +22,18 @@ type Datasite struct {
 }
 
 func New(config *config.Config) (*Datasite, error) {
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation: %w", err)
+	}
+
 	ws, err := workspace.NewWorkspace(config.DataDir, config.Email)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create datasite: %w", err)
+		return nil, fmt.Errorf("workspace: %w", err)
 	}
 
 	sdk, err := syftsdk.New(config.ServerURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sdk: %w", err)
+		return nil, fmt.Errorf("sdk: %w", err)
 	}
 
 	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
@@ -37,7 +41,7 @@ func New(config *config.Config) (*Datasite, error) {
 
 	sync, err := sync.NewManager(ws, sdk)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sync manager: %w", err)
+		return nil, fmt.Errorf("sync manager: %w", err)
 	}
 
 	return &Datasite{
@@ -51,24 +55,32 @@ func New(config *config.Config) (*Datasite, error) {
 }
 
 func (d *Datasite) Start(ctx context.Context) error {
-	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "server", d.config.ServerURL)
-	// Setup local datasite first
+	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "serverURL", d.config.ServerURL, "clientURL", d.config.ClientURL)
+
+	// Setup local datasite first.
 	if err := d.workspace.Setup(); err != nil {
-		return fmt.Errorf("failed to bootstrap datasite: %w", err)
+		return fmt.Errorf("setup datasite: %w", err)
 	}
+
+	// persist the config
+	if err := d.config.Save(); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+
+	// placeholder to "Login" to the server
 	if err := d.sdk.Login(d.config.Email); err != nil {
-		return fmt.Errorf("failed to login: %w", err)
+		return fmt.Errorf("login: %w", err)
 	}
 
 	// Start sync manager
 	if err := d.sync.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start sync manager: %w", err)
+		return fmt.Errorf("sync manager: %w", err)
 	}
 
 	// Start app scheduler
 	if d.config.AppsEnabled {
 		if err := d.appScheduler.Start(ctx); err != nil {
-			slog.Error("failed to start app scheduler", "error", err)
+			slog.Error("app scheduler", "error", err)
 		}
 	} else {
 		slog.Info("apps disabled")

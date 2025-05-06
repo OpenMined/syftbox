@@ -20,9 +20,9 @@ var (
 type DatasiteManagerOpts func(*DatasiteManger)
 
 type DatasiteManger struct {
-	ds     *datasite.Datasite
-	config *config.Config
-	mu     sync.RWMutex
+	ds        *datasite.Datasite
+	mu        sync.RWMutex
+	clientURL string
 }
 
 func New(opts ...DatasiteManagerOpts) *DatasiteManger {
@@ -33,24 +33,22 @@ func New(opts ...DatasiteManagerOpts) *DatasiteManger {
 	return ds
 }
 
-func WithConfig(config *config.Config) DatasiteManagerOpts {
-	return func(d *DatasiteManger) {
-		d.config = config
-	}
+func (d *DatasiteManger) SetClientURL(clientURL string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.clientURL = clientURL
 }
 
 func (d *DatasiteManger) Start(ctx context.Context) error {
 	slog.Info("datasite manager start")
-	if d.config != nil {
-		return d.newDatasite(ctx, d.config)
-	} else if d.defaultConfigExists() {
+	if d.defaultConfigExists() {
 		cfg, err := config.LoadClientConfig(config.DefaultConfigPath)
 		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
+			return fmt.Errorf("load config: %w", err)
 		}
 		return d.newDatasite(ctx, cfg)
 	}
-
 	return nil
 }
 
@@ -89,25 +87,23 @@ func (d *DatasiteManger) newDatasite(ctx context.Context, cfg *config.Config) er
 		return ErrDatasiteAlreadyStarted
 	}
 
-	if cfg.Path == "" {
-		cfg.Path = config.DefaultConfigPath
+	// patch config to use the correct client URL
+	if d.clientURL != "" {
+		cfg.ClientURL = d.clientURL
 	}
 
-	if err := cfg.Save(cfg.Path); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
-	}
-
+	// create datasite
 	ds, err := datasite.New(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create datasite: %w", err)
+		return fmt.Errorf("create datasite: %w", err)
 	}
 
 	d.ds = ds
-	d.config = cfg
 
 	go func() {
 		if err := ds.Start(ctx); err != nil {
-			slog.Error("failed to start datasite", "error", err)
+			slog.Error("start datasite", "error", err)
+			d.ds = nil
 		}
 	}()
 
