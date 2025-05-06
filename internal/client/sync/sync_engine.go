@@ -391,7 +391,7 @@ func (se *SyncEngine) getLocalState(ctx context.Context) (map[string]*FileMetada
 		}
 
 		// Get relative path
-		relPath, err := filepath.Rel(rootDir, path)
+		relPath, err := se.workspace.DatasiteRelPath(path)
 		if err != nil {
 			return err
 		}
