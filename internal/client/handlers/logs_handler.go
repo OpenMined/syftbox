@@ -51,7 +51,7 @@ func (h *LogsHandler) GetLogs(c *gin.Context) {
 	}
 
 	// Read logs from file with pagination
-	logs, bytesRead, err := h.readLogsFromFile(params.StartingToken, params.MaxResults)
+	logs, bytesRead, hasMore, err := h.readLogsFromFile(params.StartingToken, params.MaxResults)
 	if err != nil {
 		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
 			ErrorCode: ErrCodeLogsRetrievalFailed,
@@ -63,26 +63,27 @@ func (h *LogsHandler) GetLogs(c *gin.Context) {
 	c.PureJSON(http.StatusOK, &LogsResponse{
 		Logs:      logs,
 		NextToken: bytesRead,
+		HasMore:   hasMore,
 	})
 }
 
 // readLogsFromFile reads logs from the log file with pagination support
-func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]LogEntry, int64, error) {
+func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
 	// Open log file
 	file, err := os.Open(h.logFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If file doesn't exist, return empty logs
-			return []LogEntry{}, 0, nil
+			return []LogEntry{}, 0, false, nil
 		}
-		return nil, 0, err
+		return nil, 0, false, err
 	}
 	defer file.Close()
 
 	// Seek to the starting token position
 	if startingToken > 0 {
 		if _, err := file.Seek(startingToken, 0); err != nil {
-			return nil, 0, err
+			return nil, 0, false, err
 		}
 	}
 
@@ -96,6 +97,7 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 	levelRegex := regexp.MustCompile(`level=([^\s]+)`)
 	msgRegex := regexp.MustCompile(`msg="([^"]+)"`)
 
+	count := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		bytesRead += int64(len(line) + 1) // +1 for newline
@@ -154,20 +156,27 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 		}
 
 		logs = append(logs, entry)
+		count++
 
-		// Check if we've reached the max results
-		if len(logs) >= maxResults {
+		// Check if we've reached maxResults + 1 (to determine hasMore)
+		if count >= maxResults+1 {
 			break
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
+	}
+
+	hasMore := false
+	if len(logs) > maxResults {
+		hasMore = true
+		logs = logs[:maxResults]
 	}
 
 	if len(logs) == 0 {
-		return []LogEntry{}, bytesRead, nil
+		return []LogEntry{}, bytesRead, false, nil
 	}
 
-	return logs, bytesRead, nil
+	return logs, bytesRead, hasMore, nil
 }

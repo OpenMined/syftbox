@@ -31,6 +31,8 @@ type LogsResponse struct {
 	Logs []LogEntry `json:"logs"`
 	// A pagination token to retrieve the next page of logs.
 	NextToken int64 `json:"nextToken"`
+	// Whether there are more logs to retrieve.
+	HasMore bool `json:"hasMore"`
 }
 
 // ErrCodeLogsRetrievalFailed is the error code for when logs cannot be retrieved
