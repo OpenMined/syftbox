@@ -10,13 +10,9 @@ import (
 
 // SQLite pragmas for optimal performance
 const defaultPragma = `
-PRAGMA journal_mode=WAL;
 PRAGMA temp_store=MEMORY;
-PRAGMA synchronous=NORMAL;
-PRAGMA foreign_keys=ON;
 PRAGMA cache_size=8000;
 PRAGMA mmap_size=268435456;
-PRAGMA busy_timeout=5000;
 `
 
 // config holds internal configuration for DB creation
@@ -89,7 +85,7 @@ func NewSqliteDb(opts ...SqliteOption) (*sqlx.DB, error) {
 		if err := utils.EnsureParent(cfg.path); err != nil {
 			return nil, fmt.Errorf("ensure parent directory: %w", err)
 		}
-		dsn = fmt.Sprintf("file:%s?cache=shared&mode=rwc", cfg.path)
+		dsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_foreign_keys=ON&_txlock=immediate&mode=rwc", cfg.path)
 	} else {
 		dsn = ":memory:"
 	}
