@@ -14,7 +14,11 @@ const (
 )
 
 func (se *SyncEngine) handlePriorityUpload(path string) {
-	relPath := se.workspace.DatasiteRelPath(path)
+	relPath, err := se.workspace.DatasiteRelPath(path)
+	if err != nil {
+		slog.Error("sync priority", "op", OpWriteRemote, "error", err)
+		return
+	}
 	se.syncStatus.SetSyncing(relPath)
 	defer se.syncStatus.UnsetSyncing(relPath)
 

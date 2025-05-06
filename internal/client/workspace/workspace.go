@@ -151,15 +151,17 @@ func (w *Workspace) DatasiteAbsPath(path string) string {
 	return filepath.Join(w.DatasitesDir, path)
 }
 
-func (w *Workspace) DatasiteRelPath(path string) string {
-	path, _ = utils.ResolvePath(path)
-	path = strings.Replace(path, w.DatasitesDir, "", 1)
-	return strings.ReplaceAll(strings.TrimLeft(filepath.Clean(path), pathSep), pathSep, "/")
+func (w *Workspace) DatasiteRelPath(path string) (string, error) {
+	relPath, err := filepath.Rel(w.DatasitesDir, path)
+	if err != nil {
+		return "", err
+	}
+	return NormPath(relPath), nil
 }
 
 func (w *Workspace) PathOwner(path string) string {
-	p := w.DatasiteRelPath(path)
-	parts := strings.Split(p, "/")
+	p, _ := w.DatasiteRelPath(path)
+	parts := strings.Split(p, pathSep)
 	if len(parts) < 2 {
 		return ""
 	}
@@ -168,4 +170,11 @@ func (w *Workspace) PathOwner(path string) string {
 
 func (w *Workspace) isLegacyWorkspace() bool {
 	return utils.DirExists(filepath.Join(w.Root, "plugins"))
+}
+
+func NormPath(path string) string {
+	path = filepath.Clean(path)
+	path = strings.ReplaceAll(path, "\\", "/")
+	path = strings.TrimLeft(path, "/")
+	return path
 }
