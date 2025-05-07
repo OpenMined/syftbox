@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"sync"
 	"time"
 
@@ -21,14 +20,9 @@ const (
 	shutdownReason = "shutdown"
 )
 
-type ClientInfo struct {
-	User    string
-	Headers http.Header
-}
-
 // WebsocketClient represents a connected WebSocket client.
 type WebsocketClient struct {
-	Id     string
+	ConnID string
 	Info   *ClientInfo
 	MsgRx  chan *syftmsg.Message
 	MsgTx  chan *syftmsg.Message
@@ -42,7 +36,7 @@ type WebsocketClient struct {
 
 func NewWebsocketClient(conn *websocket.Conn, info *ClientInfo) *WebsocketClient {
 	return &WebsocketClient{
-		Id:     utils.TokenHex(3),
+		ConnID: utils.TokenHex(4),
 		Info:   info,
 		MsgRx:  make(chan *syftmsg.Message, 8),
 		MsgTx:  make(chan *syftmsg.Message, 8),
@@ -53,7 +47,7 @@ func NewWebsocketClient(conn *websocket.Conn, info *ClientInfo) *WebsocketClient
 }
 
 func (c *WebsocketClient) Start(ctx context.Context) {
-	slog.Debug("wsclient start", "id", c.Id)
+	slog.Debug("wsclient start", "connId", c.ConnID)
 	c.wg.Add(2)
 	go c.writeLoop(ctx)
 	go c.readLoop(ctx)
@@ -78,13 +72,13 @@ func (c *WebsocketClient) closeConnection(status websocket.StatusCode, reason st
 		close(c.Closed)
 		close(c.MsgRx)
 		close(c.MsgTx)
-		slog.Debug("wsclient closed", "id", c.Id)
+		slog.Debug("wsclient closed", "connId", c.ConnID)
 	})
 }
 
 func (c *WebsocketClient) readLoop(ctx context.Context) {
 	defer func() {
-		slog.Debug("wsclient reader shutdown", "id", c.Id)
+		slog.Debug("wsclient reader shutdown", "connId", c.ConnID)
 		c.wg.Done()
 		c.closeConnection(websocket.StatusNormalClosure, shutdownReason)
 	}()
@@ -97,7 +91,7 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
 				// connection closed by client
 			} else if status := websocket.CloseStatus(err); status != websocket.StatusNormalClosure && status != websocket.StatusNoStatusRcvd {
-				slog.Warn("wsclient reader", "error", err, "id", c.Id)
+				slog.Warn("wsclient reader", "error", err, "connId", c.ConnID)
 			}
 			return
 		}
@@ -110,14 +104,14 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 			// pushed to recieve queue
 
 		default:
-			slog.Warn("wsclient reader buffer full", "id", c.Id, "dropped", data)
+			slog.Warn("wsclient reader buffer full", "connId", c.ConnID, "dropped", data)
 		}
 	}
 }
 
 func (c *WebsocketClient) writeLoop(ctx context.Context) {
 	defer func() {
-		slog.Debug("wsclient writer shutdown", "id", c.Id)
+		slog.Debug("wsclient writer shutdown", "connId", c.ConnID)
 		c.wg.Done()
 		c.closeConnection(websocket.StatusNormalClosure, shutdownReason)
 	}()
@@ -130,10 +124,10 @@ func (c *WebsocketClient) writeLoop(ctx context.Context) {
 			ctxWrite, cancel := context.WithTimeout(ctx, writeTimeout)
 			err := wsjson.Write(ctxWrite, c.conn, msg)
 			cancel()
-
 			if err != nil {
-				slog.Error("wsclient writer", "error", err, "id", c.Id)
-				return
+				slog.Error("wsclient writer", "connId", c.ConnID, "msgId", msg.Id, "msgType", msg.Type, "error", err)
+			} else {
+				slog.Debug("wsclient writer", "connId", c.ConnID, "msgId", msg.Id, "msgType", msg.Type)
 			}
 
 		case <-c.wsDone:

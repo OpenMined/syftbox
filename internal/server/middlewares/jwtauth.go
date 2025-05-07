@@ -21,6 +21,15 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 	if !authService.IsEnabled() {
 		slog.Info("auth middleware disabled")
 		return func(ctx *gin.Context) {
+			user := ctx.Query("user")
+			if user == "" {
+				ctx.PureJSON(http.StatusForbidden, gin.H{
+					"error": "`user` is not set",
+				})
+				ctx.Abort()
+				return
+			}
+			ctx.Set("user", user)
 			ctx.Next()
 		}
 	}
