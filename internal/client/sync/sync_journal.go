@@ -109,6 +109,19 @@ func (s *SyncJournal) Get(path string) (*FileMetadata, error) {
 	return metadata, nil
 }
 
+func (s *SyncJournal) ContentsChanged(path string, etag string) (bool, error) {
+	// select etag from sync_journal where path = ?
+	var dbEtag string
+	err := s.db.Get(&dbEtag, "SELECT etag FROM sync_journal WHERE path = ?", path)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("failed to query path %s: %w", path, err)
+	}
+	return dbEtag != etag, nil
+}
+
 // Set inserts or updates the metadata for a specific path using named parameters.
 func (s *SyncJournal) Set(state *FileMetadata) error {
 	if state == nil {
@@ -129,6 +142,7 @@ func (s *SyncJournal) Set(state *FileMetadata) error {
 	if err != nil {
 		return fmt.Errorf("failed to set state for path %s: %w", state.Path, err)
 	}
+	slog.Debug("sync journal set", "path", state.Path, "etag", state.ETag)
 	return nil
 }
 

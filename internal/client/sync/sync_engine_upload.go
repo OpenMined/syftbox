@@ -20,16 +20,21 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 	}
 
 	for _, op := range batch {
-		se.syncStatus.SetSyncing(op.RelPath)
+		se.syncStatus.SetSyncing(op.RelPath, "standard remote write")
 	}
 
 	processUpload := func(ctx context.Context, op *SyncOperation) {
-		defer se.syncStatus.UnsetSyncing(op.RelPath)
+		defer se.syncStatus.SetCompleted(op.RelPath, "standard remote write")
 
-		if lastSynced, err := se.journal.Get(op.RelPath); err != nil {
-			slog.Warn("priority file journal check", "error", err)
-		} else if lastSynced != nil && lastSynced.ETag == op.Local.ETag {
-			// slog.Debug("file contents unchanged. skipping.", "path", path)
+		if op.Local.Size == 0 {
+			slog.Debug("sync", "op", "SKIPPED", "reason", "empty contents", "path", op.RelPath)
+			return
+		}
+
+		if changed, err := se.journal.ContentsChanged(op.RelPath, op.Local.ETag); err != nil {
+			slog.Warn("journal check", "error", err)
+		} else if !changed {
+			slog.Debug("sync", "op", "SKIPPED", "reason", "contents unchanged", "path", op.RelPath)
 			return
 		}
 
