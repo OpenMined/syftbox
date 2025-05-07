@@ -3,6 +3,7 @@ package blob
 import (
 	"math/rand"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestBlobIndexBurstInsert(t *testing.T) {
 	dbPath := filepath.Join(path, "test.db")
 
 	// there's a deep lore here - https://github.com/mattn/go-sqlite3/issues/274
-	db, err := db.NewSqliteDb(db.WithPath(dbPath), db.WithMaxOpenConns(1))
+	db, err := db.NewSqliteDb(db.WithPath(dbPath), db.WithMaxOpenConns(runtime.NumCPU()))
 	assert.NoError(t, err)
 
 	index, err := newBlobIndex(db)
