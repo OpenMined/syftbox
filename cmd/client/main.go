@@ -71,6 +71,8 @@ func init() {
 }
 
 func main() {
+	// TODO handle log rotation
+	// TODO unique log file for each instance to handle multiple daemons
 	logFile := config.DefaultLogFilePath
 
 	logDir := filepath.Dir(logFile)

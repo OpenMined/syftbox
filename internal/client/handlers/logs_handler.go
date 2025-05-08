@@ -14,12 +14,18 @@ import (
 // LogsHandler handles log-related requests
 type LogsHandler struct {
 	logFilePath string
+	timeRegex   *regexp.Regexp
+	levelRegex  *regexp.Regexp
+	msgRegex    *regexp.Regexp
 }
 
 // NewLogsHandler creates a new handler for logs
 func NewLogsHandler() *LogsHandler {
 	return &LogsHandler{
 		logFilePath: config.DefaultLogFilePath,
+		timeRegex:   regexp.MustCompile(`time=([^\s]+)`),
+		levelRegex:  regexp.MustCompile(`level=([^\s]+)`),
+		msgRegex:    regexp.MustCompile(`msg="([^"]+)"`),
 	}
 }
 
@@ -92,25 +98,20 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 	scanner := bufio.NewScanner(file)
 	bytesRead := startingToken
 
-	// Regular expressions to extract components
-	timeRegex := regexp.MustCompile(`time=([^\s]+)`)
-	levelRegex := regexp.MustCompile(`level=([^\s]+)`)
-	msgRegex := regexp.MustCompile(`msg="([^"]+)"`)
-
 	count := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		bytesRead += int64(len(line) + 1) // +1 for newline
 
 		// Extract timestamp
-		timeMatch := timeRegex.FindStringSubmatch(line)
+		timeMatch := h.timeRegex.FindStringSubmatch(line)
 		if len(timeMatch) < 2 {
 			continue // Skip line if timestamp not found
 		}
 		timestamp := timeMatch[1]
 
 		// Extract level
-		levelMatch := levelRegex.FindStringSubmatch(line)
+		levelMatch := h.levelRegex.FindStringSubmatch(line)
 		if len(levelMatch) < 2 {
 			continue // Skip line if level not found
 		}
@@ -132,7 +133,7 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 		}
 
 		// Extract message and rest of the content
-		msgMatch := msgRegex.FindStringSubmatch(line)
+		msgMatch := h.msgRegex.FindStringSubmatch(line)
 		if len(msgMatch) < 2 {
 			continue // Skip line if message not found
 		}
