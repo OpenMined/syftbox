@@ -133,14 +133,14 @@ builds:
   - amd64
   - arm64
 
-binary_signs:
-- id: macos-sign
-  artifacts: binary
-  ids:
-  - syftbox_client_macos
-  cmd: codesign
-  args: [ "--verbose", "--force", "--deep", "--verify", "--timestamp", "--options", "runtime", "--sign", "Developer ID Application: OpenMined Foundation (28PJ5N8D9X)", "${artifact}" ]
-  output: true
+# binary_signs:
+# - id: macos-sign
+#   artifacts: binary
+#   ids:
+#   - syftbox_client_macos
+#   cmd: codesign
+#   args: [ "--verbose", "--force", "--deep", "--verify", "--timestamp", "--options", "runtime", "--sign", "Developer ID Application: OpenMined Foundation (28PJ5N8D9X)", "${artifact}" ]
+#   output: true
 
 archives:
 - id: client
