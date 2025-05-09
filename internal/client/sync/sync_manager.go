@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
@@ -37,6 +38,7 @@ func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK) (*SyncMana
 }
 
 func (m *SyncManager) Start(ctx context.Context) error {
+	slog.Info("sync manager start")
 	if err := m.watcher.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start watcher: %w", err)
 	}
@@ -48,6 +50,7 @@ func (m *SyncManager) Start(ctx context.Context) error {
 }
 
 func (m *SyncManager) Stop() error {
+	slog.Info("sync manager stop")
 	m.watcher.Stop()
 	return m.engine.Stop()
 }

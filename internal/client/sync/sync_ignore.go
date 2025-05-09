@@ -9,7 +9,7 @@ var defaultIgnoreLines = []string{
 	"syftignore",
 	"**/*syftrejected*",
 	"**/*syftconflict*",
-	"logs/",
+	".syftkeep",
 	// python
 	".ipynb_checkpoints/",
 	"__pycache__/",
@@ -21,8 +21,10 @@ var defaultIgnoreLines = []string{
 	".vscode",
 	".idea",
 	// General excludes
+	".git",
 	"*.tmp",
 	"*.log",
+	"logs/",
 	// OS-specific
 	".DS_Store",
 	"Thumbds.db",

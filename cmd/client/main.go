@@ -14,6 +14,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/lmittmann/tint"
+	"github.com/mattn/go-isatty"
 	"github.com/openmined/syftbox/internal/client"
 	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/utils"
@@ -43,6 +44,7 @@ var rootCmd = &cobra.Command{
 		return loadConfig(cmd)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		c, err := client.New(&config.Config{
 			Path:         viper.ConfigFileUsed(),
 			Email:        viper.GetString("email"),
@@ -94,7 +96,8 @@ func main() {
 	stdoutHandler := tint.NewHandler(os.Stdout, &tint.Options{
 		AddSource:  true,
 		Level:      slog.LevelDebug,
-		TimeFormat: time.RFC3339,
+		TimeFormat: time.RFC3339Nano,
+		NoColor:    !isatty.IsTerminal(os.Stdout.Fd()),
 	})
 	fileHandler := slog.NewTextHandler(file, &slog.HandlerOptions{
 		Level: slog.LevelDebug,

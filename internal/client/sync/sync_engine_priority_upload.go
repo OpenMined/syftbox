@@ -19,9 +19,12 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		slog.Error("sync priority", "op", OpWriteRemote, "error", err)
 		return
 	}
-	se.syncStatus.SetSyncing(relPath)
-	defer se.syncStatus.UnsetSyncing(relPath)
 
+	// set sync status
+	se.syncStatus.SetSyncing(relPath, "priority upload")
+	defer se.syncStatus.SetCompleted(relPath, "priority upload")
+
+	// get the file content
 	timeNow := time.Now()
 	file, err := NewFileContent(path)
 	if err != nil {
@@ -31,21 +34,25 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		return
 	}
 
+	// check file size
 	if file.Size > maxPrioritySize {
 		slog.Error("sync priority", "op", OpWriteRemote, "path", path, "size", file.Size, "error", "file too large")
 		return
 	}
 
-	if lastSynced, err := se.journal.Get(relPath); err != nil {
-		slog.Warn("priority file journal check", "error", err)
-	} else if lastSynced != nil && lastSynced.ETag == file.ETag {
-		// slog.Debug("priority file contents unchanged. skipping.", "path", path)
+	// check if the file has changed
+	if changed, err := se.journal.ContentsChanged(relPath, file.ETag); err != nil {
+		slog.Warn("sync priority journal check", "error", err)
+	} else if !changed {
+		slog.Debug("sync priority", "op", "SKIPPED", "reason", "contents unchanged", "path", path)
 		return
 	}
 
+	// log the time taken to upload the file
 	timeTaken := timeNow.Sub(file.LastModified)
 	slog.Info("sync priority", "op", OpWriteRemote, "path", relPath, "size", file.Size, "watchLatency", timeTaken)
 
+	// prepare the message
 	message := syftmsg.NewFileWrite(
 		relPath,
 		file.ETag,
@@ -53,18 +60,21 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		file.Content,
 	)
 
+	// send the message
 	if err := se.sdk.Events.Send(message); err != nil {
 		slog.Error("sync priority", "op", OpWriteRemote, "path", relPath, "error", err)
 	}
 
-	// update journal and lastLocalState
-	metadata := &FileMetadata{
+	// this is a hack to ensure the file is written on the server side
+	// this requires a proper ACK/NACK mechanism
+	time.Sleep(1 * time.Second)
+
+	// update the journal
+	se.journal.Set(&FileMetadata{
 		Path:         relPath,
 		ETag:         file.ETag,
 		Size:         file.Size,
 		LastModified: file.LastModified,
 		Version:      "",
-	}
-	se.journal.Set(metadata)
-	se.lastLocalState[relPath] = metadata
+	})
 }

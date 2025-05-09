@@ -78,26 +78,35 @@ func (b *BlobService) Index() *BlobIndex {
 }
 
 func (b *BlobService) afterPutObject(_ *PutObjectParams, resp *PutObjectResponse) {
-	slog.Info("update index put object", "key", resp.Key)
-	b.index.Set(&BlobInfo{
+	if err := b.index.Set(&BlobInfo{
 		Key:          resp.Key,
 		ETag:         resp.ETag,
 		Size:         resp.Size,
 		LastModified: resp.LastModified.Format(time.RFC3339),
-	})
+	}); err != nil {
+		slog.Error("update index", "hook", "PutObject", "key", resp.Key, "error", err)
+	} else {
+		slog.Info("update index", "hook", "PutObject", "key", resp.Key)
+	}
 }
 
 func (b *BlobService) afterDeleteObjects(req string, _ bool) {
-	slog.Info("update index delete object", "key", req)
-	b.index.Remove(req)
+	if err := b.index.Remove(req); err != nil {
+		slog.Error("update index", "hook", "DeleteObject", "key", req, "error", err)
+	} else {
+		slog.Info("update index", "hook", "DeleteObject", "key", req)
+	}
 }
 
 func (b *BlobService) afterCopyObject(req *CopyObjectParams, resp *CopyObjectResponse) {
-	slog.Info("update index copy object", "dest", req.DestinationKey)
-	b.index.Set(&BlobInfo{
+	if err := b.index.Set(&BlobInfo{
 		Key:          req.DestinationKey,
 		ETag:         resp.ETag,
 		Size:         0,
 		LastModified: resp.LastModified.Format(time.RFC3339),
-	})
+	}); err != nil {
+		slog.Error("update index", "hook", "CopyObject", "src", req.SourceKey, "dest", req.DestinationKey, "error", err)
+	} else {
+		slog.Info("update index", "hook", "CopyObject", "src", req.SourceKey, "dest", req.DestinationKey)
+	}
 }

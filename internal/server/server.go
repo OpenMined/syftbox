@@ -34,7 +34,10 @@ type Server struct {
 // New creates a new server instance with the provided configuration
 func New(config *Config) (*Server, error) {
 	dbPath := filepath.Join(config.DataDir, "state.db")
-	sqliteDb, err := db.NewSqliteDb(db.WithPath(dbPath))
+	sqliteDb, err := db.NewSqliteDb(
+		db.WithPath(dbPath),
+		db.WithMaxOpenConns(runtime.NumCPU()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -206,50 +209,50 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 }
 
 func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
+	// unwrap the data
 	data, _ := msg.Message.Data.(syftmsg.FileWrite)
+	// get the client info
+	from := msg.ClientInfo.User
 
-	from := msg.Info.User
+	msgGroup := slog.Group("wsmsg", "id", msg.Message.Id, "type", msg.Message.Type, "connId", msg.ConnID, "from", from, "path", data.Path, "size", data.Length)
 
+	// check if the SENDER has permission to write to the file
 	if err := s.checkPermission(from, data.Path, acl.AccessWrite); err != nil {
-		slog.Warn("write permission denied",
-			"msgId", msg.Message.Id,
-			"from", from,
-			"path", data.Path,
-			"err", err)
+		slog.Error("wsmsg handler permission denied", msgGroup, "error", err)
 		errMsg := syftmsg.NewError(http.StatusForbidden, data.Path, "permission denied for write operation")
-		s.hub.SendMessage(msg.ClientId, errMsg)
+		s.hub.SendMessage(msg.ConnID, errMsg)
 		return
 	}
 
-	slog.Info("ws file write", "client", from, "msgId", msg.Message.Id, "path", data.Path, "size", data.Length)
+	slog.Info("wsmsg handler recieved", msgGroup)
 
+	// broadcast the message to all clients except the sender
 	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
 		to := info.User
+
 		if to == from {
+			slog.Debug("wsmsg handler skip self", msgGroup)
 			return false
 		}
 
+		// check if the RECIPIENT has permission to read the file
 		if err := s.checkPermission(to, data.Path, acl.AccessRead); err != nil {
-			slog.Warn("read permission denied",
-				"msgId", msg.Message.Id,
-				"from", from,
-				"to", to,
-				"path", data.Path,
-				"err", err)
+			slog.Warn("wsmsg handler permission denied", msgGroup, "to", to, "error", err)
 			return false
+		} else {
+			slog.Info("wsmsg handler broadcast", msgGroup, "to", to)
 		}
 
 		return true
 	})
 
-	_, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
+	if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 		Key:  data.Path,
 		ETag: msg.Message.Id,
 		Body: bytes.NewReader(data.Content),
 		Size: data.Length,
-	})
-	if err != nil {
-		slog.Error("put object error", "error", err)
+	}); err != nil {
+		slog.Error("ws file write put object", "error", err)
 	}
 }
 

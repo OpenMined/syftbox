@@ -16,22 +16,22 @@ var (
 	conflictExt = ".syftconflict"
 )
 
-func MarkRejected(localPath string) error {
+func markRejected(localPath string) error {
 	// rename file from <path>/file.whatever to <path>/file.syftrejected.whatever
 	ext := filepath.Ext(localPath)
 	newPath := strings.Replace(localPath, ext, rejectedExt+ext, 1)
 	return os.Rename(localPath, newPath)
 }
 
-func MarkConflicted(localPath string) error {
+func markConflicted(localPath string) error {
 	// rename file from <path>/file.whatever to <path>/file.syftconflict.whatever
 	ext := filepath.Ext(localPath)
 	newPath := strings.Replace(localPath, ext, conflictExt+ext, 1)
 	return os.Rename(localPath, newPath)
 }
 
-// WriteFile writes the body to the file at path and returns the md5 hash of the body
-func WriteFile(path string, body []byte) (string, error) {
+// writeFile writes the body to the file at path and returns the md5 hash of the body
+func writeFile(path string, body []byte) (string, error) {
 	if err := utils.EnsureParent(path); err != nil {
 		return "", fmt.Errorf("ensure parent error: %w", err)
 	}

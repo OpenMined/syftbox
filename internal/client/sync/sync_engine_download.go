@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	maxDownloadConcurrency = 4
+	maxDownloadConcurrency = 8
 )
 
 // download
@@ -41,7 +41,7 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 		etagMap[op.Remote.ETag] = append(etagMap[op.Remote.ETag], op.RelPath)
 		pathMap[op.RelPath] = op.Remote
 
-		se.syncStatus.SetSyncing(op.RelPath)
+		se.syncStatus.SetSyncing(op.RelPath, "standard local write")
 	}
 
 	// get presigned urls
@@ -85,14 +85,15 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 			}
 
 			if res.Error != nil {
-				slog.Warn("failed to download file", "url", res.URL, "etag", res.FileName, "error", res.Error)
-				// todo set status = ERROR for all files
+				slog.Warn("failed to download file", "etag", res.FileName, "error", res.Error)
+				// todo set sync status = ERROR
 				continue
 			}
 
 			etagToCopy, exists := etagMap[res.FileName]
 			if !exists || len(etagToCopy) == 0 {
 				slog.Warn("no keys found for downloaded file", "name", res.FileName)
+				// todo set sync status = ERROR
 				continue
 			}
 
@@ -104,8 +105,8 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 				} else {
 					fileMeta := pathMap[key]
 					se.journal.Set(fileMeta)
-					se.syncStatus.UnsetSyncing(fileMeta.Path)
 					slog.Info("sync", "op", OpWriteLocal, "path", key, "size", fileMeta.Size)
+					se.syncStatus.SetCompleted(fileMeta.Path, "standard local write")
 				}
 			}
 		}
@@ -120,10 +121,8 @@ func (se *SyncEngine) getFilePriority(meta *FileMetadata) int {
 	if strings.HasPrefix(meta.Path, se.workspace.Owner) {
 		priority = 0
 	} else if strings.HasSuffix(meta.Path, "syft.pub.yaml") {
-		// syftpub goes brr is important
 		priority = 1
 	} else if strings.Contains(meta.Path, "/rpc/") {
-		// rpc is important
 		priority = 2
 	}
 
@@ -154,12 +153,6 @@ func copyLocal(src, dst string) error {
 	if err != nil {
 		return err
 	}
-
-	// Flush contents to disk
-	// err = destFile.Sync()
-	// if err != nil {
-	// 	return err
-	// }
 
 	return nil
 }

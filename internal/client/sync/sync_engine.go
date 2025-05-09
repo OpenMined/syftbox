@@ -2,11 +2,8 @@ package sync
 
 import (
 	"context"
-	"crypto/md5"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,34 +24,44 @@ var (
 )
 
 type SyncEngine struct {
-	workspace      *workspace.Workspace
-	sdk            *syftsdk.SyftSDK
-	journal        *SyncJournal
-	syncStatus     *SyncStatus
-	watcher        *FileWatcher
-	lastLocalState map[string]*FileMetadata
-	ignoreList     *SyncIgnoreList
-	priorityList   *SyncPriorityList
-	wg             sync.WaitGroup
-	muSync         sync.Mutex
+	workspace    *workspace.Workspace
+	sdk          *syftsdk.SyftSDK
+	journal      *SyncJournal
+	localState   *SyncLocalState
+	syncStatus   *SyncStatus
+	watcher      *FileWatcher
+	ignoreList   *SyncIgnoreList
+	priorityList *SyncPriorityList
+	wg           sync.WaitGroup
+	muSync       sync.Mutex
 }
 
-func NewSyncEngine(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, ignore *SyncIgnoreList, priority *SyncPriorityList, watcher *FileWatcher) (*SyncEngine, error) {
+func NewSyncEngine(
+	workspace *workspace.Workspace,
+	sdk *syftsdk.SyftSDK,
+	ignore *SyncIgnoreList,
+	priority *SyncPriorityList,
+	watcher *FileWatcher,
+) (*SyncEngine, error) {
 	journalDir := filepath.Join(workspace.InternalDataDir, "sync.db")
 	journal, err := NewSyncJournal(journalDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync journal: %w", err)
 	}
 
+	localState := NewSyncLocalState(workspace.DatasitesDir)
+
+	syncStatus := NewSyncStatus()
+
 	return &SyncEngine{
-		sdk:            sdk,
-		workspace:      workspace,
-		journal:        journal,
-		watcher:        watcher,
-		ignoreList:     ignore,
-		priorityList:   priority,
-		lastLocalState: make(map[string]*FileMetadata),
-		syncStatus:     NewSyncStatus(),
+		sdk:          sdk,
+		workspace:    workspace,
+		watcher:      watcher,
+		ignoreList:   ignore,
+		priorityList: priority,
+		journal:      journal,
+		localState:   localState,
+		syncStatus:   syncStatus,
 	}, nil
 }
 
@@ -63,7 +70,9 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 
 	// run sync once and wait before starting watcher//websocket
 	slog.Info("running initial sync")
-	se.runFullSync(ctx)
+	if err := se.runFullSync(ctx); err != nil {
+		slog.Error("failed to run initial sync", "error", err)
+	}
 
 	// connect to websocket
 	slog.Info("listening for websocket events")
@@ -126,46 +135,71 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 	defer se.muSync.Unlock()
 
-	tstart := time.Now()
+	tStart := time.Now()
 
 	remoteState, err := se.getRemoteState(ctx)
 	if err != nil {
 		return fmt.Errorf("get remote state: %w", err)
 	}
+	tRemoteState := time.Since(tStart)
 
-	localState, err := se.getLocalState(ctx)
+	tlocal := time.Now()
+	localState, err := se.localState.Scan()
 	if err != nil {
-		return err
+		return fmt.Errorf("scan local state: %w", err)
 	}
+	tLocalState := time.Since(tlocal)
 
-	// journal is empty, but you have local files!
 	journalCount, err := se.journal.Count()
 	if err != nil {
 		return fmt.Errorf("get journal count: %w", err)
 	}
 
+	// journal is empty, but you have local files!
 	if journalCount == 0 && len(localState) > 0 && len(remoteState) > 0 {
 		slog.Info("rebuilding journal")
 		se.rebuildJournal(localState, remoteState)
 	}
 
+	tjournal := time.Now()
 	journalState, err := se.journal.GetState()
 	if err != nil {
 		return fmt.Errorf("get journal state: %w", err)
 	}
-	result := se.reconcile(localState, remoteState, journalState)
-	se.executeReconcileOperations(ctx, result)
+	tJournalState := time.Since(tjournal)
 
-	if len(result.LocalWrites) > 0 || len(result.RemoteWrites) > 0 || len(result.RemoteDeletes) > 0 || len(result.Conflicts) > 0 {
-		slog.Info("full sync", "took", time.Since(tstart),
+	treconcile := time.Now()
+	result := se.reconcile(localState, remoteState, journalState)
+	tReconcile := time.Since(treconcile)
+
+	if result.HasChanges() {
+		slog.Debug("reconcile decisions", "downloads", result.LocalWrites, "uploads", result.RemoteWrites, "remoteDeletes", result.RemoteDeletes, "localDeletes", result.LocalDeletes, "conflicts", result.Conflicts)
+	}
+
+	se.executeReconcileOperations(ctx, result)
+	tTotal := time.Since(tStart)
+
+	if result.HasChanges() {
+		slog.Info("full sync",
 			"downloads", len(result.LocalWrites),
 			"uploads", len(result.RemoteWrites),
-			"deletes", len(result.RemoteDeletes),
+			"localDeletes", len(result.LocalDeletes),
+			"remoteDeletes", len(result.RemoteDeletes),
 			"conflicts", len(result.Conflicts),
 			"unchanged", len(result.UnchangedPaths),
 			"cleanups", len(result.Cleanups),
-			"syncing", se.syncStatus.Count(),
+			"ignored", len(result.Ignored),
+			"syncing", len(se.syncStatus.status),
+			"tsRemoteState", tRemoteState,
+			"tsLocalState", tLocalState,
+			"tsJournalState", tJournalState,
+			"tsReconcile", tReconcile,
+			"tsTotal", tTotal,
 		)
+	}
+
+	if len(se.syncStatus.status) > 0 {
+		slog.Debug("full sync", "syncing", se.syncStatus.status)
 	}
 
 	return nil
@@ -185,16 +219,22 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 		allPaths[path] = struct{}{}
 	}
 
-	ignored := 0
-
 	for path := range allPaths {
 		local, localExists := localState[path]
 		remote, remoteExists := remoteState[path]
 		journal, journalExists := journalState[path]
 
 		// check if it's already in conflict
-		if se.isConflict(path) || se.isSyncing(path) || se.ignoreList.ShouldIgnore(path) {
-			ignored++
+		isConflict := se.isConflict(path)
+		isSyncing := se.isSyncing(path)
+		isIgnored := se.ignoreList.ShouldIgnore(path)
+		isEmpty := false
+		if localExists && local.Size == 0 {
+			isEmpty = true
+		}
+
+		if isConflict || isSyncing || isIgnored || isEmpty {
+			reconcileOps.Ignored[path] = struct{}{}
 			continue
 		}
 
@@ -250,37 +290,46 @@ func (se *SyncEngine) executeReconcileOperations(ctx context.Context, result *Re
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		se.handleRemoteWrites(ctx, result.RemoteWrites)
+		if len(result.RemoteWrites) > 0 {
+			se.handleRemoteWrites(ctx, result.RemoteWrites)
+		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		se.handleLocalWrites(ctx, result.LocalWrites)
+		if len(result.LocalWrites) > 0 {
+			se.handleLocalWrites(ctx, result.LocalWrites)
+		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		se.handleRemoteDeletes(ctx, result.RemoteDeletes)
+		if len(result.RemoteDeletes) > 0 {
+			se.handleRemoteDeletes(ctx, result.RemoteDeletes)
+		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		se.handleLocalDeletes(ctx, result.LocalDeletes)
+		if len(result.LocalDeletes) > 0 {
+			se.handleLocalDeletes(ctx, result.LocalDeletes)
+		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		se.handleConflicts(ctx, result.Conflicts)
+		if len(result.Conflicts) > 0 {
+			se.handleConflicts(ctx, result.Conflicts)
+		}
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-
 		// cleanup the journal
 		for path := range result.Cleanups {
 			se.journal.Delete(path)
@@ -369,78 +418,6 @@ func (se *SyncEngine) getRemoteState(ctx context.Context) (map[string]*FileMetad
 	return remoteState, nil
 }
 
-func (se *SyncEngine) getLocalState(ctx context.Context) (map[string]*FileMetadata, error) {
-	rootDir := se.workspace.DatasitesDir
-	// tstart := time.Now()
-	newState := make(map[string]*FileMetadata)
-
-	walkFn := func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return fmt.Errorf("walk error: %w", err)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		// Skip directories
-		if d.IsDir() {
-			return nil
-		}
-
-		// Get relative path
-		relPath, err := se.workspace.DatasiteRelPath(path)
-		if err != nil {
-			return err
-		}
-
-		// Get file info
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-
-		lastState, ok := se.lastLocalState[relPath]
-		if ok && lastState.Size == info.Size() && lastState.LastModified == info.ModTime() {
-			newState[relPath] = lastState
-			return nil
-		}
-
-		// Calculate ETag
-		file, err := os.Open(path)
-		if err != nil {
-			slog.Error("failed to open file", "error", err)
-		}
-		defer file.Close()
-
-		h := md5.New()
-		if _, err := io.Copy(h, file); err != nil {
-			slog.Error("failed to copy file", "error", err)
-		}
-
-		metadata := &FileMetadata{
-			Path:         relPath,
-			ETag:         fmt.Sprintf("%x", h.Sum(nil)),
-			Size:         info.Size(),
-			LastModified: info.ModTime(),
-			Version:      "",
-		}
-		se.lastLocalState[relPath] = metadata
-		newState[relPath] = metadata
-
-		return nil
-	}
-
-	if err := filepath.WalkDir(rootDir, walkFn); err != nil {
-		return nil, err
-	}
-
-	// slog.Debug("build local state", "files", len(newState), "took", time.Since(tstart))
-	return newState, nil
-}
-
 func (se *SyncEngine) rebuildJournal(localState, remoteState map[string]*FileMetadata) {
 	allPaths := make(map[string]struct{})
 	for path := range localState {
@@ -466,20 +443,18 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-
 		case msg, ok := <-socketEvents:
 			if !ok {
 				slog.Debug("handleSocketEvents channel closed")
 				return
 			}
-
 			switch msg.Type {
 			case syftmsg.MsgSystem:
-				se.handleSystem(msg)
+				go se.handleSystem(msg)
 			case syftmsg.MsgError:
-				se.handlePriorityError(msg)
+				go se.handlePriorityError(msg)
 			case syftmsg.MsgFileWrite:
-				se.handlePriorityDownload(msg)
+				go se.handlePriorityDownload(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -493,21 +468,16 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-
 		case event, ok := <-watcherEvents:
 			if !ok {
 				return
 			}
-
 			path := event.Path()
-
-			if se.ignoreList.ShouldIgnore(path) {
+			if se.ignoreList.ShouldIgnore(path) ||
+				!se.priorityList.ShouldPrioritize(path) {
 				continue
 			}
-
-			if se.priorityList.ShouldPrioritize(path) {
-				se.handlePriorityUpload(path)
-			}
+			go se.handlePriorityUpload(path)
 		}
 	}
 }
