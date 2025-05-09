@@ -44,6 +44,7 @@ var rootCmd = &cobra.Command{
 		return loadConfig(cmd)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
 		c, err := client.New(&config.Config{
 			Path:         viper.ConfigFileUsed(),
 			Email:        viper.GetString("email"),
