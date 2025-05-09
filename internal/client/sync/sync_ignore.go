@@ -9,6 +9,7 @@ var defaultIgnoreLines = []string{
 	"syftignore",
 	"**/*syftrejected*",
 	"**/*syftconflict*",
+	".syftkeep",
 	// python
 	".ipynb_checkpoints/",
 	"__pycache__/",

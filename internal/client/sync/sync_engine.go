@@ -70,7 +70,9 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 
 	// run sync once and wait before starting watcher//websocket
 	slog.Info("running initial sync")
-	se.runFullSync(ctx)
+	if err := se.runFullSync(ctx); err != nil {
+		slog.Error("failed to run initial sync", "error", err)
+	}
 
 	// connect to websocket
 	slog.Info("listening for websocket events")
@@ -448,11 +450,11 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 			}
 			switch msg.Type {
 			case syftmsg.MsgSystem:
-				se.handleSystem(msg)
+				go se.handleSystem(msg)
 			case syftmsg.MsgError:
-				se.handlePriorityError(msg)
+				go se.handlePriorityError(msg)
 			case syftmsg.MsgFileWrite:
-				se.handlePriorityDownload(msg)
+				go se.handlePriorityDownload(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -475,7 +477,7 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 				!se.priorityList.ShouldPrioritize(path) {
 				continue
 			}
-			se.handlePriorityUpload(path)
+			go se.handlePriorityUpload(path)
 		}
 	}
 }

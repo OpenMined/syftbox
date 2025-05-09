@@ -65,6 +65,10 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		slog.Error("sync priority", "op", OpWriteRemote, "path", relPath, "error", err)
 	}
 
+	// this is a hack to ensure the file is written on the server side
+	// this requires a proper ACK/NACK mechanism
+	time.Sleep(1 * time.Second)
+
 	// update the journal
 	se.journal.Set(&FileMetadata{
 		Path:         relPath,
