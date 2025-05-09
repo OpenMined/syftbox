@@ -48,9 +48,10 @@ func (se *SyncEngine) handleLocalDeletes(_ context.Context, batch BatchLocalDele
 	}
 
 	// cleanup empty parent directories
-	for parent := range uniqueParents {
-		cleanupEmptyParentDirs(parent, se.workspace.DatasitesDir)
-	}
+	// todo this is breaking watched directories. probably need a better way to do this
+	// for parent := range uniqueParents {
+	// 	cleanupEmptyParentDirs(parent, se.workspace.DatasitesDir)
+	// }
 }
 
 func (se *SyncEngine) handleRemoteDeletes(ctx context.Context, batch BatchRemoteDelete) {

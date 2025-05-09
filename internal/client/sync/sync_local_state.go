@@ -32,8 +32,8 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 			return fmt.Errorf("walk error: %w", walkErr)
 		}
 
-		if d.IsDir() {
-			return nil
+		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+			return nil // Skip directories and symlinks
 		}
 
 		// Get file info
