@@ -34,6 +34,11 @@ func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManger) *WorkspaceHandler {
 // @Param			path	query		string	false	"Path to the directory (default is root)"
 // @Param			depth	query		integer	false	"Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)"	minimum(0)	default(1)
 // @Success		200		{object}	WorkspaceItemsResponse
+// @Failure		400		{object}	ControlPlaneError
+// @Failure		401		{object}	ControlPlaneError
+// @Failure		403		{object}	ControlPlaneError
+// @Failure		409		{object}	ControlPlaneError
+// @Failure		429		{object}	ControlPlaneError
 // @Failure		500		{object}	ControlPlaneError
 // @Failure		503		{object}	ControlPlaneError
 // @Router			/v1/workspace/items [get]
@@ -272,6 +277,10 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 // @Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
 // @Success		204		{object}	nil
 // @Failure		400		{object}	ControlPlaneError
+// @Failure		401		{object}	ControlPlaneError
+// @Failure		403		{object}	ControlPlaneError
+// @Failure		409		{object}	ControlPlaneError
+// @Failure		429		{object}	ControlPlaneError
 // @Failure		500		{object}	ControlPlaneError
 // @Failure		503		{object}	ControlPlaneError
 // @Router			/v1/workspace/items [delete]
