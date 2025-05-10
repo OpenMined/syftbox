@@ -73,11 +73,12 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 			v1Init.POST("/datasite", initH.InitDatasite)
 		}
 
-		v1App := v1.Group("/app")
+		v1App := v1.Group("/apps")
 		{
-			v1App.GET("/list", appH.List)
-			v1App.POST("/install", appH.Install)
-			v1App.DELETE("/uninstall", appH.Uninstall)
+			v1App.GET("/", appH.List)
+			v1App.GET("/:appName", appH.Get)
+			v1App.POST("/", appH.Install)
+			v1App.DELETE("/:appName", appH.Uninstall)
 		}
 
 		v1Workspace := v1.Group("/workspace")

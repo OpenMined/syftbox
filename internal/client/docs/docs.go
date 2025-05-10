@@ -35,7 +35,67 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/app/install": {
+        "/v1/apps/": {
+            "get": {
+                "description": "List all installed apps",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Apps"
+                ],
+                "summary": "List apps",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AppListResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            },
             "post": {
                 "description": "Install an app",
                 "consumes": [
@@ -45,7 +105,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "app"
+                    "Apps"
                 ],
                 "summary": "Install app",
                 "parameters": [
@@ -63,7 +123,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ControlPlaneResponse"
+                            "$ref": "#/definitions/handlers.AppResponse"
                         }
                     },
                     "400": {
@@ -72,6 +132,30 @@ const docTemplate = `{
                             "$ref": "#/definitions/handlers.ControlPlaneError"
                         }
                     },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -87,54 +171,22 @@ const docTemplate = `{
                 }
             }
         },
-        "/v1/app/list": {
+        "/v1/apps/{appName}": {
             "get": {
-                "description": "List all installed apps",
+                "description": "Get an app",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "app"
+                    "Apps"
                 ],
-                "summary": "List apps",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.AppListResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ControlPlaneError"
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ControlPlaneError"
-                        }
-                    }
-                }
-            }
-        },
-        "/v1/app/uninstall": {
-            "post": {
-                "description": "Uninstall an app",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "app"
-                ],
-                "summary": "Uninstall app",
+                "summary": "Get app",
                 "parameters": [
                     {
                         "type": "string",
                         "description": "App name",
                         "name": "appName",
-                        "in": "query",
+                        "in": "path",
                         "required": true
                     }
                 ],
@@ -142,11 +194,101 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/handlers.ControlPlaneResponse"
+                            "$ref": "#/definitions/handlers.AppResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Uninstall an app",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Apps"
+                ],
+                "summary": "Uninstall app",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "App name",
+                        "name": "appName",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/handlers.ControlPlaneError"
                         }
@@ -337,6 +479,36 @@ const docTemplate = `{
                             "$ref": "#/definitions/handlers.WorkspaceItemsResponse"
                         }
                     },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -451,6 +623,30 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
                         "schema": {
                             "$ref": "#/definitions/handlers.ControlPlaneError"
                         }
@@ -659,10 +855,65 @@ const docTemplate = `{
                     "description": "list of installed apps",
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/handlers.AppResponse"
                     }
                 }
             }
+        },
+        "handlers.AppResponse": {
+            "type": "object",
+            "properties": {
+                "cpu": {
+                    "description": "Percentage of CPU this app is using",
+                    "type": "number"
+                },
+                "memory": {
+                    "description": "Percentage of total RAM this app is using",
+                    "type": "number"
+                },
+                "name": {
+                    "description": "Unique name of the app",
+                    "type": "string"
+                },
+                "path": {
+                    "description": "Absolute path to the app from the workspace root",
+                    "type": "string"
+                },
+                "pid": {
+                    "description": "Process ID of the app's run.sh",
+                    "type": "integer"
+                },
+                "ports": {
+                    "description": "List of ports this app is listening on",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "status": {
+                    "description": "Status of the app",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/handlers.AppStatus"
+                        }
+                    ]
+                },
+                "uptime": {
+                    "description": "How long the app has been running in milliseconds",
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.AppStatus": {
+            "type": "string",
+            "enum": [
+                "running",
+                "stopped"
+            ],
+            "x-enum-varnames": [
+                "AppStatusRunning",
+                "AppStatusStopped"
+            ]
         },
         "handlers.ControlPlaneError": {
             "type": "object",
@@ -742,6 +993,10 @@ const docTemplate = `{
         "handlers.LogsResponse": {
             "type": "object",
             "properties": {
+                "hasMore": {
+                    "description": "Whether there are more logs to retrieve.",
+                    "type": "boolean"
+                },
                 "logs": {
                     "description": "A list of log items.",
                     "type": "array",
@@ -749,7 +1004,7 @@ const docTemplate = `{
                         "$ref": "#/definitions/handlers.LogEntry"
                     }
                 },
-                "next_token": {
+                "nextToken": {
                     "description": "A pagination token to retrieve the next page of logs.",
                     "type": "integer"
                 }
