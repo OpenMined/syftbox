@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -312,7 +313,10 @@ func getPort(process *process.Process) ([]int64, error) {
 	ports := make([]int64, 0)
 	for _, connection := range connections {
 		if connection.Laddr.Port != 0 {
-			ports = append(ports, int64(connection.Laddr.Port))
+			port := int64(connection.Laddr.Port)
+			if !slices.Contains(ports, port) {
+				ports = append(ports, port)
+			}
 		}
 	}
 	children, err := process.Children()
