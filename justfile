@@ -2,7 +2,8 @@ SYFTBOX_VERSION := "0.5.0"
 BUILD_COMMIT := `git rev-parse --short HEAD`
 BUILD_DATE := `date -u +%Y-%m-%dT%H:%M:%SZ`
 BUILD_LD_FLAGS := "-s -w" + " -X github.com/openmined/syftbox/internal/version.Version=" + SYFTBOX_VERSION + " -X github.com/openmined/syftbox/internal/version.Revision=" + BUILD_COMMIT + " -X github.com/openmined/syftbox/internal/version.BuildDate=" + BUILD_DATE
-BUILD_TAGS := "sonic avx sqlite_omit_load_extension"
+CLIENT_BUILD_TAGS := "go_json nomsgpack"
+SERVER_BUILD_TAGS := "sonic avx nomsgpack"
 
 default:
     just --list
@@ -28,15 +29,15 @@ gen-swagger:
 
 [group('dev')]
 run-server *ARGS: gen-swagger
-    go run -tags="{{ BUILD_TAGS }}" ./cmd/server {{ ARGS }}
+    go run -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server {{ ARGS }}
 
 [group('dev')]
 run-server-tls *ARGS: gen-certs gen-swagger
-    go run -tags="{{ BUILD_TAGS }}" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ ARGS }}
+    go run -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ ARGS }}
 
 [group('dev')]
 run-client *ARGS: gen-swagger
-    go run -tags="{{ BUILD_TAGS }}" ./cmd/client {{ ARGS }}
+    go run -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
 
 [group('dev-minio')]
 run-minio:
@@ -68,15 +69,26 @@ test:
 [doc('Needs a platform specific compiler. Example: CC="aarch64-linux-musl-gcc" just build-client-target goos=linux goarch=arm64')]
 [group('build')]
 build-client-target goos=`go env GOOS` goarch=`go env GOARCH`:
+    #!/bin/bash
+    set -eou pipefail
+
+    export GOOS="{{ goos }}"
+    export GOARCH="{{ goarch }}"
+    export CGO_ENABLED=0
+
+    if [ "{{ goos }}" = "darwin" ]; then
+        echo "Building for darwin. CGO_ENABLED=1"
+        export CGO_ENABLED=1
+    fi
+
     rm -rf .out && mkdir -p .out
-    CGO_ENABLED=1 GOOS={{ goos }} GOARCH={{ goarch }} \
-    go build -x -trimpath --tags="{{ BUILD_TAGS }}" \
+    go build -x -trimpath --tags="{{ CLIENT_BUILD_TAGS }}" \
         -ldflags="{{ BUILD_LD_FLAGS }}" \
         -o .out/syftbox_client_{{ goos }}_{{ goarch }} ./cmd/client
 
 [group('build')]
 build-client:
-    goreleaser build --snapshot --clean --id syftbox_client --id syftbox_client_macos --id syftbox_client_windows
+    goreleaser build --snapshot --clean --id syftbox_client --id syftbox_client_macos
 
 [group('build')]
 build-server:
@@ -84,7 +96,7 @@ build-server:
 
 [group('build')]
 build-all:
-    goreleaser release --snapshot --clean
+    goreleaser release --snapshot --clean --verbose
 
 [group('deploy')]
 deploy-client:
