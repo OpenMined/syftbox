@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
@@ -15,6 +17,7 @@ const (
 	ErrCodeDeleteWorkspaceItemFailed = "ERR_DELETE_WORKSPACE_ITEM_FAILED"
 	ErrCodeMoveWorkspaceItemsFailed  = "ERR_MOVE_WORKSPACE_ITEMS_FAILED"
 	ErrCodeCopyWorkspaceItemsFailed  = "ERR_COPY_WORKSPACE_ITEMS_FAILED"
+	ErrCodeGetWorkspaceContentFailed = "ERR_GET_WORKSPACE_CONTENT_FAILED"
 )
 
 type WorkspaceHandler struct {
@@ -27,21 +30,21 @@ func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManger) *WorkspaceHandler {
 	}
 }
 
-// @Summary		Get workspace items
-// @Description	Get files and folders at a specified path
-// @Tags			Files and Folders
-// @Produce		json
-// @Param			path	query		string	false	"Path to the directory (default is root)"
-// @Param			depth	query		integer	false	"Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)"	minimum(0)	default(1)
-// @Success		200		{object}	WorkspaceItemsResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/workspace/items [get]
+//	@Summary		Get workspace items
+//	@Description	Get files and folders at a specified path
+//	@Tags			Files and Folders
+//	@Produce		json
+//	@Param			path	query		string	false	"Path to the directory (default is root)"
+//	@Param			depth	query		integer	false	"Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)"	minimum(0)	default(1)
+//	@Success		200		{object}	WorkspaceItemsResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items [get]
 func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 	var req WorkspaceItemsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -82,21 +85,21 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 	})
 }
 
-// @Summary		Create workspace item
-// @Description	Create a new file or folder in the workspace
-// @Tags			Files and Folders
-// @Accept			json
-// @Produce		json
-// @Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
-// @Success		201		{object}	WorkspaceItemCreateResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/workspace/items [post]
+//	@Summary		Create workspace item
+//	@Description	Create a new file or folder in the workspace
+//	@Tags			Files and Folders
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
+//	@Success		201		{object}	WorkspaceItemCreateResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items [post]
 func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	var req WorkspaceItemCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -266,24 +269,24 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	})
 }
 
-// @Summary		Delete workspace items
-// @Description	Delete multiple files or folders. The operation is similar to the Unix `rm -rf` command.
-// @Description	- If the path is a file, the file will be deleted.
-// @Description	- If the path is a folder, all its contents will also be deleted.
-// @Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
-// @Description	- If the path does not exist, the operation will be a no-op.
-// @Tags			Files and Folders
-// @Accept			json
-// @Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
-// @Success		204		{object}	nil
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/workspace/items [delete]
+//	@Summary		Delete workspace items
+//	@Description	Delete multiple files or folders. The operation is similar to the Unix `rm -rf` command.
+//	@Description	- If the path is a file, the file will be deleted.
+//	@Description	- If the path is a folder, all its contents will also be deleted.
+//	@Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
+//	@Description	- If the path does not exist, the operation will be a no-op.
+//	@Tags			Files and Folders
+//	@Accept			json
+//	@Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
+//	@Success		204		{object}	nil
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items [delete]
 func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 	var req WorkspaceItemDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -359,21 +362,21 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// @Summary		Move item
-// @Description	Move an item to a new location. Can also be used for renaming an item.
-// @Tags			Files and Folders
-// @Accept			json
-// @Produce		json
-// @Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
-// @Success		200		{object}	WorkspaceItemMoveResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		404		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Router			/v1/workspace/items/move [post]
+//	@Summary		Move item
+//	@Description	Move an item to a new location. Can also be used for renaming an item.
+//	@Tags			Files and Folders
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
+//	@Success		200		{object}	WorkspaceItemMoveResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		404		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items/move [post]
 func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	var req WorkspaceItemMoveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -682,21 +685,21 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// @Summary		Copy a file or folder
-// @Description	Create a copy of a file or folder
-// @Tags			Files and Folders
-// @Accept			json
-// @Produce		json
-// @Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
-// @Success		200		{object}	WorkspaceItemCopyResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		404		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Router			/v1/workspace/items/copy [post]
+//	@Summary		Copy a file or folder
+//	@Description	Create a copy of a file or folder
+//	@Tags			Files and Folders
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
+//	@Success		200		{object}	WorkspaceItemCopyResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		404		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items/copy [post]
 func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	var req WorkspaceItemCopyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -901,4 +904,153 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	c.PureJSON(http.StatusOK, &WorkspaceItemCopyResponse{
 		Item: item,
 	})
+}
+
+// getContentType returns the MIME type based on file extension
+func getContentType(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".txt":
+		return "text/plain"
+	case ".html":
+		return "text/html"
+	case ".css":
+		return "text/css"
+	case ".js":
+		return "application/javascript"
+	case ".json":
+		return "application/json"
+	case ".xml":
+		return "application/xml"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".svg":
+		return "image/svg+xml"
+	case ".pdf":
+		return "application/pdf"
+	case ".md":
+		return "text/markdown"
+	case ".csv":
+		return "text/csv"
+	case ".py":
+		return "text/x-python"
+	case ".go":
+		return "text/x-go"
+	case ".rs":
+		return "text/x-rust"
+	case ".java":
+		return "text/x-java"
+	case ".c":
+		return "text/x-c"
+	case ".cpp", ".cc", ".cxx":
+		return "text/x-c++"
+	case ".h", ".hpp":
+		return "text/x-c-header"
+	case ".sh":
+		return "text/x-shellscript"
+	case ".yaml", ".yml":
+		return "text/yaml"
+	case ".toml":
+		return "text/toml"
+	case ".ini":
+		return "text/plain"
+	case ".log":
+		return "text/plain"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+//	@Summary		Get file content
+//	@Description	Get the content of a file at the specified path. Supports range requests for efficient streaming of large files.
+//	@Tags			Files and Folders
+//	@Produce		text/plain
+//	@Produce		application/octet-stream
+//	@Produce		*/*
+//	@Param			path	query		string	true	"Path to the file"
+//	@Success		200		{file}		file	"File content"
+//	@Success		206		{file}		file	"Partial file content for range requests"
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		404		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/content [get]
+func (h *WorkspaceHandler) GetContent(c *gin.Context) {
+	var req WorkspaceContentRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the workspace
+	ws := ds.GetWorkspace()
+
+	// Make sure req.Path is an absolute path
+	if !filepath.IsAbs(req.Path) {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "path must be an absolute path and start with /",
+		})
+		return
+	}
+
+	// Resolve the path
+	absPath := filepath.Join(ws.Root, req.Path)
+
+	// Check if the file exists
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+				ErrorCode: ErrCodeGetWorkspaceContentFailed,
+				Error:     "file not found",
+			})
+			return
+		}
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeGetWorkspaceContentFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Check if it's a directory
+	if fileInfo.IsDir() {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "path points to a directory, not a file",
+		})
+		return
+	}
+
+	// Get content type based on file extension
+	contentType := getContentType(absPath)
+
+	// Set appropriate headers
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filepath.Base(absPath)))
+	c.Header("Accept-Ranges", "bytes")
+
+	// Serve the file with range request support
+	c.File(absPath)
 }

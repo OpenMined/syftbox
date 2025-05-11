@@ -446,6 +446,85 @@ const docTemplate = `{
                 }
             }
         },
+        "/v1/workspace/content": {
+            "get": {
+                "description": "Get the content of a file at the specified path. Supports range requests for efficient streaming of large files.",
+                "produces": [
+                    "text/plain",
+                    "application/octet-stream",
+                    "*/*"
+                ],
+                "tags": [
+                    "Files and Folders"
+                ],
+                "summary": "Get file content",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Path to the file",
+                        "name": "path",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "File content",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "206": {
+                        "description": "Partial file content for range requests",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ControlPlaneError"
+                        }
+                    }
+                }
+            }
+        },
         "/v1/workspace/items": {
             "get": {
                 "description": "Get files and folders at a specified path",

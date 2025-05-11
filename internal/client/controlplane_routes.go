@@ -88,6 +88,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 			v1Workspace.DELETE("/items", workspaceH.DeleteItems)
 			v1Workspace.POST("/items/move", workspaceH.MoveItems)
 			v1Workspace.POST("/items/copy", workspaceH.CopyItems)
+			v1Workspace.GET("/content", workspaceH.GetContent)
 		}
 
 		// Logs endpoint
