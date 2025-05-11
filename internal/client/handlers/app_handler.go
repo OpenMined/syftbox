@@ -33,19 +33,21 @@ func NewAppHandler(mgr *datasitemgr.DatasiteManger) *AppHandler {
 	}
 }
 
-// @Summary		List apps
-// @Description	List all installed apps
-// @Tags			Apps
-// @Produce		json
-// @Success		200	{object}	AppListResponse
-// @Failure		400	{object}	ControlPlaneError
-// @Failure		401	{object}	ControlPlaneError
-// @Failure		403	{object}	ControlPlaneError
-// @Failure		409	{object}	ControlPlaneError
-// @Failure		429	{object}	ControlPlaneError
-// @Failure		500	{object}	ControlPlaneError
-// @Failure		503	{object}	ControlPlaneError
-// @Router			/v1/apps/ [get]
+// List all installed apps
+//
+//	@Summary		List apps
+//	@Description	List all installed apps
+//	@Tags			Apps
+//	@Produce		json
+//	@Success		200	{object}	AppListResponse
+//	@Failure		400	{object}	ControlPlaneError
+//	@Failure		401	{object}	ControlPlaneError
+//	@Failure		403	{object}	ControlPlaneError
+//	@Failure		409	{object}	ControlPlaneError
+//	@Failure		429	{object}	ControlPlaneError
+//	@Failure		500	{object}	ControlPlaneError
+//	@Failure		503	{object}	ControlPlaneError
+//	@Router			/v1/apps/ [get]
 func (h *AppHandler) List(c *gin.Context) {
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -72,20 +74,22 @@ func (h *AppHandler) List(c *gin.Context) {
 	})
 }
 
-// @Summary		Get app
-// @Description	Get an app
-// @Tags			Apps
-// @Produce		json
-// @Param			appName	path		string	true	"App name"
-// @Success		200		{object}	AppResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/apps/{appName} [get]
+// Get an app
+//
+//	@Summary		Get app
+//	@Description	Get an app
+//	@Tags			Apps
+//	@Produce		json
+//	@Param			appName	path		string	true	"App name"
+//	@Success		200		{object}	AppResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/apps/{appName} [get]
 func (h *AppHandler) Get(c *gin.Context) {
 	appName := c.Param("appName")
 
@@ -110,21 +114,23 @@ func (h *AppHandler) Get(c *gin.Context) {
 	c.PureJSON(http.StatusOK, &app)
 }
 
-// @Summary		Install app
-// @Description	Install an app
-// @Tags			Apps
-// @Accept			json
-// @Produce		json
-// @Param			request	body		AppInstallRequest	true	"Install request"
-// @Success		200		{object}	AppResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/apps/ [post]
+// Install an app
+//
+//	@Summary		Install app
+//	@Description	Install an app
+//	@Tags			Apps
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		AppInstallRequest	true	"Install request"
+//	@Success		200		{object}	AppResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/apps/ [post]
 func (h *AppHandler) Install(c *gin.Context) {
 	var req AppInstallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -169,20 +175,22 @@ func (h *AppHandler) Install(c *gin.Context) {
 	c.PureJSON(http.StatusOK, &result)
 }
 
-// @Summary		Uninstall app
-// @Description	Uninstall an app
-// @Tags			Apps
-// @Produce		json
-// @Param			appName	path	string	true	"App name"
-// @Success		204
-// @Failure		400	{object}	ControlPlaneError
-// @Failure		401	{object}	ControlPlaneError
-// @Failure		403	{object}	ControlPlaneError
-// @Failure		409	{object}	ControlPlaneError
-// @Failure		429	{object}	ControlPlaneError
-// @Failure		500	{object}	ControlPlaneError
-// @Failure		503	{object}	ControlPlaneError
-// @Router			/v1/apps/{appName} [delete]
+// Uninstall an app
+//
+//	@Summary		Uninstall app
+//	@Description	Uninstall an app
+//	@Tags			Apps
+//	@Produce		json
+//	@Param			appName	path	string	true	"App name"
+//	@Success		204
+//	@Failure		400	{object}	ControlPlaneError
+//	@Failure		401	{object}	ControlPlaneError
+//	@Failure		403	{object}	ControlPlaneError
+//	@Failure		409	{object}	ControlPlaneError
+//	@Failure		429	{object}	ControlPlaneError
+//	@Failure		500	{object}	ControlPlaneError
+//	@Failure		503	{object}	ControlPlaneError
+//	@Router			/v1/apps/{appName} [delete]
 func (h *AppHandler) Uninstall(c *gin.Context) {
 	appName := c.Param("appName")
 

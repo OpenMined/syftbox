@@ -21,12 +21,14 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManger) *StatusHandler {
 	}
 }
 
-// @Summary		Get status
-// @Description	Returns the status of the service
-// @Tags			status
-// @Produce		json
-// @Success		200	{object}	StatusResponse
-// @Router			/status [get]
+// GetStatus returns the status of the service
+//
+//	@Summary		Get status
+//	@Description	Returns the status of the service
+//	@Tags			status
+//	@Produce		json
+//	@Success		200	{object}	StatusResponse
+//	@Router			/v1/status [get]
 func (h *StatusHandler) Status(ctx *gin.Context) {
 	var hasConfig bool = false
 

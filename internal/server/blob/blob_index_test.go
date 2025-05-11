@@ -16,9 +16,9 @@ func TestBlobIndexBurstInsert(t *testing.T) {
 	path := t.TempDir()
 	dbPath := filepath.Join(path, "test.db")
 
-	// there's a deep lore here - https://github.com/mattn/go-sqlite3/issues/274
 	db, err := db.NewSqliteDb(db.WithPath(dbPath), db.WithMaxOpenConns(runtime.NumCPU()))
 	assert.NoError(t, err)
+	defer db.Close()
 
 	index, err := newBlobIndex(db)
 	assert.NoError(t, err)
@@ -47,8 +47,9 @@ func TestBlobIndexBurstInsert(t *testing.T) {
 			blobMap.Store(blob.Key, blob)
 
 			// Insert into database
-			err = index.Set(blob)
-			assert.NoError(t, err)
+			if err := index.Set(blob); err != nil {
+				assert.NoError(t, err)
+			}
 		}()
 	}
 

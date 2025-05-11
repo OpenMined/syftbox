@@ -30,6 +30,8 @@ func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManger) *WorkspaceHandler {
 	}
 }
 
+// GetItems gets workspace at a specified path
+//
 //	@Summary		Get workspace items
 //	@Description	Get files and folders at a specified path
 //	@Tags			Files and Folders
@@ -85,6 +87,8 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 	})
 }
 
+// Create workspace item
+//
 //	@Summary		Create workspace item
 //	@Description	Create a new file or folder in the workspace
 //	@Tags			Files and Folders
@@ -269,13 +273,15 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	})
 }
 
+// Delete workspace items
+//
 //	@Summary		Delete workspace items
 //	@Description	Delete multiple files or folders. The operation is similar to the Unix `rm -rf` command.
 //	@Description	- If the path is a file, the file will be deleted.
 //	@Description	- If the path is a folder, all its contents will also be deleted.
 //	@Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
 //	@Description	- If the path does not exist, the operation will be a no-op.
-//	@Tags			Files and Folders
+//	@Tags			workspace
 //	@Accept			json
 //	@Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
 //	@Success		204		{object}	nil
@@ -362,9 +368,11 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// MoveItems moves an item to a new location. Can also be used for renaming an item.
+//
 //	@Summary		Move item
 //	@Description	Move an item to a new location. Can also be used for renaming an item.
-//	@Tags			Files and Folders
+//	@Tags			workspace
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
@@ -685,9 +693,11 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// CopyItems copies a file or folder to a new location. Can also be used for renaming a file or folder.
+//
 //	@Summary		Copy a file or folder
 //	@Description	Create a copy of a file or folder
-//	@Tags			Files and Folders
+//	@Tags			workspace
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
@@ -965,6 +975,8 @@ func getContentType(path string) string {
 	}
 }
 
+// Get file content
+//
 //	@Summary		Get file content
 //	@Description	Get the content of a file at the specified path. Supports range requests for efficient streaming of large files.
 //	@Tags			Files and Folders
