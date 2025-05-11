@@ -34,7 +34,7 @@ func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManger) *WorkspaceHandler {
 //
 //	@Summary		Get workspace items
 //	@Description	Get files and folders at a specified path
-//	@Tags			Files and Folders
+//	@Tags			Workspace
 //	@Produce		json
 //	@Param			path	query		string	false	"Path to the directory (default is root)"
 //	@Param			depth	query		integer	false	"Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)"	minimum(0)	default(1)
@@ -91,7 +91,7 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 //
 //	@Summary		Create workspace item
 //	@Description	Create a new file or folder in the workspace
-//	@Tags			Files and Folders
+//	@Tags			Workspace
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
@@ -281,7 +281,7 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 //	@Description	- If the path is a folder, all its contents will also be deleted.
 //	@Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
 //	@Description	- If the path does not exist, the operation will be a no-op.
-//	@Tags			workspace
+//	@Tags			Workspace
 //	@Accept			json
 //	@Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
 //	@Success		204		{object}	nil
@@ -372,7 +372,7 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 //
 //	@Summary		Move item
 //	@Description	Move an item to a new location. Can also be used for renaming an item.
-//	@Tags			workspace
+//	@Tags			Workspace
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
@@ -697,7 +697,7 @@ func copyFile(src, dst string) error {
 //
 //	@Summary		Copy a file or folder
 //	@Description	Create a copy of a file or folder
-//	@Tags			workspace
+//	@Tags			Workspace
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
@@ -979,7 +979,7 @@ func getContentType(path string) string {
 //
 //	@Summary		Get file content
 //	@Description	Get the content of a file at the specified path. Supports range requests for efficient streaming of large files.
-//	@Tags			Files and Folders
+//	@Tags			Workspace
 //	@Produce		text/plain
 //	@Produce		application/octet-stream
 //	@Produce		*/*

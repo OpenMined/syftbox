@@ -25,7 +25,7 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManger) *StatusHandler {
 //
 //	@Summary		Get status
 //	@Description	Returns the status of the service
-//	@Tags			status
+//	@Tags			Status
 //	@Produce		json
 //	@Success		200	{object}	StatusResponse
 //	@Router			/v1/status [get]
