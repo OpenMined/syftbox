@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -10,6 +11,9 @@ import (
 
 // SQLite pragmas for optimal performance
 const defaultPragma = `
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
+PRAGMA foreign_keys=ON;
 PRAGMA temp_store=MEMORY;
 PRAGMA cache_size=8000;
 PRAGMA mmap_size=268435456;
@@ -85,13 +89,14 @@ func NewSqliteDb(opts ...SqliteOption) (*sqlx.DB, error) {
 		if err := utils.EnsureParent(cfg.path); err != nil {
 			return nil, fmt.Errorf("ensure parent directory: %w", err)
 		}
-		dsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL&_foreign_keys=ON&_txlock=immediate&mode=rwc", cfg.path)
+		dsn = fmt.Sprintf("file:%s?_txlock=immediate&mode=rwc", cfg.path)
 	} else {
 		dsn = ":memory:"
 	}
 
 	// Connect to the database
-	db, err := sqlx.Connect("sqlite3", dsn)
+	slog.Info("Connecting to SQLite database", "driver", driverName, "path", dsn)
+	db, err := sqlx.Connect(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect to database: %w", err)
 	}

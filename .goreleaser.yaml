@@ -15,64 +15,20 @@ builds:
   ldflags:
   - -s
   - -w
-  - -linkmode 'external'
-  - -extldflags '-static'
   - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
   - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
   tags:
-  - sonic # for gin with sonic json
-  - avx # for sonic
-  - sqlite_omit_load_extension # for sqlite3
+  - go_json # gin: use goccy/go-json
+  - nomsgpack # gin: disable msgpack
   env:
-  - CGO_ENABLED=1
-  - CGO_CFLAGS=-Ofast
-  - >-
-    {{- if eq .Os "linux" }}
-      {{- if eq .Arch "amd64" }}CC=x86_64-linux-musl-gcc{{- end }}
-      {{- if eq .Arch "arm64"}}CC=aarch64-linux-musl-gcc{{- end }}
-    {{- end }}
-  - >-
-    {{- if eq .Os "linux" }}
-      {{- if eq .Arch "amd64" }}CXX=x86_64-linux-musl-g++{{- end }}
-      {{- if eq .Arch "arm64"}}CXX=aarch64-linux-musl-g++{{- end }}
-    {{- end }}
+  - CGO_ENABLED=0 # rjeczalik/notify on linux/windows doesn't need CGO
   goos:
   - linux
-  goarch:
-  - amd64
-  - arm64
-
-- id: syftbox_client_windows
-  binary: syftbox
-  main: ./cmd/client
-  flags:
-  - -trimpath
-  ldflags:
-  - -s
-  - -w
-  - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
-  - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
-  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
-  tags:
-  - sonic # for gin with sonic json
-  - avx # for sonic
-  - sqlite_omit_load_extension # for sqlite3
-  env:
-  - CGO_ENABLED=1
-  - >-
-    {{- if eq .Os "windows" }}
-      {{- if eq .Arch "amd64" }}CC=x86_64-w64-mingw32-gcc{{- end }}
-    {{- end }}
-  - >-
-    {{- if eq .Os "windows" }}
-      {{- if eq .Arch "amd64" }}CXX=x86_64-w64-mingw32-g++{{- end }}
-    {{- end }}
-  goos:
   - windows
   goarch:
   - amd64
-  # - arm64
+  - arm64
 
 - id: syftbox_client_macos
   binary: syftbox
@@ -86,11 +42,10 @@ builds:
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
   - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
   tags:
-  - sonic # for gin with sonic json
-  - avx # for sonic
-  - sqlite_omit_load_extension # for sqlite3
+  - go_json # gin: use goccy/go-json
+  - nomsgpack # gin: disable msgpack
   env:
-  - CGO_ENABLED=1
+  - CGO_ENABLED=1 # rjeczalik/notify needs CGO for fsevents on darwin
   goos:
   - darwin
   goarch:
@@ -105,34 +60,22 @@ builds:
   ldflags:
   - -s
   - -w
-  - -linkmode 'external'
-  - -extldflags '-static'
   - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
   - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
   tags:
-  - sonic # for gin with sonic json
-  - avx # for sonic
-  - sqlite_omit_load_extension # for sqlite3
+  - sonic # gin: use bytedance/sonic
+  - avx # gin: required to enable sonic
+  - nomsgpack # gin: disable msgpack
   env:
-  - CGO_ENABLED=1
-  - CGO_CFLAGS=-Ofast
-  - >-
-    {{- if eq .Os "linux" }}
-      {{- if eq .Arch "amd64" }}CC=x86_64-linux-musl-gcc{{- end }}
-      {{- if eq .Arch "arm64"}}CC=aarch64-linux-musl-gcc{{- end }}
-    {{- end }}
-  - >-
-    {{- if eq .Os "linux" }}
-      {{- if eq .Arch "amd64" }}CXX=x86_64-linux-musl-g++{{- end }}
-      {{- if eq .Arch "arm64"}}CXX=aarch64-linux-musl-g++{{- end }}
-    {{- end }}
+  - CGO_ENABLED=0
   goos:
   - linux
   goarch:
   - amd64
-  - arm64
+  - arm64 # sonic won't work https://github.com/gin-gonic/gin/pull/4234
 
+# temporary disable signing for macos amd64 CODESIGN_FAILED. needs investigation.
 # binary_signs:
 # - id: macos-sign
 #   artifacts: binary
@@ -149,7 +92,6 @@ archives:
   ids:
   - syftbox_client
   - syftbox_client_macos
-  - syftbox_client_windows
   format_overrides:
   - goos: windows
     formats: [ zip ]
@@ -161,6 +103,6 @@ archives:
   - syftbox_server
 
 checksum:
-  name_template: 'checksums.txt'
+  name_template: checksums.txt
 
 report_sizes: true
