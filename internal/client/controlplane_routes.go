@@ -6,17 +6,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/ulule/limiter/v3"
+	mgin "github.com/ulule/limiter/v3/drivers/middleware/gin"
 	"github.com/ulule/limiter/v3/drivers/store/memory"
 
 	_ "github.com/openmined/syftbox/internal/client/docs"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
-	mgin "github.com/ulule/limiter/v3/drivers/middleware/gin"
 
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
 	"github.com/openmined/syftbox/internal/client/handlers"
 	"github.com/openmined/syftbox/internal/client/middleware"
+	"github.com/openmined/syftbox/internal/swaggerui"
 	"github.com/openmined/syftbox/internal/version"
 )
 
@@ -27,9 +27,8 @@ import (
 //	@securityDefinitions.apikey	APIToken
 //	@in							header
 //	@name						Authorization
-//
-// @license.name				Apache 2.0
-// @license.url				http://www.apache.org/licenses/LICENSE-2.0.html
+//	@license.name				Apache 2.0
+//	@license.url				http://www.apache.org/licenses/LICENSE-2.0.html
 
 type RouteConfig struct {
 	Auth            middleware.TokenAuthConfig
@@ -60,7 +59,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 
 	r.GET("/", IndexHandler)
 
-	// @Security APIToken
+	//	@Security	APIToken
 	v1 := r.Group("/v1")
 	v1.Use(middleware.TokenAuth(routeConfig.Auth))
 	{
@@ -98,7 +97,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConf
 
 	if routeConfig.Swagger {
 		slog.Info("swagger enabled")
-		r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+		swaggerui.SetupRoutes(r)
 	}
 
 	r.NoRoute(func(c *gin.Context) {
