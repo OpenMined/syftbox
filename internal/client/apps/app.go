@@ -60,13 +60,13 @@ func (a *App) Start(ctx context.Context) error {
 	stdoutLogPath := filepath.Join(logsDir, "stdout.log")
 	stderrLogPath := filepath.Join(logsDir, "stderr.log")
 
-	stdoutFile, err := os.OpenFile(stdoutLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	stdoutFile, err := os.OpenFile(stdoutLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		a.Cancel()
 		return fmt.Errorf("failed to create stdout log file for app %s: %w", a.Name, err)
 	}
 
-	stderrFile, err := os.OpenFile(stderrLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	stderrFile, err := os.OpenFile(stderrLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		a.Cancel()
 		stdoutFile.Close()
