@@ -99,7 +99,8 @@ func main() {
 		TimeFormat: time.RFC3339Nano,
 		NoColor:    !isatty.IsTerminal(os.Stdout.Fd()),
 	})
-	fileHandler := slog.NewTextHandler(file, &slog.HandlerOptions{
+	numberedFile := utils.NewNumberedWriter(file)
+	fileHandler := slog.NewTextHandler(numberedFile, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})
 

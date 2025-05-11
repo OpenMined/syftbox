@@ -12,17 +12,18 @@ const (
 
 // LogEntry represents a single log message
 type LogEntry struct {
-	Timestamp string   `json:"timestamp"`
-	Level     LogLevel `json:"level"`
-	Message   string   `json:"message"`
+	LineNumber int64    `json:"lineNumber"`
+	Timestamp  string   `json:"timestamp"`
+	Level      LogLevel `json:"level"`
+	Message    string   `json:"message"`
 }
 
 // LogsRequest represents the request parameters for retrieving logs
 type LogsRequest struct {
 	// Specify the pagination token from a previous request to retrieve the next page of results.
-	StartingToken int64 `form:"startingToken" binding:"min=0" default:"0"`
+	StartingToken int64 `form:"startingToken" binding:"min=1" default:"1"`
 	// The maximum number of logs to return in one page of results.
-	MaxResults int `form:"maxResults" binding:"min=1" default:"100"`
+	MaxResults int `form:"maxResults" binding:"gte=1,lte=1000" default:"100"`
 }
 
 // LogsResponse represents the response for retrieving logs
