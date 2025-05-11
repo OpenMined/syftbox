@@ -79,8 +79,8 @@ func (a *App) Start(ctx context.Context) error {
 	a.stderr = stderrFile
 
 	// Redirect app output to log files
-	a.Process.Stdout = utils.NewNumberedWriter(stdoutFile)
-	a.Process.Stderr = utils.NewNumberedWriter(stderrFile)
+	a.Process.Stdout = utils.NewLogInterceptor(stdoutFile)
+	a.Process.Stderr = utils.NewLogInterceptor(stderrFile)
 
 	// Start the process
 	if err := a.Process.Start(); err != nil {

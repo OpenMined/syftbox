@@ -99,9 +99,16 @@ func main() {
 		TimeFormat: time.RFC3339Nano,
 		NoColor:    !isatty.IsTerminal(os.Stdout.Fd()),
 	})
-	numberedFile := utils.NewNumberedWriter(file)
-	fileHandler := slog.NewTextHandler(numberedFile, &slog.HandlerOptions{
+	logInterceptor := utils.NewLogInterceptor(file)
+	fileHandler := slog.NewTextHandler(logInterceptor, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
+		// Do not include time as it is added by the log interceptor.
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey && len(groups) == 0 {
+				return slog.Attr{} // Remove the time attribute
+			}
+			return a
+		},
 	})
 
 	// Create multi-handler

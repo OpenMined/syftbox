@@ -2,34 +2,52 @@ package handlers
 
 import (
 	"bufio"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/client/datasitemgr"
 )
 
 // LogsHandler handles log-related requests
 type LogsHandler struct {
-	logFilePath string
-	lineRegex   *regexp.Regexp
-	timeRegex   *regexp.Regexp
-	levelRegex  *regexp.Regexp
-	msgPrefix   string
+	mgr          *datasitemgr.DatasiteManger
+	lineRegex    *regexp.Regexp
+	timeRegex    *regexp.Regexp
+	messageRegex *regexp.Regexp
 }
 
 // NewLogsHandler creates a new handler for logs
-func NewLogsHandler() *LogsHandler {
+func NewLogsHandler(mgr *datasitemgr.DatasiteManger) *LogsHandler {
 	return &LogsHandler{
-		logFilePath: config.DefaultLogFilePath,
-		lineRegex:   regexp.MustCompile(`line=(\d+)`),
-		timeRegex:   regexp.MustCompile(`time=([^\s]+)`),
-		levelRegex:  regexp.MustCompile(`level=([^\s]+)`),
-		msgPrefix:   "msg=",
+		mgr:          mgr,
+		lineRegex:    regexp.MustCompile(`line=(\d+)`),
+		timeRegex:    regexp.MustCompile(`time=([^\s]+)`),
+		messageRegex: regexp.MustCompile(`^(?:line=\d+\s+)?(?:time=[^\s]+\s+)?(.*)$`),
 	}
+}
+
+func (h *LogsHandler) getLogFilePath(appName string) string {
+	appName = strings.ToLower(appName)
+	if appName == "" || appName == "system" {
+		return config.DefaultLogFilePath
+	}
+	datasite, err := h.mgr.Get()
+	if err != nil {
+		return ""
+	}
+	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appName)
+	if !apps.IsValidApp(appPath) {
+		return ""
+	}
+	return filepath.Join(appPath, "logs", "stdout.log")
 }
 
 // GetLogs handles GET requests to retrieve logs
@@ -38,8 +56,9 @@ func NewLogsHandler() *LogsHandler {
 //	@Description	Get system logs with pagination support
 //	@Tags			Logs
 //	@Produce		json
-//	@Param			startingToken	query		int	false	"Pagination token from a previous request to retrieve the next page of results"	default(1)		minimum(1)
-//	@Param			maxResults		query		int	false	"Maximum number of lines to read"												default(100)	minimum(1)	maximum(1000)
+//	@Param			appName			query		string	false	"The name of the app to retrieve logs for"										default(system)
+//	@Param			startingToken	query		int		false	"Pagination token from a previous request to retrieve the next page of results"	default(1)		minimum(1)
+//	@Param			maxResults		query		int		false	"Maximum number of lines to read"												default(100)	minimum(1)	maximum(1000)
 //	@Success		200				{object}	LogsResponse
 //	@Failure		400				{object}	ControlPlaneError
 //	@Failure		401				{object}	ControlPlaneError
@@ -65,12 +84,19 @@ func (h *LogsHandler) GetLogs(c *gin.Context) {
 	}
 
 	// Read logs from file with pagination
-	logs, nextToken, hasMore, err := h.readLogsFromFile(params.StartingToken, params.MaxResults)
+	logs, nextToken, hasMore, err := h.readLogsFromFile(params.AppName, params.StartingToken, params.MaxResults)
 	if err != nil {
-		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
-			ErrorCode: ErrCodeLogsRetrievalFailed,
-			Error:     err.Error(),
-		})
+		if err.Error() == "app not found" {
+			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+				ErrorCode: ErrCodeLogsRetrievalFailed,
+				Error:     err.Error(),
+			})
+		} else {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeLogsRetrievalFailed,
+				Error:     err.Error(),
+			})
+		}
 		return
 	}
 
@@ -143,9 +169,13 @@ func (h *LogsHandler) findLinePosition(file *os.File, targetLine int64) (int64, 
 }
 
 // readLogsFromFile reads logs from the log file with token-based pagination
-func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
+func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
 	// Open log file
-	file, err := os.Open(h.logFilePath)
+	logFilePath := h.getLogFilePath(appName)
+	if logFilePath == "" {
+		return []LogEntry{}, 0, false, fmt.Errorf("app not found")
+	}
+	file, err := os.Open(logFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If file doesn't exist, return empty logs
@@ -172,7 +202,7 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 	nextToken := int64(1)
 	hasMore := false
 
-	// Skip lines until we find our starting token
+	foundStart := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		lineMatch := h.lineRegex.FindStringSubmatch(line)
@@ -184,76 +214,13 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 			continue
 		}
 		nextToken = lineNum + 1
-		if lineNum >= startingToken {
-			// We found our starting point, process this line
 
-			// Extract timestamp
-			timeMatch := h.timeRegex.FindStringSubmatch(line)
-			var timestamp string
-			if len(timeMatch) < 2 {
-				timestamp = ""
-			} else {
-				timestamp = timeMatch[1]
-			}
-
-			// Extract level
-			levelMatch := h.levelRegex.FindStringSubmatch(line)
-			var levelStr string
-			if len(levelMatch) < 2 {
-				levelStr = "info"
-			} else {
-				levelStr = strings.ToLower(levelMatch[1])
-			}
-
-			// Map level string to LogLevel
-			var level LogLevel
-			switch levelStr {
-			case "debug":
-				level = LogLevelDebug
-			case "info":
-				level = LogLevelInfo
-			case "warn", "warning":
-				level = LogLevelWarn
-			case "error":
-				level = LogLevelError
-			default:
-				level = LogLevelInfo
-			}
-
-			// Extract message
-			var message string
-			msgIndex := strings.Index(line, h.msgPrefix)
-			if msgIndex == -1 {
-				message = ""
-			} else {
-				message = strings.TrimSpace(line[msgIndex+len(h.msgPrefix):])
-			}
-
-			// Create log entry
-			entry := LogEntry{
-				LineNumber: lineNum,
-				Timestamp:  timestamp,
-				Level:      level,
-				Message:    message,
-			}
-
-			logs = append(logs, entry)
-			break
-		}
-	}
-
-	// Continue reading the requested number of lines
-	for scanner.Scan() {
-		line := scanner.Text()
-		lineMatch := h.lineRegex.FindStringSubmatch(line)
-		if len(lineMatch) < 2 {
+		// If we haven't found our starting point yet, check if this is it
+		if !foundStart && lineNum < startingToken {
 			continue
 		}
-		lineNum, err := strconv.ParseInt(lineMatch[1], 10, 64)
-		if err != nil {
-			continue
-		}
-		nextToken = lineNum + 1
+
+		foundStart = true
 
 		// Extract timestamp
 		timeMatch := h.timeRegex.FindStringSubmatch(line)
@@ -264,47 +231,21 @@ func (h *LogsHandler) readLogsFromFile(startingToken int64, maxResults int) ([]L
 			timestamp = timeMatch[1]
 		}
 
-		// Extract level
-		levelMatch := h.levelRegex.FindStringSubmatch(line)
-		var levelStr string
-		if len(levelMatch) < 2 {
-			levelStr = "info"
-		} else {
-			levelStr = strings.ToLower(levelMatch[1])
-		}
-
-		// Map level string to LogLevel
-		var level LogLevel
-		switch levelStr {
-		case "debug":
-			level = LogLevelDebug
-		case "info":
-			level = LogLevelInfo
-		case "warn", "warning":
-			level = LogLevelWarn
-		case "error":
-			level = LogLevelError
-		default:
-			level = LogLevelInfo
-		}
-
-		// Extract message
+		// Extract message using regex
+		messageMatch := h.messageRegex.FindStringSubmatch(line)
 		var message string
-		msgIndex := strings.Index(line, h.msgPrefix)
-		if msgIndex == -1 {
+		if len(messageMatch) < 2 {
 			message = ""
 		} else {
-			message = strings.TrimSpace(line[msgIndex+len(h.msgPrefix):])
+			message = strings.TrimSpace(messageMatch[1])
 		}
 
 		// Create log entry
 		entry := LogEntry{
 			LineNumber: lineNum,
 			Timestamp:  timestamp,
-			Level:      level,
 			Message:    message,
 		}
-
 		logs = append(logs, entry)
 
 		// If we've read maxResults + 1 lines, we know there are more
