@@ -24,8 +24,8 @@ gen-swagger:
     #!/bin/bash
     set -eou pipefail
     cd internal/client
-    swag fmt -g -d ./
-    swag init -g controlplane_routes.go -o docs -ot go
+    swag fmt -g controlplane_routes.go -d ./
+    swag init -g controlplane_routes.go -ot go ./
 
 [group('dev')]
 run-server *ARGS: gen-swagger
