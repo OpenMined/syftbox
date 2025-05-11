@@ -119,4 +119,4 @@ deploy: deploy-client deploy-server
 setup-toolchain:
     brew install FiloSottile/musl-cross/musl-cross
     go install github.com/air-verse/air@latest
-    go install github.com/swaggo/swag/cmd/swag@latest
+    go install github.com/swaggo/swag/v2/cmd/swag@latest
