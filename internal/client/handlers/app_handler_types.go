@@ -1,5 +1,11 @@
 package handlers
 
+import (
+	"github.com/shirou/gopsutil/v4/cpu"
+	psnet "github.com/shirou/gopsutil/v4/net"
+	"github.com/shirou/gopsutil/v4/process"
+)
+
 // AppInstallRequest represents the request to install an app.
 type AppInstallRequest struct {
 	RepoURL string `json:"repoURL" binding:"required"` // url of the github repo to install
@@ -27,15 +33,52 @@ type AppResponse struct {
 	PID int32 `json:"pid"`
 	// List of ports this app is listening on
 	Ports []int64 `json:"ports"`
-	// Percentage of CPU this app is using
-	CPU float64 `json:"cpu"`
-	// Percentage of total RAM this app is using
-	Memory float32 `json:"memory"`
-	// How long the app has been running in milliseconds
-	Uptime int64 `json:"uptime"`
+	// Extended process statistics (optional)
+	ProcessStats *ProcessStats `json:"processStats,omitempty"`
 }
 
 // AppListResponse represents the response to list all installed apps.
 type AppListResponse struct {
 	Apps []AppResponse `json:"apps"` // list of installed apps
+}
+
+type ProcessStats struct {
+	// Process Name
+	ProcessName string `json:"processName"`
+	// Process ID
+	PID int32 `json:"pid"`
+	// Status of the process
+	Status []string `json:"status"`
+	// Command line arguments for this app's process
+	Cmdline []string `json:"cmdline"`
+	// Current working directory of this app's process
+	CWD string `json:"cwd"`
+	// Environment variables for this app's process
+	Environ []string `json:"environ"`
+	// Executable path of this app's process
+	Exe string `json:"exe"`
+	// List of groups this app is a member of
+	Gids []uint32 `json:"gids"`
+	// List of user IDs this app is a member of
+	Uids []uint32 `json:"uids"`
+	// Nice value of this app's process
+	Nice int32 `json:"nice"`
+	// Username of the user this app is running as
+	Username string `json:"username"`
+	// All connections this app is listening on
+	Connections []psnet.ConnectionStat `json:"connections"`
+	// Percentage of total CPU this app is using
+	CPUPercent float64 `json:"cpuPercent"`
+	// CPU times breakdown
+	CPUTimes *cpu.TimesStat `json:"cpuTimes"`
+	// Number of threads this app is using
+	NumThreads int32 `json:"numThreads"`
+	// Percentage of total RAM this app is using
+	MemoryPercent float32 `json:"memoryPercent"`
+	// Memory info
+	MemoryInfo *process.MemoryInfoStat `json:"memoryInfo"`
+	// How long the app has been running in milliseconds
+	Uptime int64 `json:"uptime"`
+	// Children processes
+	Children []ProcessStats `json:"children"`
 }

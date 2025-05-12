@@ -13,6 +13,7 @@ import (
 	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/datasite"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
+	psnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
 )
 
@@ -80,18 +81,20 @@ func (h *AppHandler) List(c *gin.Context) {
 //	@Description	Get an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path		string	true	"App name"
-//	@Success		200		{object}	AppResponse
-//	@Failure		400		{object}	ControlPlaneError
-//	@Failure		401		{object}	ControlPlaneError
-//	@Failure		403		{object}	ControlPlaneError
-//	@Failure		409		{object}	ControlPlaneError
-//	@Failure		429		{object}	ControlPlaneError
-//	@Failure		500		{object}	ControlPlaneError
-//	@Failure		503		{object}	ControlPlaneError
+//	@Param			appName			path		string	true	"App name"
+//	@Param			processStats	query		bool	false	"Whether to include process statistics"
+//	@Success		200				{object}	AppResponse
+//	@Failure		400				{object}	ControlPlaneError
+//	@Failure		401				{object}	ControlPlaneError
+//	@Failure		403				{object}	ControlPlaneError
+//	@Failure		409				{object}	ControlPlaneError
+//	@Failure		429				{object}	ControlPlaneError
+//	@Failure		500				{object}	ControlPlaneError
+//	@Failure		503				{object}	ControlPlaneError
 //	@Router			/v1/apps/{appName} [get]
 func (h *AppHandler) Get(c *gin.Context) {
 	appName := c.Param("appName")
+	processStats := c.Query("processStats") == "true"
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -102,7 +105,7 @@ func (h *AppHandler) Get(c *gin.Context) {
 		return
 	}
 
-	app, err := enrichApp(ds, appName)
+	app, err := enrichApp(ds, appName, processStats)
 	if err != nil {
 		c.PureJSON(http.StatusNotFound, &ControlPlaneError{
 			ErrorCode: ErrCodeGetFailed,
@@ -164,7 +167,7 @@ func (h *AppHandler) Install(c *gin.Context) {
 		return
 	}
 
-	result, err := enrichApp(ds, app.Name)
+	result, err := enrichApp(ds, app.Name, false)
 	if err != nil {
 		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
 			ErrorCode: ErrCodeInstallFailed,
@@ -220,7 +223,7 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 func enrichApps(ds *datasite.Datasite, apps []string) []AppResponse {
 	result := make([]AppResponse, len(apps))
 	for i, app := range apps {
-		app, err := enrichApp(ds, app)
+		app, err := enrichApp(ds, app, false)
 		if err != nil {
 			continue
 		}
@@ -229,96 +232,78 @@ func enrichApps(ds *datasite.Datasite, apps []string) []AppResponse {
 	return result
 }
 
-func enrichApp(ds *datasite.Datasite, appName string) (AppResponse, error) {
-	appPath := filepath.Join(ds.GetAppManager().AppsDir, appName)
+func enrichApp(ds *datasite.Datasite, appName string, processStats bool) (AppResponse, error) {
+	absPathFromFsRoot := filepath.Join(ds.GetAppManager().AppsDir, appName)
+	relPathFromWorkspaceRoot, _ := filepath.Rel(ds.GetWorkspace().Root, absPathFromFsRoot)
+	absPath := filepath.Join("/", filepath.ToSlash(relPathFromWorkspaceRoot))
 
-	if !apps.IsValidApp(appPath) {
-		return AppResponse{}, fmt.Errorf("app not found")
-	}
-
-	relPath, _ := filepath.Rel(ds.GetWorkspace().Root, appPath)
-	relPath = filepath.Join("/", filepath.ToSlash(relPath))
-
-	runScriptPath, _ := apps.GetRunScript(appPath)
-	process, err := findProcess(runScriptPath)
+	process, err := findProcess(ds, appName)
 	if err != nil {
 		return AppResponse{}, err
 	}
 	if process == nil {
 		return AppResponse{
 			Name:   appName,
-			Path:   relPath,
+			Path:   absPath,
 			Status: AppStatusStopped,
 		}, nil
 	}
 
-	ports, err := getPort(process)
-	if err != nil {
-		return AppResponse{}, err
-	}
-
-	cpu, err := process.CPUPercent()
-	if err != nil {
-		return AppResponse{}, err
-	}
-
-	memory, err := process.MemoryPercent()
-	if err != nil {
-		return AppResponse{}, err
-	}
-
-	createTime, err := process.CreateTime()
-	if err != nil {
-		return AppResponse{}, err
-	}
-	now := time.Now().UnixMilli()
-	uptime := now - createTime
-
-	return AppResponse{
+	app := AppResponse{
 		Name:   appName,
-		Path:   relPath,
+		Path:   absPath,
 		Status: AppStatusRunning,
 		PID:    process.Pid,
-		Ports:  ports,
-		CPU:    cpu,
-		Memory: memory,
-		Uptime: uptime,
-	}, nil
+		Ports:  getPorts(process),
+	}
+
+	if processStats {
+		stats, err := getProcessStats(process)
+		if err != nil {
+			return app, nil
+		}
+		app.ProcessStats = &stats
+	}
+
+	return app, nil
 }
 
-func findProcess(runScriptPath string) (*process.Process, error) {
+func findProcess(ds *datasite.Datasite, appName string) (*process.Process, error) {
+	appPath := filepath.Join(ds.GetAppManager().AppsDir, appName)
+	runScriptPath, err := apps.GetRunScript(appPath)
+	if err != nil {
+		return nil, fmt.Errorf("app not found")
+	}
 	currentPid := os.Getpid()
 	processes, err := process.Processes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get processes: %w", err)
 	}
 	// recursively print all child processes of currentPid
-	for _, process := range processes {
-		ppid, err := process.Ppid()
+	for _, p := range processes {
+		ppid, err := p.Ppid()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get ppid: %w", err)
 		}
 		if ppid != int32(currentPid) {
 			continue
 		}
-		cmdline, err := process.Cmdline()
+		cmdline, err := p.Cmdline()
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cmdline: %w", err)
 		}
 		if strings.Contains(cmdline, runScriptPath) {
-			return process, nil
+			return p, nil
 		}
 	}
 	return nil, nil
 }
 
-func getPort(process *process.Process) ([]int64, error) {
-	// Recursively travel down the process tree and return the port of all connections that is not 0
-	connections, err := process.Connections()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connections: %w", err)
-	}
+func getPorts(process *process.Process) []int64 {
 	ports := make([]int64, 0)
+
+	// Recursively travel down the process tree and return the port of all connections that is not 0
+	connections, _ := process.Connections()
 	for _, connection := range connections {
 		if connection.Laddr.Port != 0 {
 			port := int64(connection.Laddr.Port)
@@ -327,16 +312,150 @@ func getPort(process *process.Process) ([]int64, error) {
 			}
 		}
 	}
-	children, err := process.Children()
-	if err != nil {
-		return ports, fmt.Errorf("failed to get children: %w", err)
-	}
+	children, _ := process.Children()
 	for _, child := range children {
-		port, err := getPort(child)
-		if err != nil {
-			return ports, fmt.Errorf("failed to get port: %w", err)
-		}
-		ports = append(ports, port...)
+		childPorts := getPorts(child)
+		ports = append(ports, childPorts...)
 	}
-	return ports, nil
+	slices.Sort(ports)
+	return ports
+}
+
+func getProcessStats(p *process.Process) (ProcessStats, error) {
+	// Get process name
+	processName, err := p.Name()
+	if err != nil {
+		return ProcessStats{}, fmt.Errorf("failed to get process name: %w", err)
+	}
+
+	status, err := p.Status()
+	if err != nil {
+		status = []string{}
+	}
+
+	// Get command line
+	cmdline, err := p.CmdlineSlice()
+	if err != nil {
+		cmdline = []string{} // Empty slice if we can't get cmdline
+	}
+
+	// Get working directory
+	cwd, err := p.Cwd()
+	if err != nil {
+		cwd = "" // Empty string if we can't get cwd
+	}
+
+	// Get environment variables
+	environ, err := p.Environ()
+	if err != nil {
+		environ = []string{} // Empty slice if we can't get environ
+	}
+
+	// Get executable path
+	exe, err := p.Exe()
+	if err != nil {
+		exe = "" // Empty string if we can't get exe
+	}
+
+	// Get group IDs
+	gids, err := p.Gids()
+	if err != nil {
+		gids = []uint32{} // Empty slice if we can't get gids
+	}
+
+	// Get user IDs
+	uids, err := p.Uids()
+	if err != nil {
+		uids = []uint32{} // Empty slice if we can't get uids
+	}
+
+	// Get nice value
+	nice, err := p.Nice()
+	if err != nil {
+		nice = 0 // Default nice value if we can't get it
+	}
+
+	// Get username
+	username, err := p.Username()
+	if err != nil {
+		username = "" // Empty string if we can't get username
+	}
+
+	// Get connections
+	connections, err := p.Connections()
+	if err != nil || len(connections) == 0 {
+		connections = []psnet.ConnectionStat{}
+	}
+
+	cpuPercent, err := p.CPUPercent()
+	if err != nil {
+		cpuPercent = 0
+	}
+
+	// Get CPU times
+	cpuTimes, err := p.Times()
+	if err != nil {
+		cpuTimes = nil // Nil if we can't get CPU times
+	}
+
+	// Get number of threads
+	numThreads, err := p.NumThreads()
+	if err != nil {
+		numThreads = 0 // Default to 0 if we can't get num threads
+	}
+
+	memoryPercent, err := p.MemoryPercent()
+	if err != nil {
+		memoryPercent = 0
+	}
+
+	// Get memory info
+	memoryInfo, err := p.MemoryInfo()
+	if err != nil {
+		memoryInfo = nil // Nil if we can't get memory info
+	}
+
+	createTime, err := p.CreateTime()
+	var uptime int64
+	if err != nil {
+		uptime = 0
+	} else {
+		now := time.Now().UnixMilli()
+		uptime = now - createTime
+	}
+
+	childProcesses, err := p.Children()
+	if err != nil {
+		childProcesses = []*process.Process{}
+	}
+	children := make([]ProcessStats, len(childProcesses))
+	for i, child := range childProcesses {
+		childStats, err := getProcessStats(child)
+		if err != nil {
+			continue
+		}
+		children[i] = childStats
+	}
+
+	return ProcessStats{
+		ProcessName:   processName,
+		PID:           p.Pid,
+		Status:        status,
+		Cmdline:       cmdline,
+		CWD:           cwd,
+		Environ:       environ,
+		Exe:           exe,
+		Gids:          gids,
+		Uids:          uids,
+		Nice:          nice,
+		Username:      username,
+		Connections:   connections,
+		CPUPercent:    cpuPercent,
+		CPUTimes:      cpuTimes,
+		NumThreads:    numThreads,
+		MemoryPercent: memoryPercent,
+		MemoryInfo:    memoryInfo,
+		Uptime:        uptime,
+		Children:      children,
+	}, nil
 }
