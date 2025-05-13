@@ -21,8 +21,8 @@ type Config struct {
 	DataDir      string `json:"data_dir"`
 	Email        string `json:"email"`
 	ServerURL    string `json:"server_url"`
-	ClientURL    string `json:"client_url"`
-	RefreshToken string `json:"refresh_token"`
+	ClientURL    string `json:"client_url,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
 	AccessToken  string `json:"-"`
 	AppsEnabled  bool   `json:"-"`
 	Path         string `json:"-"`
