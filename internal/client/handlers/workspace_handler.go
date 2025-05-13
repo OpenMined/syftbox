@@ -21,10 +21,10 @@ const (
 )
 
 type WorkspaceHandler struct {
-	mgr *datasitemgr.DatasiteManger
+	mgr *datasitemgr.DatasiteManager
 }
 
-func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManger) *WorkspaceHandler {
+func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManager) *WorkspaceHandler {
 	return &WorkspaceHandler{
 		mgr: mgr,
 	}

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/fatih/color"
 	"github.com/lmittmann/tint"
@@ -45,6 +44,7 @@ var rootCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
+		showSyftBoxHeader()
 		c, err := client.New(&config.Config{
 			Path:         viper.ConfigFileUsed(),
 			Email:        viper.GetString("email"),
@@ -59,7 +59,6 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 		defer slog.Info("Bye!")
-		showSyftBoxHeader()
 		return c.Start(cmd.Context())
 	},
 }
@@ -94,9 +93,8 @@ func main() {
 
 	// Setup handlers for both outputs
 	stdoutHandler := tint.NewHandler(os.Stdout, &tint.Options{
-		AddSource:  true,
 		Level:      slog.LevelDebug,
-		TimeFormat: time.RFC3339Nano,
+		TimeFormat: "2006-01-02T15:04:05.000Z07:00",
 		NoColor:    !isatty.IsTerminal(os.Stdout.Fd()),
 	})
 	logInterceptor := utils.NewLogInterceptor(file)

@@ -11,11 +11,11 @@ import (
 
 // StatusHandler handles status-related endpoints
 type StatusHandler struct {
-	mgr *datasitemgr.DatasiteManger
+	mgr *datasitemgr.DatasiteManager
 }
 
 // NewStatusHandler creates a new status handler
-func NewStatusHandler(mgr *datasitemgr.DatasiteManger) *StatusHandler {
+func NewStatusHandler(mgr *datasitemgr.DatasiteManager) *StatusHandler {
 	return &StatusHandler{
 		mgr: mgr,
 	}
@@ -28,16 +28,34 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManger) *StatusHandler {
 //	@Tags			Status
 //	@Produce		json
 //	@Success		200	{object}	StatusResponse
+//	@Failure		503	{object}	ControlPlaneError
 //	@Router			/v1/status [get]
 func (h *StatusHandler) Status(ctx *gin.Context) {
-	var hasConfig bool = false
+	// this is unlikely to happen, but just in case
+	if h.mgr == nil {
+		ctx.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeUnknownError,
+			Error:     "datasite manager not initialized",
+		})
+		return
+	}
 
-	// Get the datasite configuration if available
-	if h.mgr != nil {
-		ds, err := h.mgr.Get()
-		if err == nil && ds != nil {
-			hasConfig = true
+	var dsConfig *DatasiteConfig
+	var errorMessage string
+	var hasConfig bool
+
+	status := h.mgr.Status()
+	if status.Status == datasitemgr.DatasiteStatusProvisioned {
+		hasConfig = true
+		cfg := status.Datasite.GetConfig()
+		// share a copy of the config. DO NOT INCLUDE REFRESH TOKEN!
+		dsConfig = &DatasiteConfig{
+			DataDir:   cfg.DataDir,
+			Email:     cfg.Email,
+			ServerURL: cfg.ServerURL,
 		}
+	} else if status.DatasiteError != nil {
+		errorMessage = status.DatasiteError.Error()
 	}
 
 	ctx.PureJSON(http.StatusOK, &StatusResponse{
@@ -47,5 +65,10 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		Revision:  version.Revision,
 		BuildDate: version.BuildDate,
 		HasConfig: hasConfig,
+		Datasite: &DatasiteInfo{
+			Status: string(status.Status),
+			Error:  errorMessage,
+			Config: dsConfig,
+		},
 	})
 }

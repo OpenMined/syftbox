@@ -22,6 +22,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const (
+	shutdownTimeout = 10 * time.Second
+)
+
 // Server represents the main application server and its dependencies
 type Server struct {
 	config *Config
@@ -131,41 +135,34 @@ func (s *Server) Start(ctx context.Context) error {
 
 func (s *Server) Stop(ctx context.Context) error {
 	// Use a timeout for graceful shutdown
-	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(ctx, shutdownTimeout)
 	defer cancel()
 
 	// Stop components in reverse order of startup
-	var errs []error
+	var errs error
 
 	// Shutdown hub
 	s.hub.Shutdown(shutdownCtx)
 
 	// Shutdown HTTP server
 	if err := s.server.Shutdown(shutdownCtx); err != nil {
-		errs = append(errs, fmt.Errorf("http server shutdown: %w", err))
+		errs = errors.Join(errs, fmt.Errorf("http server shutdown: %w", err))
 	}
 	slog.Info("http server stopped")
 
 	if err := s.svc.Shutdown(shutdownCtx); err != nil {
-		errs = append(errs, fmt.Errorf("stop services: %w", err))
+		errs = errors.Join(errs, fmt.Errorf("stop services: %w", err))
 	}
 	slog.Info("services stopped")
 
 	// Close database connection
-	if s.db != nil {
-		if err := s.db.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("database close: %w", err))
-		}
-		slog.Info("database closed")
+	if err := s.db.Close(); err != nil {
+		errs = errors.Join(errs, fmt.Errorf("database close: %w", err))
 	}
+	slog.Info("database closed")
 
-	// Return combined errors if any
-	if len(errs) > 0 {
-		errStr := "shutdown errors:"
-		for _, err := range errs {
-			errStr += " " + err.Error()
-		}
-		return fmt.Errorf(errStr)
+	if errs != nil {
+		return fmt.Errorf("shutdown errors: %w", errs)
 	}
 
 	return nil

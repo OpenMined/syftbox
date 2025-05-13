@@ -18,14 +18,14 @@ import (
 
 // LogsHandler handles log-related requests
 type LogsHandler struct {
-	mgr          *datasitemgr.DatasiteManger
+	mgr          *datasitemgr.DatasiteManager
 	lineRegex    *regexp.Regexp
 	timeRegex    *regexp.Regexp
 	messageRegex *regexp.Regexp
 }
 
 // NewLogsHandler creates a new handler for logs
-func NewLogsHandler(mgr *datasitemgr.DatasiteManger) *LogsHandler {
+func NewLogsHandler(mgr *datasitemgr.DatasiteManager) *LogsHandler {
 	return &LogsHandler{
 		mgr:          mgr,
 		lineRegex:    regexp.MustCompile(`line=(\d+)`),

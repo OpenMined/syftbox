@@ -18,11 +18,11 @@ import (
 type ControlPlaneServer struct {
 	config      *ControlPlaneConfig
 	server      *http.Server
-	datasiteMgr *datasitemgr.DatasiteManger
+	datasiteMgr *datasitemgr.DatasiteManager
 	url         string
 }
 
-func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.DatasiteManger) (*ControlPlaneServer, error) {
+func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.DatasiteManager) (*ControlPlaneServer, error) {
 	if config.AuthToken == "" {
 		config.AuthToken = utils.TokenHex(16)
 	}

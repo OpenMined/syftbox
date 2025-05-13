@@ -13,13 +13,13 @@ var installShell string
 //go:embed install.ps1
 var installPowershell string
 
-func InstallShell(c *gin.Context) {
+func ServeSH(c *gin.Context) {
 	c.Header("Content-Type", "text/x-shellscript")
 	c.Header("Content-Disposition", "attachment; filename=install.sh")
 	c.String(http.StatusOK, installShell)
 }
 
-func InstallPowershell(c *gin.Context) {
+func ServePS1(c *gin.Context) {
 	c.Header("Content-Type", "text/x-powershell")
 	c.Header("Content-Disposition", "attachment; filename=install.ps1")
 	c.String(http.StatusOK, installPowershell)
