@@ -455,6 +455,8 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				go se.handlePriorityError(msg)
 			case syftmsg.MsgFileWrite:
 				go se.handlePriorityDownload(msg)
+			case syftmsg.MsgHttp:
+				go se.handleHttp(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -485,4 +487,9 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {
 	systemMsg := msg.Data.(syftmsg.System)
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "serverVersion", systemMsg.SystemVersion)
+}
+
+func (se *SyncEngine) handleHttp(msg *syftmsg.Message) {
+	httpMsg := msg.Data.(syftmsg.HttpMessage)
+	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", string(httpMsg.Body))
 }

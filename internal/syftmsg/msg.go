@@ -60,7 +60,11 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 		}
 		m.Data = fileDelete
 	case MsgHttp:
-		
+		var httpMessage HttpMessage
+		if err := json.Unmarshal(temp.Data, &httpMessage); err != nil {
+			return err
+		}
+		m.Data = httpMessage
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}
