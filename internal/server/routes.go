@@ -30,6 +30,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 
 	httpLogger := slog.Default().WithGroup("http")
 	r.Use(slogGin.NewWithConfig(httpLogger, slogGin.Config{
+		DefaultLevel:      slog.LevelInfo,
+		ClientErrorLevel:  slog.LevelWarn,
+		ServerErrorLevel:  slog.LevelError,
 		WithRequestID:     true,
 		WithRequestHeader: true,
 		WithTraceID:       true,
@@ -41,8 +44,8 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
-	r.GET("/install.sh", install.InstallShell)
-	r.GET("/install.ps1", install.InstallPowershell)
+	r.GET("/install.sh", install.ServeSH)
+	r.GET("/install.ps1", install.ServePS1)
 	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 

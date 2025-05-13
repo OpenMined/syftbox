@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 	var req PresignUrlRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.Error(fmt.Errorf("failed to bind json: %w", err))
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -17,6 +19,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 	}
 
 	if len(req.Keys) == 0 {
+		ctx.Error(fmt.Errorf("keys cannot be empty"))
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
 			"error": "keys cannot be empty",
 		})
@@ -28,6 +31,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 	index := h.blob.Index()
 	for _, key := range req.Keys {
 		if !isValidDatasiteKey(key) {
+			ctx.Error(fmt.Errorf("invalid datasite path: %s", key))
 			errors = append(errors, &BlobError{
 				Key:   key,
 				Error: "invalid key",
@@ -37,6 +41,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 
 		_, ok := index.Get(key)
 		if !ok {
+			ctx.Error(fmt.Errorf("object not found: %s", key))
 			errors = append(errors, &BlobError{
 				Key:   key,
 				Error: "object not found",
@@ -46,6 +51,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 
 		url, err := h.blob.Backend().GetObjectPresigned(ctx, key)
 		if err != nil {
+			ctx.Error(fmt.Errorf("failed to get object: %w", err))
 			errors = append(errors, &BlobError{
 				Key:   key,
 				Error: err.Error(),

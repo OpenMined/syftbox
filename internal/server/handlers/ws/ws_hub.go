@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -98,8 +99,10 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	// Upgrade HTTP connection to WebSocket
 	conn, err := websocket.Accept(ctx.Writer, ctx.Request, nil)
 	if err != nil {
+		e := fmt.Errorf("websocket accept failed: %w", err)
+		ctx.Error(e)
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "websocket accept failed: " + err.Error(),
+			"error": e.Error(),
 		})
 		return
 	}

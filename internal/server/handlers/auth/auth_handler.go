@@ -3,7 +3,7 @@ package auth
 import (
 	"bytes"
 	"errors"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"text/template"
 	"time"
@@ -33,6 +33,7 @@ func New(auth *auth.AuthService) *AuthHandler {
 func (h *AuthHandler) OTPRequest(ctx *gin.Context) {
 	var req OTPRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.Error(fmt.Errorf("failed to bind json: %w", err))
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -42,12 +43,13 @@ func (h *AuthHandler) OTPRequest(ctx *gin.Context) {
 	emailOTP, err := h.auth.GenerateOTP(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidEmail) {
+			ctx.Error(fmt.Errorf("invalid email: %w", err))
 			ctx.JSON(http.StatusBadRequest, gin.H{
 				"error": err.Error(),
 			})
 			return
 		}
-		slog.Error("Failed to generate verification code", "error", err)
+		ctx.Error(fmt.Errorf("failed to generate verification code: %w", err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -55,7 +57,7 @@ func (h *AuthHandler) OTPRequest(ctx *gin.Context) {
 	}
 
 	if err := h.sendEmailOTP(ctx, req.Email, emailOTP); err != nil {
-		slog.Error("Failed to send email", "error", err)
+		ctx.Error(fmt.Errorf("failed to send email: %w", err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -68,6 +70,7 @@ func (h *AuthHandler) OTPRequest(ctx *gin.Context) {
 func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 	var req OTPVerifyRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.Error(fmt.Errorf("failed to bind json: %w", err))
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -75,7 +78,7 @@ func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 	}
 
 	if err := h.auth.VerifyOTP(ctx, req.Email, req.Code); err != nil {
-		slog.Error("Failed to verify OTP", "error", err)
+		ctx.Error(fmt.Errorf("failed to verify OTP: %w", err))
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -84,7 +87,7 @@ func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 
 	accessToken, refreshToken, err := h.auth.GenerateTokens(ctx, req.Email)
 	if err != nil {
-		slog.Error("Failed to generate tokens", "error", err)
+		ctx.Error(fmt.Errorf("failed to generate tokens: %w", err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
@@ -100,6 +103,7 @@ func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 func (h *AuthHandler) Refresh(ctx *gin.Context) {
 	var req RefreshRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.Error(fmt.Errorf("failed to bind json: %w", err))
 		ctx.JSON(http.StatusBadRequest, gin.H{
 			"error": err.Error(),
 		})
@@ -108,7 +112,7 @@ func (h *AuthHandler) Refresh(ctx *gin.Context) {
 
 	accessToken, refreshToken, err := h.auth.RefreshToken(ctx, req.OldRefreshToken)
 	if err != nil {
-		slog.Error("Failed to refresh token", "error", err)
+		ctx.Error(fmt.Errorf("failed to refresh token: %w", err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{
 			"error": err.Error(),
 		})
