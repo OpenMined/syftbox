@@ -45,6 +45,7 @@ var rootCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
+		showSyftBoxHeader()
 		c, err := client.New(&config.Config{
 			Path:         viper.ConfigFileUsed(),
 			Email:        viper.GetString("email"),
@@ -59,7 +60,6 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 		defer slog.Info("Bye!")
-		showSyftBoxHeader()
 		return c.Start(cmd.Context())
 	},
 }
