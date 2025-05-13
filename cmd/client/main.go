@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/fatih/color"
 	"github.com/lmittmann/tint"
@@ -74,9 +73,8 @@ func init() {
 
 func main() {
 	handler := tint.NewHandler(os.Stdout, &tint.Options{
-		AddSource:  true,
 		Level:      slog.LevelDebug,
-		TimeFormat: time.RFC3339Nano,
+		TimeFormat: "2006-01-02T15:04:05.000Z07:00",
 		NoColor:    !isatty.IsTerminal(os.Stdout.Fd()),
 	})
 	logger := slog.New(handler)

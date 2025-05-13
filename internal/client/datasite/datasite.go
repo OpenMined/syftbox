@@ -10,9 +10,11 @@ import (
 	"github.com/openmined/syftbox/internal/client/sync"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 type Datasite struct {
+	id           string
 	config       *config.Config
 	sdk          *syftsdk.SyftSDK
 	workspace    *workspace.Workspace
@@ -45,6 +47,7 @@ func New(config *config.Config) (*Datasite, error) {
 	}
 
 	return &Datasite{
+		id:           utils.TokenHex(3),
 		config:       config,
 		sdk:          sdk,
 		workspace:    ws,
@@ -93,7 +96,7 @@ func (d *Datasite) Stop() {
 	d.sync.Stop()
 	d.sdk.Close()
 	d.workspace.Unlock()
-	slog.Info("syftbox client stop")
+	slog.Info("datasite stopped", "id", d.id)
 }
 
 func (d *Datasite) GetSDK() *syftsdk.SyftSDK {

@@ -11,11 +11,11 @@ import (
 
 // StatusHandler handles status-related endpoints
 type StatusHandler struct {
-	mgr *datasitemgr.DatasiteManger
+	mgr *datasitemgr.DatasiteManager
 }
 
 // NewStatusHandler creates a new status handler
-func NewStatusHandler(mgr *datasitemgr.DatasiteManger) *StatusHandler {
+func NewStatusHandler(mgr *datasitemgr.DatasiteManager) *StatusHandler {
 	return &StatusHandler{
 		mgr: mgr,
 	}
@@ -30,15 +30,17 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManger) *StatusHandler {
 //	@Success		200	{object}	StatusResponse
 //	@Router			/v1/status [get]
 func (h *StatusHandler) Status(ctx *gin.Context) {
-	var hasConfig bool = false
-
-	// Get the datasite configuration if available
-	if h.mgr != nil {
-		ds, err := h.mgr.Get()
-		if err == nil && ds != nil {
-			hasConfig = true
-		}
+	// this is unlikely to happen, but just in case
+	if h.mgr == nil {
+		ctx.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeUnknownError,
+			Error:     "datasite manager not initialized",
+		})
+		return
 	}
+
+	dsInfo := h.mgr.Status()
+	hasConfig := dsInfo.Status == datasitemgr.DatasiteStatusProvisioned
 
 	ctx.PureJSON(http.StatusOK, &StatusResponse{
 		Status:    "ok",
@@ -47,5 +49,9 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		Revision:  version.Revision,
 		BuildDate: version.BuildDate,
 		HasConfig: hasConfig,
+		Datasite: &DatasiteInfo{
+			Status: string(dsInfo.Status),
+			Error:  dsInfo.Error,
+		},
 	})
 }

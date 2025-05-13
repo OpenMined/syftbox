@@ -3,6 +3,7 @@ package version
 import (
 	"fmt"
 	"runtime"
+	"time"
 )
 
 var (
@@ -16,7 +17,7 @@ var (
 	Revision = "HEAD"
 
 	// Build date of the application
-	BuildDate = "1970-01-01T00:00:00Z"
+	BuildDate = ""
 )
 
 // Short returns a concise version string - `0.1.0 (5e23a4)`
@@ -37,4 +38,10 @@ func Detailed() string {
 // Returns a detailed version string with the application name - `SyftBox 0.1.0 (5e23a4; go1.16.3; darwin/amd64)`
 func DetailedWithApp() string {
 	return fmt.Sprintf("%s %s", AppName, Detailed())
+}
+
+func init() {
+	if BuildDate == "" {
+		BuildDate = time.Now().UTC().Format(time.RFC3339)
+	}
 }

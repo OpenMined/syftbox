@@ -36,7 +36,7 @@ type RouteConfig struct {
 	Swagger         bool
 }
 
-func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManger, routeConfig *RouteConfig) http.Handler {
+func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteConfig) http.Handler {
 	r := gin.New()
 
 	rateLimitStore := memory.NewStore()

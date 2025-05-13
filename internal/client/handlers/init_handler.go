@@ -16,11 +16,11 @@ const (
 )
 
 type InitHandler struct {
-	mgr             *datasitemgr.DatasiteManger
+	mgr             *datasitemgr.DatasiteManager
 	controlPlaneURL string
 }
 
-func NewInitHandler(mgr *datasitemgr.DatasiteManger, controlPlaneURL string) *InitHandler {
+func NewInitHandler(mgr *datasitemgr.DatasiteManager, controlPlaneURL string) *InitHandler {
 	return &InitHandler{
 		mgr:             mgr,
 		controlPlaneURL: controlPlaneURL,
