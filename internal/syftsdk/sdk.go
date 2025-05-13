@@ -1,10 +1,8 @@
 package syftsdk
 
 import (
-	"io"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"resty.dev/v3"
 )
 
@@ -24,12 +22,8 @@ func New(baseURL string) (*SyftSDK, error) {
 		SetRetryCount(3).
 		SetRetryWaitTime(1*time.Second).
 		SetRetryMaxWaitTime(5*time.Second).
-		AddContentTypeEncoder("json", func(w io.Writer, v any) error {
-			return sonic.ConfigDefault.NewEncoder(w).Encode(v)
-		}).
-		AddContentTypeDecoder("json", func(r io.Reader, v any) error {
-			return sonic.ConfigDefault.NewDecoder(r).Decode(v)
-		})
+		AddContentTypeEncoder("json", jsonEncoder).
+		AddContentTypeDecoder("json", jsonDecoder)
 
 	datasiteAPI := newDatasiteAPI(client)
 	blobAPI := newBlobAPI(client)

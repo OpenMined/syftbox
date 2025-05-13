@@ -27,16 +27,18 @@ func NewWorkspaceHandler(mgr *datasitemgr.DatasiteManger) *WorkspaceHandler {
 	}
 }
 
-// @Summary		Get workspace items
-// @Description	Get files and folders at a specified path
-// @Tags			Files and Folders
-// @Produce		json
-// @Param			path	query		string	false	"Path to the directory (default is root)"
-// @Param			depth	query		integer	false	"Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)"	minimum(0)	default(1)
-// @Success		200		{object}	WorkspaceItemsResponse
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/workspace/items [get]
+// GetItems gets workspace at a specified path
+//
+//	@Summary		Get workspace items
+//	@Description	Get workspace at a specified path
+//	@Tags			workspace
+//	@Produce		json
+//	@Param			path	query		string	false	"Path to the directory (default is root)"
+//	@Param			depth	query		integer	false	"Maximum depth for retrieving children (0 = no children, 1 = immediate children only, etc.)"	minimum(0)	default(1)
+//	@Success		200		{object}	WorkspaceItemsResponse
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items [get]
 func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 	var req WorkspaceItemsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -77,21 +79,23 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 	})
 }
 
-// @Summary		Create workspace item
-// @Description	Create a new file or folder in the workspace
-// @Tags			Files and Folders
-// @Accept			json
-// @Produce		json
-// @Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
-// @Success		201		{object}	WorkspaceItemCreateResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/workspace/items [post]
+// Create workspace item
+//
+//	@Summary		Create workspace item
+//	@Description	Create a new file or folder in the workspace
+//	@Tags			workspace
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceItemCreateRequest	true	"Request body"
+//	@Success		201		{object}	WorkspaceItemCreateResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items [post]
 func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	var req WorkspaceItemCreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -261,20 +265,22 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	})
 }
 
-// @Summary		Delete workspace items
-// @Description	Delete multiple files or folders. The operation is similar to the Unix `rm -rf` command.
-// @Description	- If the path is a file, the file will be deleted.
-// @Description	- If the path is a folder, all its contents will also be deleted.
-// @Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
-// @Description	- If the path does not exist, the operation will be a no-op.
-// @Tags			Files and Folders
-// @Accept			json
-// @Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
-// @Success		204		{object}	nil
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Failure		503		{object}	ControlPlaneError
-// @Router			/v1/workspace/items [delete]
+// Delete workspace items
+//
+//	@Summary		Delete workspace items
+//	@Description	Delete multiple files or folders. The operation is similar to the Unix `rm -rf` command.
+//	@Description	- If the path is a file, the file will be deleted.
+//	@Description	- If the path is a folder, all its contents will also be deleted.
+//	@Description	- If the path is a symlink, the symlink will be deleted without deleting the target.
+//	@Description	- If the path does not exist, the operation will be a no-op.
+//	@Tags			workspace
+//	@Accept			json
+//	@Param			request	body		WorkspaceItemDeleteRequest	true	"Request body"
+//	@Success		204		{object}	nil
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items [delete]
 func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 	var req WorkspaceItemDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -350,21 +356,23 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// @Summary		Move item
-// @Description	Move an item to a new location. Can also be used for renaming an item.
-// @Tags			Files and Folders
-// @Accept			json
-// @Produce		json
-// @Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
-// @Success		200		{object}	WorkspaceItemMoveResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		404		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Router			/v1/workspace/items/move [post]
+// MoveItems moves an item to a new location. Can also be used for renaming an item.
+//
+//	@Summary		Move item
+//	@Description	Move an item to a new location. Can also be used for renaming an item.
+//	@Tags			workspace
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceItemMoveRequest	true	"Request body"
+//	@Success		200		{object}	WorkspaceItemMoveResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		404		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items/move [post]
 func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	var req WorkspaceItemMoveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -673,21 +681,23 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-// @Summary		Copy a file or folder
-// @Description	Create a copy of a file or folder
-// @Tags			Files and Folders
-// @Accept			json
-// @Produce		json
-// @Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
-// @Success		200		{object}	WorkspaceItemCopyResponse
-// @Failure		400		{object}	ControlPlaneError
-// @Failure		401		{object}	ControlPlaneError
-// @Failure		403		{object}	ControlPlaneError
-// @Failure		404		{object}	ControlPlaneError
-// @Failure		409		{object}	ControlPlaneError
-// @Failure		429		{object}	ControlPlaneError
-// @Failure		500		{object}	ControlPlaneError
-// @Router			/v1/workspace/items/copy [post]
+// CopyItems copies a file or folder to a new location. Can also be used for renaming a file or folder.
+//
+//	@Summary		Copy a file or folder
+//	@Description	Create a copy of a file or folder
+//	@Tags			workspace
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceItemCopyRequest	true	"Request body"
+//	@Success		200		{object}	WorkspaceItemCopyResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		404		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Router			/v1/workspace/items/copy [post]
 func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	var req WorkspaceItemCopyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
