@@ -11,6 +11,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/explorer"
 	"github.com/openmined/syftbox/internal/server/handlers/install"
+	"github.com/openmined/syftbox/internal/server/handlers/send"
 	"github.com/openmined/syftbox/internal/server/handlers/ws"
 	"github.com/openmined/syftbox/internal/server/middlewares"
 	"github.com/openmined/syftbox/internal/version"
@@ -24,6 +25,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
+	sendH := send.NewSendHandler(hub, svc.Blob)
 
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
@@ -57,6 +59,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
+
+		// send http messages
+		v1.Any("/send/message", sendH.HandleSendMessage)
 	}
 
 	r.NoRoute(func(c *gin.Context) {

@@ -248,7 +248,7 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 
 	if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 		Key:  data.Path,
-		ETag: msg.Message.Id,
+		// ETag: msg.Message.Id, TODO: possible bug
 		Body: bytes.NewReader(data.Content),
 		Size: data.Length,
 	}); err != nil {
