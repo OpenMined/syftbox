@@ -3,6 +3,7 @@ package syftsdk
 import (
 	"time"
 
+	"github.com/openmined/syftbox/internal/version"
 	"resty.dev/v3"
 )
 
@@ -21,6 +22,8 @@ func New(baseURL string) (*SyftSDK, error) {
 		SetBaseURL(baseURL).
 		SetRetryCount(3).
 		SetRetryWaitTime(1*time.Second).
+		SetHeader(HeaderUserAgent, "SyftBox/"+version.Version).
+		SetHeader(HeaderSyftVersion, version.Version).
 		SetRetryMaxWaitTime(5*time.Second).
 		AddContentTypeEncoder("json", jsonEncoder).
 		AddContentTypeDecoder("json", jsonDecoder)
@@ -49,6 +52,7 @@ func (s *SyftSDK) Close() {
 // Login sets the user authentication for API calls and events
 func (s *SyftSDK) Login(user string) error {
 	s.client.SetQueryParam("user", user) // todo remove with auth
+	s.client.SetHeader(HeaderSyftUser, user)
 	if s.Events != nil {
 		s.Events.SetUser(user)
 	}
