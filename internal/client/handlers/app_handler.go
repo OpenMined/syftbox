@@ -15,10 +15,10 @@ const (
 )
 
 type AppHandler struct {
-	mgr *datasitemgr.DatasiteManger
+	mgr *datasitemgr.DatasiteManager
 }
 
-func NewAppHandler(mgr *datasitemgr.DatasiteManger) *AppHandler {
+func NewAppHandler(mgr *datasitemgr.DatasiteManager) *AppHandler {
 	return &AppHandler{
 		mgr: mgr,
 	}
