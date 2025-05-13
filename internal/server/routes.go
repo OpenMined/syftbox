@@ -1,11 +1,14 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	slogGin "github.com/samber/slog-gin"
+
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
@@ -17,7 +20,7 @@ import (
 )
 
 func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
-	r := gin.Default()
+	r := gin.New()
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
 	blobH := blob.New(svc.Blob)
@@ -25,6 +28,14 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
 
+	httpLogger := slog.Default().WithGroup("http")
+	r.Use(slogGin.NewWithConfig(httpLogger, slogGin.Config{
+		WithRequestID:     true,
+		WithRequestHeader: true,
+		WithTraceID:       true,
+		WithSpanID:        true,
+	}))
+	r.Use(gin.Recovery())
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
 
