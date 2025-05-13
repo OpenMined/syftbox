@@ -12,6 +12,13 @@ type StatusResponse struct {
 }
 
 type DatasiteInfo struct {
-	Status string `json:"status"`
-	Error  error  `json:"error,omitempty"`
+	Status string          `json:"status"`           // status of the datasite.
+	Error  string          `json:"error,omitempty"`  // error message if the datasite is not ready.
+	Config *DatasiteConfig `json:"config,omitempty"` // config of the datasite.
+}
+
+type DatasiteConfig struct {
+	DataDir   string `json:"data_dir"`
+	Email     string `json:"email"`
+	ServerURL string `json:"server_url"`
 }

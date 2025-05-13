@@ -103,6 +103,10 @@ func (d *Datasite) GetSDK() *syftsdk.SyftSDK {
 	return d.sdk
 }
 
+func (d *Datasite) GetConfig() *config.Config {
+	return d.config
+}
+
 func (d *Datasite) GetWorkspace() *workspace.Workspace {
 	return d.workspace
 }

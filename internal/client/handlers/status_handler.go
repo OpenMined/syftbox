@@ -28,6 +28,7 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManager) *StatusHandler {
 //	@Tags			status
 //	@Produce		json
 //	@Success		200	{object}	StatusResponse
+//	@Failure		503	{object}	ControlPlaneError
 //	@Router			/v1/status [get]
 func (h *StatusHandler) Status(ctx *gin.Context) {
 	// this is unlikely to happen, but just in case
@@ -39,8 +40,23 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		return
 	}
 
-	dsInfo := h.mgr.Status()
-	hasConfig := dsInfo.Status == datasitemgr.DatasiteStatusProvisioned
+	var dsConfig *DatasiteConfig
+	var errorMessage string
+	var hasConfig bool
+
+	status := h.mgr.Status()
+	if status.Status == datasitemgr.DatasiteStatusProvisioned {
+		hasConfig = true
+		cfg := status.Datasite.GetConfig()
+		// share a copy of the config. DO NOT INCLUDE REFRESH TOKEN!
+		dsConfig = &DatasiteConfig{
+			DataDir:   cfg.DataDir,
+			Email:     cfg.Email,
+			ServerURL: cfg.ServerURL,
+		}
+	} else if status.DatasiteError != nil {
+		errorMessage = status.DatasiteError.Error()
+	}
 
 	ctx.PureJSON(http.StatusOK, &StatusResponse{
 		Status:    "ok",
@@ -50,8 +66,9 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		BuildDate: version.BuildDate,
 		HasConfig: hasConfig,
 		Datasite: &DatasiteInfo{
-			Status: string(dsInfo.Status),
-			Error:  dsInfo.Error,
+			Status: string(status.Status),
+			Error:  errorMessage,
+			Config: dsConfig,
 		},
 	})
 }

@@ -87,8 +87,9 @@ func (d *DatasiteManager) Status() *DatasiteManagerStatus {
 	defer d.mu.RUnlock()
 
 	return &DatasiteManagerStatus{
-		Status: d.status,
-		Error:  d.datasiteErr,
+		Status:        d.status,
+		DatasiteError: d.datasiteErr,
+		Datasite:      d.datasite,
 	}
 }
 
