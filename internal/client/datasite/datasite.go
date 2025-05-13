@@ -58,7 +58,7 @@ func New(config *config.Config) (*Datasite, error) {
 }
 
 func (d *Datasite) Start(ctx context.Context) error {
-	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "serverURL", d.config.ServerURL, "clientURL", d.config.ClientURL)
+	slog.Info("datasite start", "id", d.id, "datadir", d.config.DataDir, "email", d.config.Email, "serverURL", d.config.ServerURL, "clientURL", d.config.ClientURL)
 
 	// Setup local datasite first.
 	if err := d.workspace.Setup(); err != nil {
