@@ -157,7 +157,6 @@ func (s *AppScheduler) startApp(ctx context.Context, appPath string) error {
 	}
 
 	port := getFreePort()
-	slog.Info("assigned port", "port", port)
 
 	procEnvs := make([]string, len(s.subprocessEnv))
 	copy(procEnvs, s.subprocessEnv)
@@ -168,7 +167,7 @@ func (s *AppScheduler) startApp(ctx context.Context, appPath string) error {
 	}
 
 	// Create a new app instance
-	app := NewApp(appPath, procEnvs)
+	app := NewApp(appPath, procEnvs, port)
 
 	// Start the app
 	if err := app.Start(ctx); err != nil {
