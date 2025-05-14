@@ -15,6 +15,7 @@ type App struct {
 	Name    string
 	Path    string
 	Env     []string
+	Port    string
 	Process *exec.Cmd
 	Cancel  context.CancelFunc
 	stdout  *os.File
@@ -22,11 +23,12 @@ type App struct {
 }
 
 // NewApp creates a new App instance
-func NewApp(appPath string, env []string) *App {
+func NewApp(appPath string, env []string, port string) *App {
 	return &App{
 		Name: filepath.Base(appPath),
 		Path: appPath,
 		Env:  env,
+		Port: port,
 	}
 }
 
@@ -87,7 +89,11 @@ func (a *App) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start app %s: %w", a.Name, err)
 	}
 
-	slog.Info("app started", "app", a.Name)
+	if a.Port != "" {
+		slog.Info("app started", "app", a.Name, "url", fmt.Sprintf("http://localhost:%s", a.Port))
+	} else {
+		slog.Info("app started", "app", a.Name)
+	}
 	return nil
 }
 
