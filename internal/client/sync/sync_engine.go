@@ -1,19 +1,16 @@
 package sync
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/messaging"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/syftsdk"
@@ -38,7 +35,7 @@ type SyncEngine struct {
 	priorityList *SyncPriorityList
 	wg           sync.WaitGroup
 	muSync       sync.Mutex
-	appSched     *apps.AppScheduler
+	httpMsgMgr   *messaging.HttpMsgManager
 }
 
 func NewSyncEngine(
@@ -47,7 +44,7 @@ func NewSyncEngine(
 	ignore *SyncIgnoreList,
 	priority *SyncPriorityList,
 	watcher *FileWatcher,
-	appSched *apps.AppScheduler,
+	httpMsgMgr *messaging.HttpMsgManager,
 ) (*SyncEngine, error) {
 	journalDir := filepath.Join(workspace.InternalDataDir, "sync.db")
 	journal, err := NewSyncJournal(journalDir)
@@ -68,7 +65,7 @@ func NewSyncEngine(
 		journal:      journal,
 		localState:   localState,
 		syncStatus:   syncStatus,
-		appSched:     appSched,
+		httpMsgMgr:   httpMsgMgr,
 	}, nil
 }
 
@@ -499,56 +496,57 @@ func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {
 func (se *SyncEngine) handleHttp(ctx context.Context, msg *syftmsg.Message) {
 	httpMsg := msg.Data.(syftmsg.HttpMessage)
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", string(httpMsg.Body))
-	go se.makeAppRequest(ctx, &httpMsg)
+	go se.httpMsgMgr.MakeAppRequest(ctx, &httpMsg)
+	slog.Info("made app request")
 }
 
-func (se *SyncEngine) makeAppRequest(ctx context.Context, msg *syftmsg.HttpMessage) {
+// func (se *SyncEngine) makeAppRequest(ctx context.Context, msg *syftmsg.HttpMessage) {
 
-	app := se.appSched.GetApp(msg.AppName)
-	if app == nil {
-		slog.Error("app not found", "appName", msg.AppName)
-		return
-	}
+// 	app := se.appSched.GetApp(msg.AppName)
+// 	if app == nil {
+// 		slog.Error("app not found", "appName", msg.AppName)
+// 		return
+// 	}
 
-	// Extract app url and port from app.Env
-	appUrl := app.GetEnv("SYFTBOX_APP_URL")
+// 	// Extract app url and port from app.Env
+// 	appUrl := app.GetEnv("SYFTBOX_APP_URL")
 
-	appPort := app.GetEnv("SYFTBOX_APP_PORT")
+// 	appPort := app.GetEnv("SYFTBOX_APP_PORT")
 
-	if appUrl == "" || appPort == "" {
-		slog.Error("app url or port not found", "appName", msg.AppName)
-		return
-	}
+// 	if appUrl == "" || appPort == "" {
+// 		slog.Error("app url or port not found", "appName", msg.AppName)
+// 		return
+// 	}
 
-	slog.Info("making app request", "appName", msg.AppName, "appUrl", appUrl, "appPort", appPort)
+// 	slog.Info("making app request", "appName", msg.AppName, "appUrl", appUrl, "appPort", appPort)
 
-	// extract headers and body from the HttpMessage
-	appEndpoint := fmt.Sprintf("http://%s:%s%s", appUrl, appPort, msg.AppEndpoint)
+// 	// extract headers and body from the HttpMessage
+// 	appEndpoint := fmt.Sprintf("http://%s:%s%s", appUrl, appPort, msg.AppEndpoint)
 
-	slog.Info("app endpoint", "endpoint", appEndpoint)
+// 	slog.Info("app endpoint", "endpoint", appEndpoint)
 
-	// make a http request to the app
-	req, err := http.NewRequestWithContext(ctx, msg.Method, appEndpoint, bytes.NewReader(msg.Body))
-	if err != nil {
-		slog.Error("failed to create request", "error", err)
-		return
-	}
+// 	// make a http request to the app
+// 	req, err := http.NewRequestWithContext(ctx, msg.Method, appEndpoint, bytes.NewReader(msg.Body))
+// 	if err != nil {
+// 		slog.Error("failed to create request", "error", err)
+// 		return
+// 	}
 
-	// add headers to the request
-	req.Header.Add("Content-Type", msg.ContentType)
+// 	// add headers to the request
+// 	req.Header.Add("Content-Type", msg.ContentType)
 
-	// make the request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		slog.Error("failed to make request", "error", err)
-		return
-	}
+// 	// make the request
+// 	resp, err := http.DefaultClient.Do(req)
+// 	if err != nil {
+// 		slog.Error("failed to make request", "error", err)
+// 		return
+// 	}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		slog.Error("failed to read response body", "error", err)
-		return
-	}
+// 	respBody, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		slog.Error("failed to read response body", "error", err)
+// 		return
+// 	}
 
-	slog.Info("app response", "status", resp.Status, "body", string(respBody))
-}
+// 	slog.Info("app response", "status", resp.Status, "body", string(respBody))
+// }

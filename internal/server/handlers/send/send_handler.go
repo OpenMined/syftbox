@@ -1,9 +1,12 @@
 package send
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/blob"
@@ -12,15 +15,40 @@ import (
 )
 
 type SendHandler struct {
-	hub *ws.WebsocketHub
-	blob *blob.BlobService
+	hub              *ws.WebsocketHub
+	blob             *blob.BlobService
+	responseChannels map[string]chan *syftmsg.Message
+	mu               sync.RWMutex
 }
 
 func NewSendHandler(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
 	return &SendHandler{
-		hub: hub,
-		blob: blob,
+		hub:              hub,
+		blob:             blob,
+		responseChannels: make(map[string]chan *syftmsg.Message),
 	}
+}
+
+func generateChannelKey(user string, appName string, endpoint string) string {
+	return fmt.Sprintf("%s:%s:%s", user, appName, endpoint)
+}
+
+func (h *SendHandler) getOrCreateChannel(key string) chan *syftmsg.Message {
+	defer h.mu.RUnlock()
+	h.mu.RLock()
+	ch, ok := h.responseChannels[key]
+	if !ok {
+		ch = make(chan *syftmsg.Message)
+		h.responseChannels[key] = ch
+	}
+	return ch
+}
+
+func (h *SendHandler) getChannel(key string) (chan *syftmsg.Message, bool) {
+	defer h.mu.RUnlock()
+	h.mu.RLock()
+	ch, ok := h.responseChannels[key]
+	return ch, ok
 }
 
 func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
@@ -51,10 +79,22 @@ func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
 	// request method
 	method := ctx.Request.Method
 
-	msg := syftmsg.NewHttpMessage(header.From, header.To, header.SyftURI, header.AppName, header.AppEndpoint, method, bodyBytes)
+	msg := syftmsg.NewHttpMessage(header.From, header.To, header.SyftURI, header.AppName, header.AppEndpoint, method, header.ContentType, bodyBytes, header.Status)
 
-	slog.Debug("send message", "header", header, "body", string(bodyBytes), "method", method, "msg", msg)
+	slog.Info("send message", "header", header, "body", string(bodyBytes), "method", method, "msg", msg)
 
+	if header.Type == SendMessageResponse {
+		key := generateChannelKey(header.To, header.AppName, header.AppEndpoint)
+		ch := h.getOrCreateChannel(key)
+		go func() {
+			ch <- msg
+			slog.Info("add message to channel", "key", key, "msg", msg)
+		}()
+		ctx.PureJSON(http.StatusAccepted, gin.H{
+			"status": fmt.Sprintf("message sent to channel %s", key),
+		})
+		return
+	}
 
 	// send the message to the hub
 	// TODO: check header. To is a valid email address
@@ -64,7 +104,6 @@ func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
 		// Return a 202 Accepted response
 		ctx.PureJSON(http.StatusAccepted, gin.H{
 			"status": "message sent to blob storage",
-			"blob":   "TODO: blob storage url",
 		})
 		return
 	}
@@ -72,4 +111,27 @@ func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
 	ctx.PureJSON(http.StatusOK, gin.H{
 		"status": "message sent",
 	})
+}
+
+func (h *SendHandler) HandleGetMessage(ctx *gin.Context) {
+	user := ctx.Query("user_id")
+	appName := ctx.Query("app")
+	endpoint := ctx.Query("endpoint")
+
+	key := generateChannelKey(user, appName, endpoint)
+
+	ch, ok := h.getChannel(key)
+	if !ok {
+		ctx.PureJSON(http.StatusNotFound, gin.H{"error": "No request sent to this endpoint"})
+		return
+	}
+
+	select {
+	case msg := <-ch:
+		ctx.JSON(http.StatusOK, msg.Data)
+		return
+	case <-time.After(1 * time.Second):
+		ctx.PureJSON(http.StatusNotFound, gin.H{"error": "No new messages"})
+		return
+	}
 }

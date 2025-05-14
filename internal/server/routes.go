@@ -60,8 +60,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
 
-		// send http messages
-		v1.Any("/send/message", sendH.HandleSendMessage)
+		// send, receive http messages
+		v1.Any("/message/send", sendH.HandleSendMessage)
+		v1.GET("/message/get", sendH.HandleGetMessage)
 	}
 
 	r.NoRoute(func(c *gin.Context) {
