@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -38,6 +39,21 @@ func (a *App) Start(ctx context.Context) error {
 		return err
 	}
 
+	// Get .env file content
+	envContent, err := a.GetEnvFileContent()
+	if err != nil {
+		return fmt.Errorf("failed to get .env file content for app %s: %w", a.Name, err)
+	}
+
+	// Parse environment variables from .env file content
+	envLines := strings.Split(strings.TrimSpace(envContent), "\n")
+	for _, line := range envLines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			a.Env = append(a.Env, line)
+		}
+	}
+
 	// Create a cancellable context for this app
 	appCtx, cancel := context.WithCancel(ctx)
 	a.Cancel = cancel
@@ -47,6 +63,9 @@ func (a *App) Start(ctx context.Context) error {
 	a.Process.Dir = a.Path
 
 	// Set environment variables
+	a.Env = append(a.Env, envContent)
+
+	slog.Info("app env", "env", envContent)
 	a.Process.Env = a.Env
 
 	// Create a logs directory within the app directory
@@ -140,6 +159,27 @@ func (a *App) closeLogFiles() {
 		a.stderr.Close()
 		a.stderr = nil
 	}
+}
+
+// GetEnv returns the value of an environment variable from the app.Env map
+func (a *App) GetEnv(key string) string {
+	for _, env := range a.Env {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 && parts[0] == key {
+			slog.Info("app env", "key", key, "value", parts[1])
+			return parts[1]
+		}
+	}
+	return ""
+}
+
+// Get .env file content
+func (a *App) GetEnvFileContent() (string, error) {
+	content, err := os.ReadFile(filepath.Join(a.Path, ".env"))
+	if err != nil {
+		return "", fmt.Errorf("failed to read .env file for app %s: %w", a.Name, err)
+	}
+	return string(content), nil
 }
 
 // GetRunScript returns the path to the run.sh script for an app and validates it

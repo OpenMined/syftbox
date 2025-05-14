@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
 )
@@ -18,11 +19,11 @@ type SyncManager struct {
 	priority  *SyncPriorityList
 }
 
-func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK) (*SyncManager, error) {
+func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK, appSched *apps.AppScheduler) (*SyncManager, error) {
 	watcher := NewFileWatcher(workspace.DatasitesDir)
 	ignore := NewSyncIgnoreList(workspace.DatasitesDir)
 	priority := NewSyncPriorityList(workspace.DatasitesDir)
-	engine, err := NewSyncEngine(workspace, sdk, ignore, priority, watcher)
+	engine, err := NewSyncEngine(workspace, sdk, ignore, priority, watcher, appSched)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync engine: %w", err)
 	}

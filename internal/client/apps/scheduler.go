@@ -138,6 +138,16 @@ func (s *AppScheduler) ListRunningApps() []string {
 	return apps
 }
 
+func (s *AppScheduler) GetApp(appName string) *App {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	app, exists := s.apps[appName]
+	if !exists {
+		return nil
+	}
+	return app
+}
+
 // startApp launches the app
 func (s *AppScheduler) startApp(ctx context.Context, appPath string) error {
 	appName := filepath.Base(appPath)

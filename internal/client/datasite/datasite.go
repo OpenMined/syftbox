@@ -39,7 +39,7 @@ func New(config *config.Config) (*Datasite, error) {
 	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
 	appMgr := apps.NewManager(ws.AppsDir)
 
-	sync, err := sync.NewManager(ws, sdk)
+	sync, err := sync.NewManager(ws, sdk, appSched)
 	if err != nil {
 		return nil, fmt.Errorf("sync manager: %w", err)
 	}
