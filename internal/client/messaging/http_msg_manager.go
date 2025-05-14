@@ -101,6 +101,8 @@ func (h *HttpMsgManager) processRequest(ctx context.Context, req *HttpRequestMsg
 
 	body, err := io.ReadAll(httpResp.Body)
 
+	slog.Info("Response from app", "status", httpResp.StatusCode, "body", string(body))
+
 	if err != nil {
 		h.respChan <- &HttpResponseMsg{
 			Message: req.Message,
@@ -133,8 +135,25 @@ func (h *HttpMsgManager) processRequest(ctx context.Context, req *HttpRequestMsg
 }
 
 func (h *HttpMsgManager) processResponse(ctx context.Context, resp *HttpResponseMsg) {
-	slog.Info("processing response", "message", resp.Message)
-	sendResp, err := h.sdk.SendMsg.Send(ctx, resp.Message, "response")
+	var msg *syftmsg.HttpMessage
+	if resp.Error != nil {
+		msg = &syftmsg.HttpMessage{
+			From:        resp.Message.To,
+			To:          resp.Message.From,
+			SyftURI:     resp.Message.SyftURI,
+			AppName:     resp.Message.AppName,
+			AppEndpoint: resp.Message.AppEndpoint,
+			Method:      resp.Message.Method,
+			Status:      resp.Message.Status,
+			Body:        []byte(resp.Error.Error()),
+			ContentType: resp.Message.ContentType,
+			RequestID:   resp.Message.RequestID,
+		}
+	} else {
+		msg = resp.Message
+	}
+
+	sendResp, err := h.sdk.SendMsg.Send(ctx, msg, "response")
 	if err != nil {
 		slog.Error("failed to send response to server", "error", err)
 	}

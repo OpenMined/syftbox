@@ -3,6 +3,7 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -27,9 +28,11 @@ func (s *SendMsgAPI) Send(ctx context.Context, msg *syftmsg.HttpMessage, msgType
 	var resp SendMessageResponse
 	var sdkError SyftSDKError
 
+	slog.Debug("sending body", "body", string(msg.Body))
+
 	res, err := s.client.R().
 		SetContext(ctx).
-		SetBody(msg.Body).
+		SetBody(string(msg.Body)).
 		SetHeaders(map[string]string{
 			"Content-Type":      msg.ContentType,
 			"x-syft-app":        msg.AppName,

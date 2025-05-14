@@ -118,7 +118,12 @@ func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
 
 	select {
 	case msg := <-ch:
-		ctx.JSON(http.StatusOK, msg.Data)
+		httpMsg, ok := msg.Data.(*syftmsg.HttpMessage)
+		if !ok {
+			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": "Invalid message format"})
+			return
+		}
+		ctx.JSON(http.StatusOK, httpMsg.ToHttpMessageWithStringBody())
 		return
 	case <-time.After(5 * time.Second):
 		ctx.PureJSON(http.StatusAccepted, gin.H{"status": "Request sent. Please check back later."})
@@ -141,7 +146,12 @@ func (h *SendHandler) HandleGetMessage(ctx *gin.Context) {
 
 	select {
 	case msg := <-ch:
-		ctx.JSON(http.StatusOK, msg.Data)
+		httpMsg, ok := msg.Data.(*syftmsg.HttpMessage)
+		if !ok {
+			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": "Invalid message format"})
+			return
+		}
+		ctx.JSON(http.StatusOK, httpMsg.ToHttpMessageWithStringBody())
 		return
 	case <-time.After(1 * time.Second):
 		ctx.PureJSON(http.StatusNotFound, gin.H{"error": "No new messages"})

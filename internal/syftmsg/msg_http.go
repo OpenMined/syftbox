@@ -31,3 +31,32 @@ func NewHttpMessage(from string, to string, syftURI string, appName string, appE
 		},
 	}
 }
+
+// Http Message with string body
+type HttpMessageWithStringBody struct {
+	From        string `json:"from"`
+	To          string `json:"to"`
+	SyftURI     string `json:"uri"`
+	AppName     string `json:"app"`
+	AppEndpoint string `json:"appep"`
+	Method      string `json:"mthd"`
+	ContentType string `json:"ct"`
+	Body        string `json:"body"`
+	Status      string `json:"status"`
+	RequestID   string `json:"request_id"`
+}
+
+func (m *HttpMessage) ToHttpMessageWithStringBody() *HttpMessageWithStringBody {
+	return &HttpMessageWithStringBody{
+		From:        m.From,
+		To:          m.To,
+		SyftURI:     m.SyftURI,
+		AppName:     m.AppName,
+		AppEndpoint: m.AppEndpoint,
+		Method:      m.Method,
+		ContentType: m.ContentType,
+		Body:        string(m.Body),
+		Status:      m.Status,
+		RequestID:   m.RequestID,
+	}
+}
