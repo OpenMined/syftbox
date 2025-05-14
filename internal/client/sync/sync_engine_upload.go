@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/openmined/syftbox/internal/syftsdk"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 const (
@@ -39,6 +40,11 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		}
 
 		localAbsPath := se.workspace.DatasiteAbsPath(op.RelPath)
+		if !utils.FileExists(localAbsPath) {
+			slog.Debug("sync", "op", "SKIPPED", "reason", "file no longer exists", "path", op.RelPath)
+			return
+		}
+
 		res, err := se.sdk.Blob.Upload(ctx, &syftsdk.UploadParams{
 			Key:      op.RelPath,
 			FilePath: localAbsPath,
