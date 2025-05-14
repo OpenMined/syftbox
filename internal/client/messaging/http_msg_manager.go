@@ -120,6 +120,7 @@ func (h *HttpMsgManager) processRequest(ctx context.Context, req *HttpRequestMsg
 		Body:        body,
 		ContentType: req.Message.ContentType,
 		Status:      strconv.Itoa(httpResp.StatusCode),
+		RequestID:   req.Message.RequestID,
 	}
 
 	slog.Info("sending response to server", "message", respMsg.From, respMsg.To, respMsg.SyftURI, respMsg.AppName, respMsg.AppEndpoint, respMsg.Method, string(respMsg.Body), respMsg.ContentType, respMsg.Status)

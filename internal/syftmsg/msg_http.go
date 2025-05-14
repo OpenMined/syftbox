@@ -10,9 +10,10 @@ type HttpMessage struct {
 	ContentType string `json:"ct"`               // content type
 	Body        []byte `json:"body,omitempty"`   // http body
 	Status      string `json:"status,omitempty"` // http status
+	RequestID   string `json:"request_id,omitempty"`
 }
 
-func NewHttpMessage(from string, to string, syftURI string, appName string, appEndpoint string, method string, contentType string, body []byte, status string) *Message {
+func NewHttpMessage(from string, to string, syftURI string, appName string, appEndpoint string, method string, contentType string, body []byte, status string, requestID string) *Message {
 	return &Message{
 		Id:   generateID(),
 		Type: MsgHttp,
@@ -26,6 +27,7 @@ func NewHttpMessage(from string, to string, syftURI string, appName string, appE
 			ContentType: contentType,
 			Body:        body,
 			Status:      status,
+			RequestID:   requestID,
 		},
 	}
 }

@@ -79,7 +79,7 @@ func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
 	// request method
 	method := ctx.Request.Method
 
-	msg := syftmsg.NewHttpMessage(header.From, header.To, header.SyftURI, header.AppName, header.AppEndpoint, method, header.ContentType, bodyBytes, header.Status)
+	msg := syftmsg.NewHttpMessage(header.From, header.To, header.SyftURI, header.AppName, header.AppEndpoint, method, header.ContentType, bodyBytes, header.Status, header.RequestID)
 
 	slog.Info("send message", "header", header, "body", string(bodyBytes), "method", method, "msg", msg)
 
@@ -108,9 +108,22 @@ func (h *SendHandler) HandleSendMessage(ctx *gin.Context) {
 		return
 	}
 
-	ctx.PureJSON(http.StatusOK, gin.H{
-		"status": "message sent",
-	})
+	// Check if response is present
+	key := generateChannelKey(header.To, header.AppName, header.AppEndpoint)
+	ch, ok := h.getChannel(key)
+	if !ok {
+		ctx.PureJSON(http.StatusAccepted, gin.H{"status": "Request sent. Please check back later."})
+		return
+	}
+
+	select {
+	case msg := <-ch:
+		ctx.JSON(http.StatusOK, msg.Data)
+		return
+	case <-time.After(5 * time.Second):
+		ctx.PureJSON(http.StatusAccepted, gin.H{"status": "Request sent. Please check back later."})
+		return
+	}
 }
 
 func (h *SendHandler) HandleGetMessage(ctx *gin.Context) {
