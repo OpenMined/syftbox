@@ -128,7 +128,7 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 	ws := ds.GetWorkspace()
 
 	// Make sure req.Path is a absolute path
-	if !filepath.IsAbs(req.Path) {
+	if !strings.HasPrefix(req.Path, "/") {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "path must be an absolute path and start with /",
@@ -319,7 +319,7 @@ func (h *WorkspaceHandler) DeleteItems(c *gin.Context) {
 	// Process each path
 	for _, path := range req.Paths {
 		// Make sure path is an absolute path
-		if !filepath.IsAbs(path) {
+		if !strings.HasPrefix(path, "/") {
 			c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 				ErrorCode: ErrCodeBadRequest,
 				Error:     "all paths must be absolute paths and start with /",
@@ -409,7 +409,7 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	ws := ds.GetWorkspace()
 
 	// Validate source path
-	if !filepath.IsAbs(req.SourcePath) {
+	if !strings.HasPrefix(req.SourcePath, "/") {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "source path must be an absolute path and start with /",
@@ -418,7 +418,7 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	}
 
 	// Validate destination path
-	if !filepath.IsAbs(req.NewPath) {
+	if !strings.HasPrefix(req.NewPath, "/") {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "destination path must be an absolute path and start with /",
@@ -734,7 +734,7 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	ws := ds.GetWorkspace()
 
 	// Validate source path
-	if !filepath.IsAbs(req.SourcePath) {
+	if !strings.HasPrefix(req.SourcePath, "/") {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "source path must be an absolute path and start with /",
@@ -743,7 +743,7 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	}
 
 	// Validate destination path
-	if !filepath.IsAbs(req.NewPath) {
+	if !strings.HasPrefix(req.NewPath, "/") {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "destination path must be an absolute path and start with /",
@@ -1018,7 +1018,7 @@ func (h *WorkspaceHandler) GetContent(c *gin.Context) {
 	ws := ds.GetWorkspace()
 
 	// Make sure req.Path is an absolute path
-	if !filepath.IsAbs(req.Path) {
+	if !strings.HasPrefix(req.Path, "/") {
 		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
 			ErrorCode: ErrCodeBadRequest,
 			Error:     "path must be an absolute path and start with /",
