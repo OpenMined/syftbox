@@ -76,12 +76,8 @@ func (d *Datasite) Start(ctx context.Context) error {
 	}
 
 	// Start app scheduler
-	if d.config.AppsEnabled {
-		if err := d.appScheduler.Start(ctx); err != nil {
-			slog.Error("app scheduler", "error", err)
-		}
-	} else {
-		slog.Info("apps disabled")
+	if err := d.appScheduler.Start(ctx); err != nil {
+		slog.Error("app scheduler", "error", err)
 	}
 
 	// Start sync manager. this will block for the first sync cycle.
