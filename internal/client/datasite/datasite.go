@@ -2,6 +2,7 @@ package datasite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -33,7 +34,12 @@ func New(config *config.Config) (*Datasite, error) {
 		return nil, fmt.Errorf("workspace: %w", err)
 	}
 
-	sdk, err := syftsdk.New(config.ServerURL)
+	sdk, err := syftsdk.New(&syftsdk.SyftSDKConfig{
+		BaseURL:      config.ServerURL,
+		Email:        config.Email,
+		RefreshToken: config.RefreshToken,
+		AccessToken:  config.AccessToken,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("sdk: %w", err)
 	}
@@ -70,9 +76,9 @@ func (d *Datasite) Start(ctx context.Context) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	// placeholder to "Login" to the server
-	if err := d.sdk.Login(d.config.Email); err != nil {
-		return fmt.Errorf("login: %w", err)
+	// authenticate with the server
+	if err := d.handleClientAuth(ctx); err != nil {
+		return fmt.Errorf("handle client auth: %w", err)
 	}
 
 	// Start app scheduler
@@ -117,4 +123,27 @@ func (d *Datasite) GetAppManager() *apps.AppManager {
 
 func (d *Datasite) GetSyncManager() *sync.SyncManager {
 	return d.sync
+}
+
+func (d *Datasite) handleClientAuth(ctx context.Context) error {
+	// setup callback to update the refresh token in the config
+	d.sdk.OnAuthTokenUpdate(d.updateRefreshToken)
+
+	slog.Info("authenticating with the server")
+	if err := d.sdk.Authenticate(ctx); err != nil {
+		if errors.Is(err, syftsdk.ErrNoRefreshToken) {
+			return fmt.Errorf("no refresh token found, please login again")
+		} else {
+			return fmt.Errorf("authenticate: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (d *Datasite) updateRefreshToken(refreshToken string) {
+	d.config.RefreshToken = refreshToken
+	if err := d.config.Save(); err != nil {
+		slog.Error("save config", "error", err)
+	}
 }

@@ -21,8 +21,9 @@ var (
 )
 
 var (
-	ErrServerURLEmpty   = errors.New("`server url` is empty")
+	ErrNoServerURL      = errors.New("`server url` is missing")
 	ErrServerURLInvalid = errors.New("`server url` is not valid")
+	ErrNoRefreshToken   = errors.New("`refresh token` is missing")
 )
 
 type Config struct {
@@ -31,7 +32,7 @@ type Config struct {
 	ServerURL    string `json:"server_url"`
 	ClientURL    string `json:"client_url,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
-	AccessToken  string `json:"-"`
+	AccessToken  string `json:"-"` // must never be persisted. always in memory
 	AppsEnabled  bool   `json:"-"`
 	Path         string `json:"-"`
 }
@@ -69,10 +70,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	// todo re-enable this once auth is a hard requirement
-	// if c.RefreshToken == "" {
-	// 	return fmt.Errorf("`refresh_token` is required")
-	// }
+	if c.RefreshToken == "" {
+		return ErrNoRefreshToken
+	}
 
 	return nil
 }
@@ -111,7 +111,7 @@ func LoadFromReader(path string, reader io.ReadCloser) (*Config, error) {
 
 func validateURL(urlString string) error {
 	if urlString == "" {
-		return ErrServerURLEmpty
+		return ErrNoServerURL
 	} else if _, err := url.Parse(urlString); err != nil {
 		return ErrServerURLInvalid
 	}

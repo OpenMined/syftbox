@@ -18,13 +18,3 @@ type EventMessage struct {
 	// The message payload
 	Message *syftmsg.Message
 }
-
-// wsConfig configures the WebSocket connection
-type wsConfig struct {
-	// User identifier for authentication
-	User string
-	// Headers contains HTTP headers for the WebSocket connection
-	Headers map[string]string
-	// BufferSize is the size of the message buffer (default: 256)
-	BufferSize int
-}

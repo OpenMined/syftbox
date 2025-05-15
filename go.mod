@@ -11,6 +11,7 @@ require (
 	github.com/bytedance/sonic v1.13.2
 	github.com/coder/websocket v1.8.13
 	github.com/deckarep/golang-set/v2 v2.8.0
+	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.18.0
 	github.com/gin-contrib/cors v1.7.5

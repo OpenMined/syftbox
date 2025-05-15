@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/openmined/syftbox/internal/syftmsg"
+	"resty.dev/v3"
 )
 
 const (
@@ -24,8 +26,7 @@ const (
 
 // EventsAPI manages real-time event communication
 type EventsAPI struct {
-	baseURL          string
-	config           *wsConfig
+	client           *resty.Client
 	wsClient         *wsClient
 	messages         chan *syftmsg.Message
 	ctx              context.Context
@@ -36,50 +37,15 @@ type EventsAPI struct {
 }
 
 // newEventsAPI creates a new EventsAPI instance
-func newEventsAPI(baseURL string) *EventsAPI {
+func newEventsAPI(client *resty.Client) *EventsAPI {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &EventsAPI{
-		baseURL:  baseURL,
+		client:   client,
 		ctx:      ctx,
 		cancel:   cancel,
 		messages: make(chan *syftmsg.Message, eventsBufferSize),
-		config: &wsConfig{
-			BufferSize: eventsBufferSize,
-			Headers:    make(map[string]string),
-		},
 	}
-}
-
-// SetUser sets the user ID for authentication
-func (e *EventsAPI) SetUser(userID string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	e.config.User = userID
-}
-
-// SetHeader sets a header for the WebSocket connection
-func (e *EventsAPI) SetHeader(key, value string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if value == "" {
-		delete(e.config.Headers, key)
-		return
-	}
-
-	e.config.Headers[key] = value
-}
-
-// SetAuthToken sets a JWT bearer token for authentication
-func (e *EventsAPI) SetAuthToken(token string) {
-	if token == "" {
-		e.SetHeader("Authorization", "")
-		return
-	}
-
-	e.SetHeader("Authorization", "Bearer "+token)
 }
 
 // Connect initiates a WebSocket connection
@@ -159,20 +125,18 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 	}
 
 	// Build URL with auth query parameters
-	url := e.fullURL()
-
-	// Setup headers
-	header := make(map[string][]string)
-	for k, v := range e.config.Headers {
-		header[k] = []string{v}
+	url, err := e.fullURL()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get full URL: %w", err)
 	}
 
 	// Connect with auth
+	headers := e.client.Header()
 	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
-		HTTPHeader: header,
+		HTTPHeader: headers, // this will include the auth token
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to %s: %w", url, err)
 	}
 	conn.SetReadLimit(wsClientMaxMessageSize)
 
@@ -286,18 +250,18 @@ func (e *EventsAPI) reconnectWithBackoff() {
 }
 
 // fullURL builds the complete WebSocket URL with query parameters
-func (e *EventsAPI) fullURL() string {
-	url := toWebsocketURL(e.baseURL + eventsPath)
-
-	if e.config.User != "" {
-		if strings.Contains(url, "?") {
-			url += "&user=" + e.config.User
-		} else {
-			url += "?user=" + e.config.User
-		}
+func (e *EventsAPI) fullURL() (string, error) {
+	// get base url from client
+	baseURL, err := url.JoinPath(e.client.BaseURL(), eventsPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to join path: %w", err)
 	}
+	// get query params from client
+	queryParams := e.client.QueryParams()
+	// append query params to base url
+	fullUrl := baseURL + "?" + queryParams.Encode()
 
-	return url
+	return toWebsocketURL(fullUrl), nil
 }
 
 // toWebsocketURL converts an HTTP URL to a WebSocket URL

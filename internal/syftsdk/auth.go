@@ -67,3 +67,29 @@ func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmail
 
 	return &resp, nil
 }
+
+func RefreshAuthTokens(ctx context.Context, serverURL string, refreshToken string) (*AuthTokenResponse, error) {
+	var resp AuthTokenResponse
+	var sdkErr SyftSDKError
+
+	client := resty.New().SetBaseURL(serverURL)
+
+	res, err := client.R().
+		SetContext(ctx).
+		SetBody(&RefreshTokenRequest{
+			RefreshToken: refreshToken,
+		}).
+		SetResult(&resp).
+		SetError(&sdkErr).
+		Post(authRefresh)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if res.IsError() {
+		return nil, fmt.Errorf("failed to refresh auth tokens: %s", res.String())
+	}
+
+	return &resp, nil
+}
