@@ -9,7 +9,6 @@ import (
 	"github.com/openmined/syftbox/internal/syftsdk"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // NOTE: This is a temporary command to initialize the syftbox datasite.
@@ -28,7 +27,7 @@ func newInitCmd() *cobra.Command {
 		Short: "Initialize syftbox datasite",
 		Run: func(cmd *cobra.Command, args []string) {
 			// fetched from main/rootCmd/persistentFlags
-			configPath := viper.GetString("config")
+			configPath := cmd.Flag("config").Value.String()
 
 			if cfg, err := config.LoadFromFile(configPath); err == nil {
 				fmt.Println("SyftBox Datasite already initialized")

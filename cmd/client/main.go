@@ -113,8 +113,10 @@ func loadConfig(cmd *cobra.Command) error {
 
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("config file not found: %w", err)
+		enoent := errors.Is(err, os.ErrNotExist)
+		_, ok := err.(viper.ConfigFileNotFoundError)
+		if !enoent && !ok {
+			return fmt.Errorf("config read '%s': %w", viper.ConfigFileUsed(), err)
 		}
 	}
 
