@@ -67,28 +67,41 @@ func (i *LogInterceptor) writeFormattedLine(line []byte) (int, error) {
 
 // Write implements io.Writer. It buffers the input and processes complete lines,
 // adding sequence numbers and timestamps to each line.
-// Returns the total number of bytes written to the target writer and any error encountered.
+// Returns the number of bytes from p that were processed and any error encountered.
 func (i *LogInterceptor) Write(p []byte) (n int, err error) {
 	// Write to buffer
-	_, err = i.interceptBuf.Write(p)
+	bytesWritten, err := i.interceptBuf.Write(p)
 	if err != nil {
 		return 0, err
 	}
 
-	totalWritten := 0
+	bytesProcessed := 0
 	// Process any complete lines in the buffer
-	scanner := bufio.NewScanner(i.interceptBuf)
-	scanner.Split(bufio.ScanLines) // This handles both \n and \r\n
-	for scanner.Scan() {
-		line := scanner.Text()
-		n, err = i.writeFormattedLine([]byte(line))
-		totalWritten += n
-		if err != nil {
-			return totalWritten, err
+	for {
+		line, err := i.interceptReader.ReadBytes('\n')
+		if err == io.EOF {
+			// No complete line, put the bytes back if they're not too large
+			if len(line) > maxBufferSize {
+				return bytesProcessed, io.ErrShortBuffer
+			}
+			i.interceptBuf.Write(line)
+			break
 		}
+		if err != nil {
+			return bytesProcessed, err
+		}
+
+		// Write the formatted line to target
+		_, err = i.writeFormattedLine(line)
+		if err != nil {
+			return bytesProcessed, err
+		}
+
+		// Update bytes processed - this is the actual input bytes we've handled
+		bytesProcessed += len(line)
 	}
 
-	return totalWritten, nil
+	return bytesWritten, nil
 }
 
 // Close flushes any remaining buffered data to the target writer.
