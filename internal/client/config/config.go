@@ -2,11 +2,12 @@ package config
 
 import (
 	"encoding/json"
-	"fmt"
-	"net/mail"
+	"errors"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/openmined/syftbox/internal/utils"
 )
@@ -15,6 +16,11 @@ var (
 	home, _           = os.UserHomeDir()
 	DefaultConfigPath = filepath.Join(home, ".syftbox", "config.json")
 	DefaultServerURL  = "https://syftboxdev.openmined.org"
+)
+
+var (
+	ErrServerURLEmpty   = errors.New("`server url` is empty")
+	ErrServerURLInvalid = errors.New("`server url` is not valid")
 )
 
 type Config struct {
@@ -29,10 +35,6 @@ type Config struct {
 }
 
 func (c *Config) Save() error {
-	if c.Path == "" {
-		c.Path = DefaultConfigPath
-	}
-
 	if err := utils.EnsureParent(c.Path); err != nil {
 		return err
 	}
@@ -42,26 +44,27 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	return os.WriteFile(c.Path, data, 0644)
+	return os.WriteFile(c.Path, data, 0o644)
 }
 
 func (c *Config) Validate() error {
+	if c.Path == "" {
+		c.Path = DefaultConfigPath
+	}
+
 	var err error
 	c.DataDir, err = utils.ResolvePath(c.DataDir)
 	if err != nil {
-		return fmt.Errorf("`data_dir` is invalid: %w", err)
+		return err
 	}
 
-	if c.Email == "" {
-		return fmt.Errorf("`email` is required")
-	} else if _, err := mail.ParseAddress(c.Email); err != nil {
-		return fmt.Errorf("`email` is invalid: %w", err)
+	if err := utils.ValidateEmail(c.Email); err != nil {
+		return err
 	}
+	c.Email = strings.ToLower(c.Email)
 
-	if c.ServerURL == "" {
-		return fmt.Errorf("`server_url` is required")
-	} else if _, err := url.Parse(c.ServerURL); err != nil {
-		return fmt.Errorf("`server_url` is invalid: %w", err)
+	if err := validateURL(c.ServerURL); err != nil {
+		return err
 	}
 
 	// todo re-enable this once auth is a hard requirement
@@ -72,8 +75,23 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func LoadClientConfig(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
+func LoadFromFile(path string) (*Config, error) {
+	path, err := utils.ResolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer data.Close()
+
+	return LoadFromReader(path, data)
+}
+
+func LoadFromReader(path string, reader io.ReadCloser) (*Config, error) {
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -86,8 +104,14 @@ func LoadClientConfig(path string) (*Config, error) {
 	cfg.Path = path
 	cfg.AppsEnabled = true
 
-	// todo remove override
-	cfg.ServerURL = DefaultServerURL
-
 	return &cfg, nil
+}
+
+func validateURL(urlString string) error {
+	if urlString == "" {
+		return ErrServerURLEmpty
+	} else if _, err := url.Parse(urlString); err != nil {
+		return ErrServerURLInvalid
+	}
+	return nil
 }

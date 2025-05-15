@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/mail"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -43,21 +43,31 @@ var rootCmd = &cobra.Command{
 		return loadConfig(cmd)
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cmd.SilenceUsage = true
-		showSyftBoxHeader()
-		c, err := client.New(&config.Config{
+		// create & validate config
+		cfg := &config.Config{
 			Path:         viper.ConfigFileUsed(),
 			Email:        viper.GetString("email"),
 			DataDir:      viper.GetString("data_dir"),
 			ServerURL:    viper.GetString("server_url"),
 			RefreshToken: viper.GetString("refresh_token"),
 			AppsEnabled:  viper.GetBool("apps_enabled"),
-			AccessToken:  viper.GetString("access_token"),
 			ClientURL:    "http://localhost:8080", // dummy value to make sure apps dont break
-		})
+		}
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+
+		// all good now, show header
+		cmd.SilenceUsage = true
+		showSyftBoxHeader()
+
+		// create client
+		c, err := client.New(cfg)
 		if err != nil {
 			return err
 		}
+
+		// start client
 		defer slog.Info("Bye!")
 		return c.Start(cmd.Context())
 	},
@@ -68,7 +78,7 @@ func init() {
 	rootCmd.Flags().StringP("email", "e", "", "Email for the SyftBox datasite")
 	rootCmd.Flags().StringP("datadir", "d", defaultDataDir, "SyftBox Data Directory")
 	rootCmd.Flags().StringP("server", "s", defaultServerURL, "SyftBox Server")
-	rootCmd.PersistentFlags().StringP("config", "c", "", "SyftBox config file")
+	rootCmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "SyftBox config file")
 }
 
 func main() {
@@ -103,8 +113,8 @@ func loadConfig(cmd *cobra.Command) error {
 
 	// Read config file
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return fmt.Errorf("error reading config file: %w", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("config file not found: %w", err)
 		}
 	}
 
@@ -113,33 +123,15 @@ func loadConfig(cmd *cobra.Command) error {
 	viper.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
 	viper.BindPFlag("server_url", cmd.Flags().Lookup("server"))
 
-	// env only
-	viper.SetDefault("apps_enabled", true)
-
 	// Set up environment variables
 	viper.SetEnvPrefix("SYFTBOX")
 	viper.AutomaticEnv()
-
-	// Validate email
-	if err := validateEmail(viper.GetString("email")); err != nil {
-		return err
-	}
 
 	// override server url if remote url is set
 	if strings.Contains(viper.GetString("server_url"), "openmined.org") {
 		viper.Set("server_url", defaultServerURL)
 	}
 
-	return nil
-}
-
-func validateEmail(email string) error {
-	if email == "" {
-		return fmt.Errorf("email is required")
-	}
-	if _, err := mail.ParseAddress(email); err != nil {
-		return fmt.Errorf("invalid email")
-	}
 	return nil
 }
 
