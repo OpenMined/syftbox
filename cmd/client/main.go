@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/fatih/color"
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
 	"github.com/openmined/syftbox/internal/client"
@@ -27,12 +26,6 @@ var (
 	defaultDataDir   = filepath.Join(home, "SyftBox")
 	defaultServerURL = "https://syftboxdev.openmined.org"
 	configFileName   = "config"
-)
-
-var (
-	red   = color.New(color.FgHiRed, color.Bold).SprintFunc()
-	green = color.New(color.FgHiGreen).SprintFunc()
-	cyan  = color.New(color.FgHiCyan).SprintFunc()
 )
 
 var rootCmd = &cobra.Command{
@@ -172,6 +165,5 @@ func loadConfig(cmd *cobra.Command) error {
 }
 
 func showSyftBoxHeader() {
-	color.New(color.FgHiCyan, color.Bold).
-		Print(utils.SyftBoxArt + "\n")
+	fmt.Println(cyan.Render(utils.SyftBoxArt))
 }

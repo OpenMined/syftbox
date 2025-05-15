@@ -13,6 +13,10 @@ var (
 	ErrEmailInvalid = errors.New("`email` is not valid")
 )
 
+func IsValidEmail(email string) bool {
+	return ValidateEmail(email) == nil
+}
+
 func ValidateEmail(email string) error {
 	if email == "" {
 		return ErrEmailEmpty

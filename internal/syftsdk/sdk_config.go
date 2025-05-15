@@ -12,6 +12,9 @@ const (
 
 var (
 	ErrNoRefreshToken = errors.New("refresh token is missing")
+	ErrNoServerURL    = errors.New("server URL is missing")
+	ErrInvalidOTP     = errors.New("invalid OTP")
+	ErrInvalidEmail   = errors.New("invalid email")
 )
 
 // SyftSDKConfig is the configuration for the SyftSDK

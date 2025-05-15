@@ -67,12 +67,6 @@ func (s *SyftSDK) Close() {
 
 // Authenticate sets the user authentication for API calls and events
 func (s *SyftSDK) Authenticate(ctx context.Context) error {
-
-	// we need atleast a refresh token
-	if s.config.RefreshToken == "" {
-		return ErrNoRefreshToken
-	}
-
 	// if we have an access token, set it
 	if s.config.AccessToken != "" {
 		slog.Debug("sdk using existing access token")
@@ -110,10 +104,6 @@ func (s *SyftSDK) autoRefreshToken(ctx context.Context) {
 }
 
 func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
-	if s.config.RefreshToken == "" {
-		return ErrNoRefreshToken
-	}
-
 	slog.Debug("sdk refreshing auth tokens")
 
 	// refresh auth tokens with current refresh token
