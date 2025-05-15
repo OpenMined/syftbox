@@ -42,11 +42,9 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 
 	var dsConfig *DatasiteConfig
 	var errorMessage string
-	var hasConfig bool
 
 	status := h.mgr.Status()
 	if status.Status == datasitemgr.DatasiteStatusProvisioned {
-		hasConfig = true
 		cfg := status.Datasite.GetConfig()
 		// share a copy of the config. DO NOT INCLUDE REFRESH TOKEN!
 		dsConfig = &DatasiteConfig{
@@ -64,7 +62,6 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		Version:   version.Version,
 		Revision:  version.Revision,
 		BuildDate: version.BuildDate,
-		HasConfig: hasConfig,
 		Datasite: &DatasiteInfo{
 			Status: string(status.Status),
 			Error:  errorMessage,

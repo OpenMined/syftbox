@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"encoding/json"
+	"strings"
+
 	"github.com/shirou/gopsutil/v4/cpu"
 	psnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
@@ -35,6 +38,34 @@ type AppResponse struct {
 	Ports []int64 `json:"ports"`
 	// Extended process statistics (optional)
 	ProcessStats *ProcessStats `json:"processStats,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler interface for AppResponse
+func (a AppResponse) MarshalJSON() ([]byte, error) {
+	type Alias AppResponse
+	return json.Marshal(&struct {
+		Path string `json:"path"`
+		*Alias
+	}{
+		Path:  strings.ReplaceAll(a.Path, "\\", "/"),
+		Alias: (*Alias)(&a),
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface for AppResponse
+func (a *AppResponse) UnmarshalJSON(data []byte) error {
+	type Alias AppResponse
+	aux := &struct {
+		Path string `json:"path"`
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	a.Path = strings.ReplaceAll(aux.Path, "\\", "/")
+	return nil
 }
 
 // AppListResponse represents the response to list all installed apps.

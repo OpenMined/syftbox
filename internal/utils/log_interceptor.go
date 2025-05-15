@@ -77,21 +77,11 @@ func (i *LogInterceptor) Write(p []byte) (n int, err error) {
 
 	totalWritten := 0
 	// Process any complete lines in the buffer
-	for {
-		line, err := i.interceptReader.ReadBytes('\n')
-		if err == io.EOF {
-			// No complete line, put the bytes back if they're not too large
-			if len(line) > maxBufferSize {
-				return totalWritten, io.ErrShortBuffer
-			}
-			i.interceptBuf.Write(line)
-			break
-		}
-		if err != nil {
-			return totalWritten, err
-		}
-
-		n, err = i.writeFormattedLine(line)
+	scanner := bufio.NewScanner(i.interceptBuf)
+	scanner.Split(bufio.ScanLines) // This handles both \n and \r\n
+	for scanner.Scan() {
+		line := scanner.Text()
+		n, err = i.writeFormattedLine([]byte(line))
 		totalWritten += n
 		if err != nil {
 			return totalWritten, err
