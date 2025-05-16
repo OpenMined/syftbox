@@ -126,7 +126,7 @@ func loadConfig(cmd *cobra.Command) (*server.Config, error) {
 	bindWithDefaults(v, cmd)
 
 	// Read config file
-	if err := viper.ReadInConfig(); err != nil {
+	if err := v.ReadInConfig(); err != nil {
 		enoent := errors.Is(err, os.ErrNotExist)
 		_, ok := err.(viper.ConfigFileNotFoundError)
 		if !enoent && !ok {
