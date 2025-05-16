@@ -1,4 +1,3 @@
-// Package utils provides utility functions and types for the SyftBox daemon.
 package utils
 
 import (
