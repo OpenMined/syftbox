@@ -44,7 +44,7 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 	var errorMessage string
 
 	status := h.mgr.Status()
-	if status.Status == datasitemgr.DatasiteStatusProvisioned {
+	if status.Status == datasitemgr.DatasiteStatusProvisioning || status.Status == datasitemgr.DatasiteStatusProvisioned {
 		cfg := status.Datasite.GetConfig()
 		// share a copy of the config. DO NOT INCLUDE REFRESH TOKEN!
 		dsConfig = &DatasiteConfig{
