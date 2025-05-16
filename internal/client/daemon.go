@@ -12,7 +12,7 @@ import (
 )
 
 type ClientDaemon struct {
-	mgr *datasitemgr.DatasiteManger
+	mgr *datasitemgr.DatasiteManager
 	cps *ControlPlaneServer
 }
 

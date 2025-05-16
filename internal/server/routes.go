@@ -1,11 +1,14 @@
 package server
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	slogGin "github.com/samber/slog-gin"
+
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
@@ -18,7 +21,7 @@ import (
 )
 
 func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
-	r := gin.Default()
+	r := gin.New()
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB
 
 	blobH := blob.New(svc.Blob)
@@ -27,13 +30,24 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	authH := auth.New(svc.Auth)
 	sendH := send.NewSendHandler(hub, svc.Blob)
 
+	httpLogger := slog.Default().WithGroup("http")
+	r.Use(slogGin.NewWithConfig(httpLogger, slogGin.Config{
+		DefaultLevel:      slog.LevelInfo,
+		ClientErrorLevel:  slog.LevelWarn,
+		ServerErrorLevel:  slog.LevelError,
+		WithRequestID:     true,
+		WithRequestHeader: true,
+		WithTraceID:       true,
+		WithSpanID:        true,
+	}))
+	r.Use(gin.Recovery())
 	r.Use(gzip.Gzip(gzip.BestSpeed))
 	r.Use(cors.Default())
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
-	r.GET("/install.sh", install.InstallShell)
-	r.GET("/install.ps1", install.InstallPowershell)
+	r.GET("/install.sh", install.ServeSH)
+	r.GET("/install.ps1", install.ServePS1)
 	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 

@@ -11,9 +11,11 @@ import (
 	"github.com/openmined/syftbox/internal/client/sync"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 type Datasite struct {
+	id           string
 	config       *config.Config
 	sdk          *syftsdk.SyftSDK
 	workspace    *workspace.Workspace
@@ -51,6 +53,7 @@ func New(config *config.Config) (*Datasite, error) {
 	}
 
 	return &Datasite{
+		id:           utils.TokenHex(3),
 		config:       config,
 		sdk:          sdk,
 		workspace:    ws,
@@ -62,7 +65,7 @@ func New(config *config.Config) (*Datasite, error) {
 }
 
 func (d *Datasite) Start(ctx context.Context) error {
-	slog.Info("syftbox client start", "datadir", d.config.DataDir, "email", d.config.Email, "serverURL", d.config.ServerURL, "clientURL", d.config.ClientURL)
+	slog.Info("datasite start", "id", d.id, "datadir", d.config.DataDir, "email", d.config.Email, "serverURL", d.config.ServerURL, "clientURL", d.config.ClientURL)
 
 	// Setup local datasite first.
 	if err := d.workspace.Setup(); err != nil {
@@ -80,12 +83,8 @@ func (d *Datasite) Start(ctx context.Context) error {
 	}
 
 	// Start app scheduler
-	if d.config.AppsEnabled {
-		if err := d.appScheduler.Start(ctx); err != nil {
-			slog.Error("app scheduler", "error", err)
-		}
-	} else {
-		slog.Info("apps disabled")
+	if err := d.appScheduler.Start(ctx); err != nil {
+		slog.Error("app scheduler", "error", err)
 	}
 
 	// Start sync manager. this will block for the first sync cycle.
@@ -106,11 +105,15 @@ func (d *Datasite) Stop() {
 	d.sdk.Close()
 	d.workspace.Unlock()
 	d.httpMsgMgr.Stop()
-	slog.Info("syftbox client stop")
+	slog.Info("datasite stopped", "id", d.id)
 }
 
 func (d *Datasite) GetSDK() *syftsdk.SyftSDK {
 	return d.sdk
+}
+
+func (d *Datasite) GetConfig() *config.Config {
+	return d.config
 }
 
 func (d *Datasite) GetWorkspace() *workspace.Workspace {
