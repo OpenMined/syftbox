@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/mail"
 	"os"
 
 	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/syftsdk"
+	"github.com/openmined/syftbox/internal/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +26,10 @@ func newInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize syftbox datasite",
 		Run: func(cmd *cobra.Command, args []string) {
-			if cfg, err := config.LoadClientConfig(config.DefaultConfigPath); err == nil {
+			// fetched from main/rootCmd/persistentFlags
+			configPath := cmd.Flag("config").Value.String()
+
+			if cfg, err := config.LoadFromFile(configPath); err == nil {
 				fmt.Println("SyftBox Datasite already initialized")
 				fmt.Printf("Config Path: %s\n", green(cfg.Path))
 				fmt.Printf("Email:       %s\n", cyan(cfg.Email))
@@ -50,8 +53,8 @@ func newInitCmd() *cobra.Command {
 				fmt.Scanln(&email)
 			}
 
-			if _, err := mail.ParseAddress(email); err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), "invalid email")
+			if err := utils.ValidateEmail(email); err != nil {
+				fmt.Printf("%s: %s\n", red("ERROR"), err)
 				os.Exit(1)
 			}
 
@@ -62,14 +65,13 @@ func newInitCmd() *cobra.Command {
 			}
 
 			cfg := &config.Config{
-				Email:        email,
-				DataDir:      dataDir,
-				ServerURL:    serverURL,
-				ClientURL:    "http://localhost:8080",
-				AccessToken:  authToken.AccessToken,
-				RefreshToken: authToken.RefreshToken,
-				AppsEnabled:  true,
-				Path:         config.DefaultConfigPath,
+				Email:       email,
+				DataDir:     dataDir,
+				ServerURL:   serverURL,
+				ClientURL:   "http://localhost:8080",
+				AccessToken: authToken.AccessToken,
+				AppsEnabled: true,
+				Path:        configPath,
 			}
 
 			if err := cfg.Save(); err != nil {

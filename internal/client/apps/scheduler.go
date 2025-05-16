@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -154,8 +156,18 @@ func (s *AppScheduler) startApp(ctx context.Context, appPath string) error {
 		return fmt.Errorf("not a valid app at %s", appPath)
 	}
 
+	port := getFreePort()
+
+	procEnvs := make([]string, len(s.subprocessEnv))
+	copy(procEnvs, s.subprocessEnv)
+	if port != "" {
+		procEnvs = append(procEnvs, fmt.Sprintf("SYFTBOX_ASSIGNED_PORT=%s", port))
+	} else {
+		slog.Error("failed to get free port")
+	}
+
 	// Create a new app instance
-	app := NewApp(appPath, s.subprocessEnv)
+	app := NewApp(appPath, procEnvs, port)
 
 	// Start the app
 	if err := app.Start(ctx); err != nil {
@@ -312,4 +324,27 @@ func pathWithoutVenv() string {
 
 	// Rejoin the filtered segments into a single PATH string.
 	return strings.Join(cleanedSegments, string(os.PathListSeparator))
+}
+
+func getFreePort() string {
+	// Listen on a random port by specifying port 0
+	listener, err := net.Listen("tcp", ":0")
+	if err != nil {
+		// Log error since this is important for app functionality
+		slog.Error("failed to get free port", "error", err)
+		return ""
+	}
+	defer listener.Close() // Ensure listener is closed even if type assertion fails
+
+	// Get the actual address being used
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		slog.Error("failed to get TCP address")
+		return ""
+	}
+
+	// Note: There is still a small race condition where the port could be taken
+	// between when we close the listener and when it's used. However, this is
+	// a common approach and the risk is generally acceptable for most use cases.
+	return strconv.Itoa(addr.Port)
 }

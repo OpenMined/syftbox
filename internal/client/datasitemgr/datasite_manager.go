@@ -51,7 +51,7 @@ func (d *DatasiteManager) Start(ctx context.Context) error {
 	}
 
 	slog.Info("default config found. provisioning datasite.")
-	cfg, err := config.LoadClientConfig(config.DefaultConfigPath)
+	cfg, err := config.LoadFromFile(config.DefaultConfigPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}

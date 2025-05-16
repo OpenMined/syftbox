@@ -126,18 +126,18 @@ func loadConfig(cmd *cobra.Command) (*server.Config, error) {
 	bindWithDefaults(v, cmd)
 
 	// Read config file
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("error reading config file '%s': %w", v.ConfigFileUsed(), err)
+	if err := viper.ReadInConfig(); err != nil {
+		enoent := errors.Is(err, os.ErrNotExist)
+		_, ok := err.(viper.ConfigFileNotFoundError)
+		if !enoent && !ok {
+			return nil, fmt.Errorf("config read '%s': %w", v.ConfigFileUsed(), err)
 		}
-	} else {
-		slog.Debug("Loaded configuration from file", "path", v.ConfigFileUsed())
 	}
 
 	// Unmarshal to server.Config
 	var cfg *server.Config
 	if err := v.Unmarshal(&cfg); err != nil {
-		return nil, fmt.Errorf("error unmarshalling config: %w", err)
+		return nil, fmt.Errorf("config read: %w", err)
 	}
 
 	// Validate config
