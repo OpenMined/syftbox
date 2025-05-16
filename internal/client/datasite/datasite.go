@@ -7,6 +7,7 @@ import (
 
 	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/client/messaging"
 	"github.com/openmined/syftbox/internal/client/sync"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
@@ -21,6 +22,7 @@ type Datasite struct {
 	appScheduler *apps.AppScheduler
 	appManager   *apps.AppManager
 	sync         *sync.SyncManager
+	httpMsgMgr   *messaging.HttpMsgManager
 }
 
 func New(config *config.Config) (*Datasite, error) {
@@ -40,8 +42,12 @@ func New(config *config.Config) (*Datasite, error) {
 
 	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
 	appMgr := apps.NewManager(ws.AppsDir)
+	httpMsgMgr, err := messaging.NewHttpMsgManager(sdk, appSched)
+	if err != nil {
+		return nil, fmt.Errorf("http msg manager: %w", err)
+	}
 
-	sync, err := sync.NewManager(ws, sdk)
+	sync, err := sync.NewManager(ws, sdk, httpMsgMgr)
 	if err != nil {
 		return nil, fmt.Errorf("sync manager: %w", err)
 	}
@@ -54,6 +60,7 @@ func New(config *config.Config) (*Datasite, error) {
 		appScheduler: appSched,
 		appManager:   appMgr,
 		sync:         sync,
+		httpMsgMgr:   httpMsgMgr,
 	}, nil
 }
 
@@ -85,6 +92,11 @@ func (d *Datasite) Start(ctx context.Context) error {
 		return fmt.Errorf("sync manager: %w", err)
 	}
 
+	// Start http msg manager
+	if err := d.httpMsgMgr.Start(ctx); err != nil {
+		return fmt.Errorf("http msg manager: %w", err)
+	}
+
 	return nil
 }
 
@@ -92,6 +104,7 @@ func (d *Datasite) Stop() {
 	d.sync.Stop()
 	d.sdk.Close()
 	d.workspace.Unlock()
+	d.httpMsgMgr.Stop()
 	slog.Info("datasite stopped", "id", d.id)
 }
 

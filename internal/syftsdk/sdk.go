@@ -14,6 +14,7 @@ type SyftSDK struct {
 	Datasite *DatasiteAPI
 	Blob     *BlobAPI
 	Events   *EventsAPI
+	SendMsg  *SendMsgAPI
 }
 
 // New creates a new SyftSDK client
@@ -30,6 +31,7 @@ func New(baseURL string) (*SyftSDK, error) {
 
 	datasiteAPI := newDatasiteAPI(client)
 	blobAPI := newBlobAPI(client)
+	sendMsgAPI := NewSendMsgAPI(client)
 	eventsAPI := newEventsAPI(baseURL)
 
 	return &SyftSDK{
@@ -38,6 +40,7 @@ func New(baseURL string) (*SyftSDK, error) {
 		Datasite: datasiteAPI,
 		Blob:     blobAPI,
 		Events:   eventsAPI,
+		SendMsg:  sendMsgAPI,
 	}, nil
 }
 
