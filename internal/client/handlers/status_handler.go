@@ -25,7 +25,7 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManager) *StatusHandler {
 //
 //	@Summary		Get status
 //	@Description	Returns the status of the service
-//	@Tags			status
+//	@Tags			Status
 //	@Produce		json
 //	@Success		200	{object}	StatusResponse
 //	@Failure		503	{object}	ControlPlaneError
@@ -42,11 +42,9 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 
 	var dsConfig *DatasiteConfig
 	var errorMessage string
-	var hasConfig bool
 
 	status := h.mgr.Status()
-	if status.Status == datasitemgr.DatasiteStatusProvisioned {
-		hasConfig = true
+	if status.Status == datasitemgr.DatasiteStatusProvisioning || status.Status == datasitemgr.DatasiteStatusProvisioned {
 		cfg := status.Datasite.GetConfig()
 		// share a copy of the config. DO NOT INCLUDE REFRESH TOKEN!
 		dsConfig = &DatasiteConfig{
@@ -64,7 +62,6 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		Version:   version.Version,
 		Revision:  version.Revision,
 		BuildDate: version.BuildDate,
-		HasConfig: hasConfig,
 		Datasite: &DatasiteInfo{
 			Status: string(status.Status),
 			Error:  errorMessage,

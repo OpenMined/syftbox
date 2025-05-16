@@ -82,12 +82,46 @@ func init() {
 }
 
 func main() {
-	handler := tint.NewHandler(os.Stdout, &tint.Options{
+	// TODO handle log rotation
+	// TODO unique log file for each instance to handle multiple daemons
+	logFile := config.DefaultLogFilePath
+
+	logDir := filepath.Dir(logFile)
+	// Create log directory
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create new log file for this instance
+	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	// Setup handlers for both outputs
+	stdoutHandler := tint.NewHandler(os.Stdout, &tint.Options{
 		Level:      slog.LevelDebug,
 		TimeFormat: "2006-01-02T15:04:05.000Z07:00",
 		NoColor:    !isatty.IsTerminal(os.Stdout.Fd()),
 	})
-	logger := slog.New(handler)
+	logInterceptor := utils.NewLogInterceptor(file)
+	fileHandler := slog.NewTextHandler(logInterceptor, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		// Do not include time as it is added by the log interceptor.
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey && len(groups) == 0 {
+				return slog.Attr{} // Remove the time attribute
+			}
+			return a
+		},
+	})
+
+	// Create multi-handler
+	multiLogHandler := utils.NewMultiLogHandler(stdoutHandler, fileHandler)
+	logger := slog.New(multiLogHandler)
 	slog.SetDefault(logger)
 
 	// Setup root context with signal handling

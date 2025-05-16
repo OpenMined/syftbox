@@ -51,6 +51,7 @@ func (a *AppManager) ListApps() ([]string, error) {
 
 // UninstallApp removes the specified app from the apps directory
 func (a *AppManager) UninstallApp(appName string) error {
+	// TODO stop the app if it is running, otherwise app directory doesn't get deleted properly across OS
 	appDir := filepath.Join(a.AppsDir, appName)
 	if err := os.RemoveAll(appDir); err != nil {
 		return fmt.Errorf("failed to remove app: %w", err)

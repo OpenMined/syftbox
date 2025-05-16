@@ -11,7 +11,7 @@ Follow these steps to get your development environment set up.
     brew install mkcert
     brew install FiloSottile/musl-cross/musl-cross
     go install github.com/air-verse/air@latest
-    go install github.com/swaggo/swag/cmd/swag@latest
+    go install github.com/swaggo/swag/v2/cmd/swag@latest
     ```
     *(For other operating systems, please refer to the official Go documentation.)*
 

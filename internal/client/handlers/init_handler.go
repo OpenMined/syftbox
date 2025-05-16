@@ -31,7 +31,7 @@ func NewInitHandler(mgr *datasitemgr.DatasiteManager, controlPlaneURL string) *I
 //
 //	@Summary		Get token
 //	@Description	Request an email validation token from the syftbox server
-//	@Tags			init
+//	@Tags			Init
 //	@Produce		json
 //	@Param			email		query		string	true	"Email"			Format(email)
 //	@Param			server_url	query		string	true	"Server URL"	Format(url)
@@ -66,7 +66,7 @@ func (h *InitHandler) GetToken(c *gin.Context) {
 //
 //	@Summary		Initialize the client
 //	@Description	Initialize the client with the given configuration
-//	@Tags			init
+//	@Tags			Init
 //	@Accept			json
 //	@Produce		json
 //	@Param			request	body		InitDatasiteRequest	true	"Initialize request"

@@ -149,6 +149,11 @@ type WorkspaceItemCopyResponse struct {
 	Item WorkspaceItem `json:"item"`
 }
 
+// WorkspaceContentRequest represents the request parameters for getting file content
+type WorkspaceContentRequest struct {
+	Path string `form:"path" binding:"required"`
+}
+
 // WorkspaceConflictError represents an error response when there is a conflict with an existing item
 type WorkspaceConflictError struct {
 	ErrorCode    string        `json:"errorCode"`

@@ -30,6 +30,11 @@ func TokenAuth(config TokenAuthConfig) gin.HandlerFunc {
 		token := c.GetHeader("Authorization")
 		token = strings.TrimPrefix(token, "Bearer ")
 
+		// If no token in header, try query parameter
+		if token == "" {
+			token = c.Query("token")
+		}
+
 		// Validate token
 		if token != config.Token {
 			slog.Debug("Invalid authentication token", "ip", c.ClientIP(), "path", c.FullPath())
