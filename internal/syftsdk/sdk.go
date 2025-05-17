@@ -13,7 +13,7 @@ import (
 
 const (
 	RetryInterval        = 5 * time.Second
-	TokenRefreshInterval = 12 * time.Hour
+	TokenRefreshInterval = 24 * time.Hour
 )
 
 // SyftSDK is the main client for interacting with the Syft API
@@ -70,7 +70,9 @@ func (s *SyftSDK) Authenticate(ctx context.Context) error {
 	// if we have an access token, set it
 	if s.config.AccessToken != "" {
 		slog.Debug("sdk using existing access token")
-		s.setAccessToken(s.config.AccessToken)
+		if err := s.setAccessToken(s.config.AccessToken); err != nil {
+			return err
+		}
 	} else {
 		// we have no access token, refresh auth tokens once
 		if err := s.refreshAuthToken(ctx); err != nil {
@@ -106,6 +108,14 @@ func (s *SyftSDK) autoRefreshToken(ctx context.Context) {
 func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 	slog.Debug("sdk refreshing auth tokens")
 
+	refreshToken, err := parseToken(s.config.RefreshToken, RefreshToken)
+	if err != nil {
+		return fmt.Errorf("parse refresh token: %w", err)
+	}
+	if err := refreshToken.ValidateUser(s.config.Email); err != nil {
+		return fmt.Errorf("validate refresh token: %w", err)
+	}
+
 	// refresh auth tokens with current refresh token
 	resp, err := RefreshAuthTokens(ctx, s.config.BaseURL, s.config.RefreshToken)
 	if err != nil {
@@ -113,7 +123,9 @@ func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 	}
 
 	// set access token
-	s.setAccessToken(resp.AccessToken)
+	if err := s.setAccessToken(resp.AccessToken); err != nil {
+		return err
+	}
 
 	// notify callback
 	if s.onAuthTokenUpdate != nil {
@@ -123,10 +135,21 @@ func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 	return nil
 }
 
-func (s *SyftSDK) setAccessToken(accessToken string) {
+func (s *SyftSDK) setAccessToken(accessToken string) error {
+	// validate access token
+	claims, err := parseToken(accessToken, AccessToken)
+	if err != nil {
+		return fmt.Errorf("failed to parse access token: %w", err)
+	}
+	if err := claims.ValidateUser(s.config.Email); err != nil {
+		return fmt.Errorf("access token: %w", err)
+	}
+
 	// set access token
-	slog.Debug("sdk setting access token")
 	s.client.SetAuthToken("Bearer " + accessToken)
-	s.client.SetQueryParam("user", s.config.Email)
-	s.client.SetHeader(HeaderSyftUser, s.config.Email)
+	s.client.SetQueryParam("user", claims.Subject)
+	s.client.SetHeader(HeaderSyftUser, claims.Subject)
+
+	slog.Debug("sdk update access token", "user", claims.Subject, "expiry", claims.ExpiresAt)
+	return nil
 }

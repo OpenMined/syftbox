@@ -137,6 +137,7 @@ func (d *Datasite) handleClientAuth(ctx context.Context) error {
 			return fmt.Errorf("authenticate: %w", err)
 		}
 	}
+	slog.Info("authenticated", "user", d.config.Email)
 
 	return nil
 }

@@ -70,13 +70,13 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 
 	// run sync once and wait before starting watcher//websocket
 	slog.Info("running initial sync")
-	if err := se.runFullSync(ctx); err != nil {
+	if err := se.runFullSync(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("failed to run initial sync", "error", err)
 	}
 
 	// connect to websocket
 	slog.Info("listening for websocket events")
-	if err := se.sdk.Events.Connect(ctx); err != nil {
+	if err := se.sdk.Events.Connect(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return fmt.Errorf("failed to connect websocket: %w", err)
 	}
 

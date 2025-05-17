@@ -62,7 +62,13 @@ var rootCmd = &cobra.Command{
 
 		// start client
 		defer slog.Info("Bye!")
-		return c.Start(cmd.Context())
+
+		if err := c.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("start client", "error", err)
+			return err
+		}
+
+		return nil
 	},
 }
 
