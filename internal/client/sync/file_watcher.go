@@ -15,13 +15,14 @@ type FileWatcher struct {
 func NewFileWatcher(watchDir string) *FileWatcher {
 	return &FileWatcher{
 		watchDir: watchDir,
-		events:   make(chan notify.EventInfo),
+		events:   nil,
 	}
 }
 
 func (fw *FileWatcher) Start(ctx context.Context) error {
 	slog.Info("file watcher start", "dir", fw.watchDir)
 
+	fw.events = make(chan notify.EventInfo)
 	recursivePath := fw.watchDir + "/..."
 	if err := notify.Watch(recursivePath, fw.events, notify.Write); err != nil {
 		return err
@@ -30,8 +31,10 @@ func (fw *FileWatcher) Start(ctx context.Context) error {
 }
 
 func (fw *FileWatcher) Stop() {
-	notify.Stop(fw.events)
-	close(fw.events)
+	if fw.events != nil {
+		notify.Stop(fw.events)
+		close(fw.events)
+	}
 	slog.Info("file watcher stop")
 }
 

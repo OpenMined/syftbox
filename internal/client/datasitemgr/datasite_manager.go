@@ -56,7 +56,13 @@ func (d *DatasiteManager) Start(ctx context.Context) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	return d.newDatasite(ctx, cfg)
+	// if this fails, it means the datasite was provisioned with a bad config
+	// but it can be provisioned again, so don't bubble up the error
+	if err := d.newDatasite(ctx, cfg); err != nil {
+		slog.Error("datasite start", "error", err)
+	}
+
+	return nil
 }
 
 func (d *DatasiteManager) Stop() {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/openmined/syftbox/internal/client"
@@ -30,7 +32,11 @@ func newDaemonCmd() *cobra.Command {
 			}
 
 			defer slog.Info("Bye!")
-			return daemon.Start(cmd.Context())
+			if err := daemon.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("start daemon", "error", err)
+				return err
+			}
+			return nil
 		},
 	}
 
