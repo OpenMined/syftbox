@@ -30,9 +30,10 @@ func newLoginCmd() *cobra.Command {
 
 			// fetched from main/rootCmd/persistentFlags
 			configPath := cmd.Flag("config").Value.String()
-			if cfg, err := config.LoadFromFile(configPath); err == nil {
+
+			if cfg, err := getValidConfig(configPath); err == nil {
+				fmt.Println(green.Render("**Already logged in**"))
 				printConfig(cfg)
-				fmt.Println(green.Render("Already logged in"))
 				os.Exit(0)
 			}
 
@@ -86,8 +87,8 @@ func newLoginCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
+			fmt.Println(green.Render("SyftBox datasite initialized"))
 			printConfig(cfg)
-			fmt.Println(green.Render("\nSyftBox datasite initialized"))
 		},
 	}
 
@@ -98,9 +99,17 @@ func newLoginCmd() *cobra.Command {
 	return cmd
 }
 
+func getValidConfig(configPath string) (*config.Config, error) {
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, cfg.Validate()
+}
+
 func printConfig(cfg *config.Config) {
 	var sb strings.Builder
-	sb.WriteString("SYFTBOX DATASITE INFO\n")
+	sb.WriteString(fmt.Sprintf("\n%s\n", lightGray.Render("SYFTBOX DATASITE CONFIG")))
 	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Email"), cyan.Render(cfg.Email)))
 	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Data"), cyan.Render(cfg.DataDir)))
 	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Config"), cfg.Path))
