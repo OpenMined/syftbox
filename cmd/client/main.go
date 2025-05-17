@@ -35,7 +35,7 @@ var rootCmd = &cobra.Command{
 	PreRunE: func(cmd *cobra.Command, args []string) error {
 		return loadConfig(cmd)
 	},
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Run: func(cmd *cobra.Command, args []string) {
 		// create & validate config
 		cfg := &config.Config{
 			Path:         viper.ConfigFileUsed(),
@@ -44,10 +44,15 @@ var rootCmd = &cobra.Command{
 			ServerURL:    viper.GetString("server_url"),
 			RefreshToken: viper.GetString("refresh_token"),
 			AppsEnabled:  viper.GetBool("apps_enabled"),
-			ClientURL:    "http://localhost:8080", // dummy value to make sure apps dont break
+			ClientURL:    config.DefaultClientURL,
 		}
 		if err := cfg.Validate(); err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "%s: %s - %s\n", red.Bold(true).Render("ERROR"), "syftbox config", err)
+			if errors.Is(err, config.ErrNoRefreshToken) || errors.Is(err, config.ErrInvalidEmail) {
+				fmt.Fprintf(os.Stderr, "Please authenticate by running `syftbox login`\n")
+				os.Exit(1)
+			}
+			os.Exit(1)
 		}
 
 		// all good now, show header
@@ -57,18 +62,17 @@ var rootCmd = &cobra.Command{
 		// create client
 		c, err := client.New(cfg)
 		if err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "%s: %s - %s\n", red.Bold(true).Render("ERROR"), "starting client", err)
+			os.Exit(1)
 		}
 
 		// start client
 		defer slog.Info("Bye!")
 
 		if err := c.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("start client", "error", err)
-			return err
+			fmt.Fprintf(os.Stderr, "%s: %s\n", red.Bold(true).Render("ERROR"), err)
+			os.Exit(1)
 		}
-
-		return nil
 	},
 }
 
@@ -88,14 +92,14 @@ func main() {
 	logDir := filepath.Dir(logFile)
 	// Create log directory
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create log directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %s - %s\n", red.Bold(true).Render("ERROR"), "create log directory", err)
 		os.Exit(1)
 	}
 
 	// Create new log file for this instance
 	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %s - %s\n", red.Bold(true).Render("ERROR"), "open log file", err)
 		os.Exit(1)
 	}
 	defer file.Close()

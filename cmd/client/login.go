@@ -70,7 +70,7 @@ func newLoginCmd() *cobra.Command {
 				Email:        email,
 				DataDir:      dataDir,
 				ServerURL:    serverURL,
-				ClientURL:    "http://localhost:8080",
+				ClientURL:    config.DefaultClientURL,
 				RefreshToken: authToken.RefreshToken,
 				AccessToken:  authToken.AccessToken, // not gonna be serialized
 				AppsEnabled:  true,

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -16,14 +17,14 @@ var (
 	home, _            = os.UserHomeDir()
 	DefaultConfigPath  = filepath.Join(home, ".syftbox", "config.json")
 	DefaultServerURL   = "https://syftboxdev.openmined.org"
-	DefaultClientURL   = "http://localhost:8080"
+	DefaultClientURL   = "http://localhost:7938"
 	DefaultLogFilePath = filepath.Join(home, ".syftbox", "logs", "SyftBoxDaemon.log")
 )
 
 var (
-	ErrNoServerURL      = errors.New("`server url` is missing")
-	ErrServerURLInvalid = errors.New("`server url` is not valid")
-	ErrNoRefreshToken   = errors.New("`refresh token` is missing")
+	ErrInvalidURL     = errors.New("invalid url")
+	ErrNoRefreshToken = errors.New("credentials missing")
+	ErrInvalidEmail   = utils.ErrInvalidEmail
 )
 
 type Config struct {
@@ -62,12 +63,16 @@ func (c *Config) Validate() error {
 	}
 
 	if err := utils.ValidateEmail(c.Email); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInvalidEmail, err)
 	}
 	c.Email = strings.ToLower(c.Email)
 
 	if err := validateURL(c.ServerURL); err != nil {
-		return err
+		return fmt.Errorf("invalid server url: %w", err)
+	}
+
+	if err := validateURL(c.ClientURL); err != nil {
+		return fmt.Errorf("invalid client url: %w", err)
 	}
 
 	if c.RefreshToken == "" {
@@ -111,9 +116,9 @@ func LoadFromReader(path string, reader io.ReadCloser) (*Config, error) {
 
 func validateURL(urlString string) error {
 	if urlString == "" {
-		return ErrNoServerURL
-	} else if _, err := url.Parse(urlString); err != nil {
-		return ErrServerURLInvalid
+		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
+	} else if _, err := url.ParseRequestURI(urlString); err != nil {
+		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
 	}
 	return nil
 }
