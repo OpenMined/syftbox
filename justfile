@@ -96,7 +96,7 @@ build-server:
 
 [group('build')]
 build-all:
-    goreleaser release --snapshot --clean --verbose
+    goreleaser release --snapshot --clean
 
 [group('deploy')]
 deploy-client:
