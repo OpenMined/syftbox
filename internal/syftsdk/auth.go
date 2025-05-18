@@ -3,7 +3,10 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"regexp"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/openmined/syftbox/internal/utils"
 	"resty.dev/v3"
 )
 
@@ -13,9 +16,21 @@ const (
 	authRefresh    = "/auth/refresh"
 )
 
+var (
+	regexOTP = regexp.MustCompile(`^[0-9A-Z]{8}$`)
+)
+
 // VerifyEmail starts the Email verification flow by requesting a one-time password (OTP) from the server.
 func VerifyEmail(ctx context.Context, serverURL string, email string) error {
 	var sdkErr SyftSDKError
+
+	if serverURL == "" {
+		return ErrNoServerURL
+	}
+
+	if !utils.IsValidEmail(email) {
+		return ErrInvalidEmail
+	}
 
 	client := resty.New().SetBaseURL(serverURL)
 
@@ -28,14 +43,14 @@ func VerifyEmail(ctx context.Context, serverURL string, email string) error {
 		Post(authOtpRequest)
 
 	if err != nil {
-		return err
+		return fmt.Errorf("request verification code: %w", err)
 	}
 
 	if res.IsError() {
 		if sdkErr.Error != "" {
-			return fmt.Errorf("failed to request verification code: %s", sdkErr.Error)
+			return fmt.Errorf("request verification code: %s", sdkErr.Error)
 		}
-		return fmt.Errorf("failed to request verification code: %s", res.String())
+		return fmt.Errorf("request verification code: %s", res.String())
 	}
 
 	return nil
@@ -44,6 +59,14 @@ func VerifyEmail(ctx context.Context, serverURL string, email string) error {
 func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmailCodeRequest) (*AuthTokenResponse, error) {
 	var resp AuthTokenResponse
 	var sdkErr SyftSDKError
+
+	if serverURL == "" {
+		return nil, ErrNoServerURL
+	}
+
+	if !IsValidOTP(codeReq.Code) {
+		return nil, ErrInvalidOTP
+	}
 
 	client := resty.New().SetBaseURL(serverURL)
 
@@ -55,15 +78,65 @@ func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmail
 		Post(authOtpVerify)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("verify email code: %w", err)
 	}
 
 	if res.IsError() {
 		if sdkErr.Error != "" {
-			return nil, fmt.Errorf("failed to verify OTP: %s", sdkErr.Error)
+			return nil, fmt.Errorf("verify email code: %s", sdkErr.Error)
 		}
-		return nil, fmt.Errorf("failed to verify OTP: %s", res.String())
+		return nil, fmt.Errorf("verify email code: %s", res.String())
 	}
 
 	return &resp, nil
+}
+
+func RefreshAuthTokens(ctx context.Context, serverURL string, refreshToken string) (*AuthTokenResponse, error) {
+	var resp AuthTokenResponse
+	var sdkErr SyftSDKError
+
+	if serverURL == "" {
+		return nil, ErrNoServerURL
+	}
+
+	if refreshToken == "" {
+		return nil, ErrNoRefreshToken
+	}
+
+	client := resty.New().SetBaseURL(serverURL)
+
+	res, err := client.R().
+		SetContext(ctx).
+		SetBody(&RefreshTokenRequest{
+			RefreshToken: refreshToken,
+		}).
+		SetResult(&resp).
+		SetError(&sdkErr).
+		Post(authRefresh)
+
+	if err != nil {
+		return nil, fmt.Errorf("refresh auth tokens: %w", err)
+	}
+
+	if res.IsError() {
+		return nil, fmt.Errorf("refresh auth tokens: %s", res.String())
+	}
+
+	return &resp, nil
+}
+
+func IsValidOTP(otp string) bool {
+	return len(otp) == 8 && regexOTP.MatchString(otp)
+}
+
+func parseToken(token string, tokenType AuthTokenType) (*AuthClaims, error) {
+	var claims AuthClaims
+	_, _, err := jwt.NewParser().ParseUnverified(token, &claims)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Type != tokenType {
+		return nil, fmt.Errorf("invalid token type. expected %s, got %s", tokenType, claims.Type)
+	}
+	return &claims, nil
 }

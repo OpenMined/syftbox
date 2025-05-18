@@ -44,7 +44,7 @@ func newAppCmdInstall() *cobra.Command {
 			repo := args[0]
 			installer, err := getAppManager()
 			if err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
 			app, err := installer.InstallRepo(repo, &apps.RepoOpts{
@@ -54,11 +54,11 @@ func newAppCmdInstall() *cobra.Command {
 			}, force)
 
 			if err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
 
-			fmt.Printf("Installed app '%s' at '%s'\n", green(app.Name), cyan(app.Path))
+			fmt.Printf("Installed app '%s' at '%s'\n", green.Render(app.Name), cyan.Render(app.Path))
 		},
 	}
 
@@ -81,15 +81,15 @@ func newAppCmdUninstall() *cobra.Command {
 			appName := args[0]
 			manager, err := getAppManager()
 			if err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
 			err = manager.UninstallApp(appName)
 			if err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
-			fmt.Printf("Uninstalled app '%s'\n", green(appName))
+			fmt.Printf("Uninstalled app '%s'\n", green.Render(appName))
 		},
 	}
 
@@ -104,24 +104,24 @@ func newAppCmdList() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			manager, err := getAppManager()
 			if err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
 
 			apps, err := manager.ListApps()
 			if err != nil {
-				fmt.Printf("%s: %s\n", red("ERROR"), err)
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
 
 			if len(apps) == 0 {
-				fmt.Printf("No SyftBox Apps installed at '%s'\n", cyan(manager.AppsDir))
+				fmt.Printf("No SyftBox Apps installed at '%s'\n", cyan.Render(manager.AppsDir))
 				os.Exit(0)
 			}
 
-			fmt.Printf("SyftBox Apps at '%s'\n", cyan(manager.AppsDir))
+			fmt.Printf("SyftBox Apps at '%s'\n", cyan.Render(manager.AppsDir))
 			for _, app := range apps {
-				fmt.Printf("- %s\n", green(app))
+				fmt.Printf("- %s\n", green.Render(app))
 			}
 		},
 	}
