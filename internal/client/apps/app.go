@@ -47,7 +47,7 @@ func (a *App) Start(ctx context.Context) error {
 	a.Cancel = cancel
 
 	// Prepare the command to run the app
-	a.Process = exec.CommandContext(appCtx, "sh", runScript)
+	a.Process = a.buildCommand(appCtx, runScript)
 	a.Process.Dir = a.Path
 
 	// Set environment variables
