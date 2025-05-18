@@ -64,7 +64,7 @@ func (a *AppManager) UninstallApp(appName string) error {
 // Returns the installed App and any error encountered
 func (a *AppManager) InstallRepo(repoUrl string, opts *RepoOpts, force bool) (*App, error) {
 	// if url is not a valid git url, return an error
-	parsed, err := url.Parse(repoUrl)
+	parsed, err := url.ParseRequestURI(repoUrl)
 	if err != nil {
 		return nil, fmt.Errorf("invalid url: %w", err)
 	}
