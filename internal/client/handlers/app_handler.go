@@ -299,17 +299,14 @@ func findProcess(ds *datasite.Datasite, appName string) (*process.Process, error
 	return nil, nil
 }
 
-func getListenPorts(process *process.Process) []int64 {
-	ports := make([]int64, 0)
+func getListenPorts(process *process.Process) []uint32 {
+	ports := make([]uint32, 0)
 
 	// Recursively travel down the process tree and return the port of all connections that is not 0
 	connections, _ := process.Connections()
 	for _, connection := range connections {
 		if connection.Laddr.Port != 0 && connection.Status == "LISTEN" {
-			port := int64(connection.Laddr.Port)
-			if !slices.Contains(ports, port) {
-				ports = append(ports, port)
-			}
+			ports = append(ports, connection.Laddr.Port)
 		}
 	}
 	children, _ := process.Children()
@@ -317,7 +314,9 @@ func getListenPorts(process *process.Process) []int64 {
 		childPorts := getListenPorts(child)
 		ports = append(ports, childPorts...)
 	}
+
 	slices.Sort(ports)
+	ports = slices.Compact(ports)
 	return ports
 }
 

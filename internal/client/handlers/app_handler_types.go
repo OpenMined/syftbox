@@ -35,7 +35,7 @@ type AppResponse struct {
 	// Process ID of the app's run.sh
 	PID int32 `json:"pid"`
 	// List of ports this app is listening on
-	Ports []int64 `json:"ports"`
+	Ports []uint32 `json:"ports"`
 	// Extended process statistics (optional)
 	ProcessStats *ProcessStats `json:"processStats,omitempty"`
 }
