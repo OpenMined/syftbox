@@ -198,8 +198,6 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 	switch msg.Message.Type {
 	case syftmsg.MsgFileWrite:
 		s.handleFileWrite(msg)
-	// case syftmsg.MsgHttp:
-	// 	s.handleReceivedHttp(msg)
 	// case message.MsgFileDelete:
 	// 	s.handleFileDelete(msg)
 	default:
@@ -273,28 +271,6 @@ func isRpc(path string) bool {
 			strings.HasSuffix(path, ".response") ||
 			strings.HasSuffix(path, "rpc.schema.json"))
 }
-
-// func (s *Server) handleReceivedHttp(msg *ws.ClientMessage) {
-// 	slog.Info("received http", "msg", msg)
-
-// 	// unwrap the data
-// 	data, _ := msg.Message.Data.(syftmsg.HttpMsg)
-
-// 	slog.Info("received http======================", "msg", msg, "data", data)
-
-// 	// save the message to the blob
-// 	blobPath := fmt.Sprintf("http/%s/%s/%s", data.To, data.From, data.Id)
-// 	if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
-// 		Key:  blobPath,
-// 		ETag: data.Id,
-// 		Body: bytes.NewReader(data.Body),
-// 	}); err != nil {
-// 		slog.Error("failed to save message to blob storage", "error", err)
-// 	}
-
-// 	slog.Info("saved message to blob storage======================", "blobPath", blobPath)
-
-// }
 
 // func (s *Server) handleFileDelete(msg *ws.ClientMessage) {
 // 	slog.Info("FILE_DELETE", "client", msg.Info.User, "msgId", msg.Message.Id)
