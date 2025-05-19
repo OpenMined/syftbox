@@ -485,46 +485,6 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 	}
 }
 
-// func (se *SyncEngine) handleHttpUpload(path string) {
-// 	slog.Info("handleHttpUpload", "path", path)
-
-// 	// read the file
-// 	content, err := os.ReadFile(path)
-// 	if err != nil {
-// 		slog.Error("handleHttpUpload read file", "error", err)
-// 		return
-// 	}
-
-// 	var syftRPCMsg syftmsg.SyftRPCMessage
-// 	err = json.Unmarshal(content, &syftRPCMsg)
-// 	if err != nil {
-// 		slog.Error("handleHttpUpload unmarshal", "error", err)
-// 		return
-// 	}
-
-// 	slog.Info("handleHttpUpload", "syftRPCMsg", syftRPCMsg)
-
-// 	msg := syftmsg.NewHttpMsg(
-// 		syftRPCMsg.Sender,
-// 		syftRPCMsg.URL.Datasite,
-// 		syftRPCMsg.URL.AppName,
-// 		syftRPCMsg.URL.Endpoint,
-// 		string(syftRPCMsg.Method),
-// 		syftRPCMsg.Body,
-// 		syftRPCMsg.Headers,
-// 		int(syftRPCMsg.StatusCode),
-// 		syftmsg.HttpMsgTypeResponse,
-// 	)
-// 	// send the httpMsg to the EVENT server
-// 	err = se.sdk.Events.Send(msg)
-// 	if err != nil {
-// 		slog.Error("handleHttpUpload send", "error", err)
-// 	}
-
-// 	slog.Info("handleHttpUpload sent", "msg", msg)
-
-// }
-
 func (se *SyncEngine) handleHttp(msg *syftmsg.Message) {
 	httpMsg := msg.Data.(syftmsg.HttpMsg)
 
