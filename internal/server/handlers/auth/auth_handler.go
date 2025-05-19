@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"text/template"
 	"time"
@@ -57,11 +58,13 @@ func (h *AuthHandler) OTPRequest(ctx *gin.Context) {
 	}
 
 	if err := h.sendEmailOTP(ctx, req.Email, emailOTP); err != nil {
-		ctx.Error(fmt.Errorf("failed to send email: %w", err))
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"error": err.Error(),
-		})
-		return
+		// ctx.Error(fmt.Errorf("failed to send email: %w", err))
+		// ctx.JSON(http.StatusInternalServerError, gin.H{
+		// 	"error": err.Error(),
+		// })
+		// return
+		slog.Info("failed to send email", "err", err)
+		slog.Info("req", "email", req.Email, "emailOTP", emailOTP)
 	}
 
 	ctx.String(http.StatusOK, "")
