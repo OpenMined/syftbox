@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -455,6 +456,8 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				go se.handlePriorityError(msg)
 			case syftmsg.MsgFileWrite:
 				go se.handlePriorityDownload(msg)
+			case syftmsg.MsgHttp:
+				go se.handleHttp(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -480,6 +483,46 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 			go se.handlePriorityUpload(path)
 		}
 	}
+}
+
+func (se *SyncEngine) handleHttp(msg *syftmsg.Message) {
+	httpMsg := msg.Data.(syftmsg.HttpMsg)
+
+	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
+
+	// Unwrap the into a syftmsg.SyftRPCMessage
+	var fileExtension string
+	syftRPCMsg := syftmsg.NewSyftRPCMessage(httpMsg)
+
+	if httpMsg.Type == syftmsg.HttpMsgTypeRequest {
+		fileExtension = ".request"
+	} else if httpMsg.Type == syftmsg.HttpMsgTypeResponse {
+		fileExtension = ".response"
+	} else {
+		slog.Debug("handleHttp unhandled type", "type", httpMsg.Type)
+		return
+	}
+
+	fileName := syftRPCMsg.ID.String() + fileExtension
+
+	filePath := filepath.Join(se.workspace.DatasiteAbsPath(syftRPCMsg.URL.ToLocalPath()), fileName)
+
+	slog.Info("file", "path", filePath, "extension", fileExtension)
+
+	jsonMsg, err := json.Marshal(syftRPCMsg)
+	if err != nil {
+		slog.Error("handleHttp marshal syftRPCMsg", "error", err)
+		return
+	}
+
+	// write the jsonMsg to the file
+	err = os.WriteFile(filePath, jsonMsg, 0644)
+	if err != nil {
+		slog.Error("handleHttp write file", "error", err)
+		return
+	}
+
+	slog.Info("SyftRPC Message", "msg", string(jsonMsg))
 }
 
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {
