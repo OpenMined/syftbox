@@ -150,3 +150,17 @@ func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// func ToHttpMsg(syftRPCMsg *SyftRPCMessage) *HttpMsg {
+// 	return &HttpMsg{
+// 		Id:      syftRPCMsg.ID.String(),
+// 		From:    syftRPCMsg.Sender,
+// 		To:      syftRPCMsg.URL.Datasite,
+// 		AppName: syftRPCMsg.URL.AppName,
+// 		AppEp:   syftRPCMsg.URL.Endpoint,
+// 		Method:  string(syftRPCMsg.Method),
+// 		Status:  int(syftRPCMsg.StatusCode),
+// 		Headers: syftRPCMsg.Headers,
+// 		Body:    syftRPCMsg.Body,
+// 	}
+// }
