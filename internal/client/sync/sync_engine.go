@@ -24,16 +24,18 @@ var (
 )
 
 type SyncEngine struct {
-	workspace    *workspace.Workspace
-	sdk          *syftsdk.SyftSDK
-	journal      *SyncJournal
-	localState   *SyncLocalState
-	syncStatus   *SyncStatus
-	watcher      *FileWatcher
-	ignoreList   *SyncIgnoreList
-	priorityList *SyncPriorityList
-	wg           sync.WaitGroup
-	muSync       sync.Mutex
+	workspace     *workspace.Workspace
+	sdk           *syftsdk.SyftSDK
+	journal       *SyncJournal
+	localState    *SyncLocalState
+	syncStatus    *SyncStatus
+	watcher       *FileWatcher
+	ignoreList    *SyncIgnoreList
+	priorityList  *SyncPriorityList
+	wg            sync.WaitGroup
+	muSync        sync.Mutex
+	lastSyncTime  time.Time
+	syncIntervals []float64 // Stores last 5 intervals between syncs in seconds
 }
 
 func NewSyncEngine(
@@ -137,18 +139,28 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 
 	tStart := time.Now()
 
+	// Calculate interval since last sync
+	if !se.lastSyncTime.IsZero() {
+		interval := tStart.Sub(se.lastSyncTime).Seconds()
+		se.syncIntervals = append(se.syncIntervals, interval)
+		if len(se.syncIntervals) > 5 {
+			se.syncIntervals = se.syncIntervals[1:]
+		}
+	}
+	se.lastSyncTime = tStart
+
 	remoteState, err := se.getRemoteState(ctx)
 	if err != nil {
 		return fmt.Errorf("get remote state: %w", err)
 	}
 	tRemoteState := time.Since(tStart)
 
-	tlocal := time.Now()
+	tlocalStart := time.Now()
 	localState, err := se.localState.Scan()
 	if err != nil {
 		return fmt.Errorf("scan local state: %w", err)
 	}
-	tLocalState := time.Since(tlocal)
+	tLocalState := time.Since(tlocalStart)
 
 	journalCount, err := se.journal.Count()
 	if err != nil {
@@ -161,19 +173,46 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 		se.rebuildJournal(localState, remoteState)
 	}
 
-	tjournal := time.Now()
+	tjournalStart := time.Now()
 	journalState, err := se.journal.GetState()
 	if err != nil {
 		return fmt.Errorf("get journal state: %w", err)
 	}
-	tJournalState := time.Since(tjournal)
+	tJournalState := time.Since(tjournalStart)
 
-	treconcile := time.Now()
+	tReconcileStart := time.Now()
 	result := se.reconcile(localState, remoteState, journalState)
-	tReconcile := time.Since(treconcile)
+	tReconcile := time.Since(tReconcileStart)
 
 	if result.HasChanges() {
-		slog.Debug("reconcile decisions", "downloads", result.LocalWrites, "uploads", result.RemoteWrites, "remoteDeletes", result.RemoteDeletes, "localDeletes", result.LocalDeletes, "conflicts", result.Conflicts)
+		slog.Debug("reconcile decisions",
+			"downloads", result.LocalWrites,
+			"uploads", result.RemoteWrites,
+			"remoteDeletes", result.RemoteDeletes,
+			"localDeletes", result.LocalDeletes,
+			"conflicts", result.Conflicts,
+			"syncing", se.syncStatus.status,
+		)
+	}
+
+	// temporary workaround for detecting bad sync
+	if len(result.RemoteDeletes) > result.Total/2 {
+		// delete the journal so client run doesn't trigger bad sync again
+		if err := se.journal.Destroy(); err != nil {
+			slog.Error("failed to clear journal", "error", err)
+		}
+
+		// dump details
+		slog.Error("FATAL! bad reconcile. Please report this issue.",
+			"total", result.Total,
+			"remoteDeletes", len(result.RemoteDeletes),
+			"journalState", len(journalState),
+			"localState", len(localState),
+			"remoteState", len(remoteState),
+			"lastSyncIntervals", se.syncIntervals,
+		)
+
+		os.Exit(2)
 	}
 
 	se.executeReconcileOperations(ctx, result)
@@ -181,6 +220,7 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 
 	if result.HasChanges() {
 		slog.Info("full sync",
+			"total", result.Total,
 			"downloads", len(result.LocalWrites),
 			"uploads", len(result.RemoteWrites),
 			"localDeletes", len(result.LocalDeletes),
@@ -196,10 +236,6 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 			"tsReconcile", tReconcile,
 			"tsTotal", tTotal,
 		)
-	}
-
-	if len(se.syncStatus.status) > 0 {
-		slog.Debug("full sync", "syncing", se.syncStatus.status)
 	}
 
 	return nil
@@ -218,6 +254,8 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 	for path := range remoteState {
 		allPaths[path] = struct{}{}
 	}
+
+	reconcileOps.Total = len(allPaths)
 
 	for path := range allPaths {
 		local, localExists := localState[path]
@@ -238,12 +276,12 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 			continue
 		}
 
-		localModified := localExists && journalExists && se.hasModified(local, journal)
-		remoteModified := remoteExists && journalExists && se.hasModified(remote, journal)
 		localCreated := localExists && !journalExists && !remoteExists
 		remoteCreated := remoteExists && !journalExists && !localExists
 		localDeleted := !localExists && journalExists && remoteExists
 		remoteDeleted := !remoteExists && journalExists && localExists
+		localModified := localExists && se.hasModified(local, journal)
+		remoteModified := remoteExists && se.hasModified(remote, journal)
 
 		// early checks
 		if !localExists && !remoteExists && journalExists {
