@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -34,7 +33,11 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 
 	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return fmt.Errorf("walk error: %w", walkErr)
+			return fmt.Errorf("walk error %s: %w", path, walkErr)
+		}
+
+		if d == nil {
+			return fmt.Errorf("walk error %s: nil directory entry", path)
 		}
 
 		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
@@ -44,18 +47,17 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 		// Get file info
 		info, err := d.Info()
 		if err != nil {
-			slog.Warn("Failed to get file info", "path", path, "error", err)
-			return nil // Skip this file
+			return fmt.Errorf("walk file info %s: %w", path, err)
 		}
 
 		// Get relative path
 		relPath, err := filepath.Rel(s.rootDir, path)
 		if err != nil {
-			return fmt.Errorf("walk rel path: %w", err)
+			return fmt.Errorf("walk rel path: %s: %w", path, err)
 		}
 		relPath = workspace.NormPath(relPath)
 
-		// Caching Logic
+		// Etag
 		var etag string
 		prevMeta, exists := s.lastState[relPath]
 
@@ -66,8 +68,7 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 			// File is new or modified, calculate ETag
 			calculatedETag, err := calculateETag(path)
 			if err != nil {
-				slog.Warn("Failed to calculate ETag", "file", path, "error", err)
-				return nil // Skip this file if ETag calculation fails
+				return fmt.Errorf("failed to calculate ETag for %s: %w", path, err)
 			}
 			etag = calculatedETag
 		}
