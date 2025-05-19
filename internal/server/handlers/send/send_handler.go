@@ -73,6 +73,6 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		return
 	}
 
-	ctx.PureJSON(http.StatusOK, gin.H{"message": "message sent"})
+	ctx.PureJSON(http.StatusOK, gin.H{"message": "Request accepted", "request_id": msg.Data.(*syftmsg.HttpMsg).Id})
 
 }

@@ -495,9 +495,9 @@ func (se *SyncEngine) handleHttp(msg *syftmsg.Message) {
 	syftRPCMsg := syftmsg.NewSyftRPCMessage(httpMsg)
 
 	if httpMsg.Type == syftmsg.HttpMsgTypeRequest {
-		fileExtension = ".request"
+		fileExtension = ".http.request"
 	} else if httpMsg.Type == syftmsg.HttpMsgTypeResponse {
-		fileExtension = ".response"
+		fileExtension = ".http.response"
 	} else {
 		slog.Debug("handleHttp unhandled type", "type", httpMsg.Type)
 		return
