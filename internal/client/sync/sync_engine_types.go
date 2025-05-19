@@ -1,28 +1,28 @@
 package sync
 
 // BatchLocalDelete represents a collection of sync operations for items deleted locally.
-type BatchLocalDelete map[string]*SyncOperation
+type BatchLocalDelete = map[string]*SyncOperation
 
 // BatchRemoteDelete represents a collection of sync operations for items deleted remotely.
-type BatchRemoteDelete map[string]*SyncOperation
+type BatchRemoteDelete = map[string]*SyncOperation
 
 // BatchLocalWrite represents a collection of sync operations for items created or updated locally.
-type BatchLocalWrite map[string]*SyncOperation
+type BatchLocalWrite = map[string]*SyncOperation
 
 // BatchRemoteWrite represents a collection of sync operations for items created or updated remotely.
-type BatchRemoteWrite map[string]*SyncOperation
+type BatchRemoteWrite = map[string]*SyncOperation
 
 // BatchConflict represents a collection of sync operations where conflicts were detected.
-type BatchConflict map[string]*SyncOperation
+type BatchConflict = map[string]*SyncOperation
 
 // BatchUnchanged represents a set of paths that were compared and found to be unchanged.
-type BatchUnchanged map[string]struct{}
+type BatchUnchanged = map[string]struct{}
 
 // BatchCleanups represents a set of paths that require local cleanup (e.g., removing tombstones).
-type BatchCleanups map[string]struct{}
+type BatchCleanups = map[string]struct{}
 
 // BatchIgnored represents a set of paths that were ignored.
-type BatchIgnored map[string]struct{}
+type BatchIgnored = map[string]struct{}
 
 // ReconcileOperations aggregates the results of a sync reconciliation process,
 // categorizing operations based on their type and origin.
@@ -35,6 +35,7 @@ type ReconcileOperations struct {
 	UnchangedPaths BatchUnchanged
 	Cleanups       BatchCleanups
 	Ignored        BatchIgnored
+	Total          int
 }
 
 // NewReconcileOperations initializes and returns an empty ReconcileOperations struct.
@@ -48,6 +49,7 @@ func NewReconcileOperations() *ReconcileOperations {
 		UnchangedPaths: make(BatchUnchanged),
 		Cleanups:       make(BatchCleanups),
 		Ignored:        make(BatchIgnored),
+		Total:          0,
 	}
 }
 

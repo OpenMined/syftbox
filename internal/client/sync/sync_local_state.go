@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/openmined/syftbox/internal/client/workspace"
 )
@@ -15,6 +16,7 @@ import (
 type SyncLocalState struct {
 	rootDir   string
 	lastState map[string]*FileMetadata // Stores the result of the last successful scan
+	mu        sync.RWMutex
 }
 
 func NewSyncLocalState(rootDir string) *SyncLocalState {
@@ -25,6 +27,9 @@ func NewSyncLocalState(rootDir string) *SyncLocalState {
 }
 
 func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	newState := make(map[string]*FileMetadata)
 
 	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -87,7 +92,7 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 	// Update the cache for the next run
 	s.lastState = newState
 
-	return newState, nil
+	return s.lastState, nil
 }
 
 // calculateETag opens a file, calculates its MD5 hash, and returns it as a hex string.
