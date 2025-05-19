@@ -61,12 +61,31 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	//  send the message to the websocket hub
 	if ok := h.hub.SendMessageUser(header.To, msg); !ok {
 		// Handle saving to blob storage
-		blobPath := fmt.Sprintf("http/%s/%s/%s", header.From, header.To, httpMsg.Id)
+		// get the blob path
+		blobPath := path.Join(
+			header.From,
+			"app_data",
+			header.AppName,
+			"rpc",
+			header.AppEp,
+			fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
+		)
+
+		// convert httpMsg to RPCMsg
+		rpcMsg := syftmsg.NewSyftRPCMessage(*httpMsg)
+
+		rpcMsgBytes, err := json.Marshal(rpcMsg)
+		if err != nil {
+			slog.Error("failed to marshal RPCMsg", "error", err)
+			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
 		if _, err := h.blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 			Key:  blobPath,
-			ETag: httpMsg.Id,
-			Body: bytes.NewReader(bodyBytes),
-			Size: int64(len(bodyBytes)),
+			ETag: rpcMsg.ID.String(),
+			Body: bytes.NewReader(rpcMsgBytes),
+			Size: int64(len(rpcMsgBytes)),
 		}); err != nil {
 			slog.Error("failed to save message to blob storage", "error", err)
 			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -80,8 +99,15 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		return
 	}
 
-	// check if the message is present in the blob storage, try it for 5 seconds
-	blobPath := path.Join(header.From, "app_data", header.AppName, "rpc", header.AppEp, fmt.Sprintf("%s.response", httpMsg.Id))
+	// create blobPath
+	blobPath := path.Join(
+		header.From,
+		"app_data",
+		header.AppName,
+		"rpc",
+		header.AppEp,
+		fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
+	)
 
 	// poll for the object
 	object, err := h.pollForObject(context.Background(), blobPath)
@@ -104,14 +130,26 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	// read the object body
 	bodyBytes, readErr := io.ReadAll(object.Body)
 	if readErr != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": readErr.Error()})
+		ctx.PureJSON(
+			http.StatusInternalServerError,
+			gin.H{
+				"Failed to read object": readErr.Error(),
+				"request_id":            httpMsg.Id,
+			},
+		)
 		return
 	}
 
 	// unmarshal the json object
 	responseBody, unmarshalErr := unmarshalResponse(bodyBytes)
 	if unmarshalErr != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"Failed to unmarshal response": unmarshalErr.Error()})
+		ctx.PureJSON(
+			http.StatusInternalServerError,
+			gin.H{
+				"Failed to unmarshal response": unmarshalErr.Error(),
+				"request_id":                   httpMsg.Id,
+			},
+		)
 		return
 	}
 
@@ -130,7 +168,12 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 
 	requestId := ctx.Query("request_id")
 	if requestId == "" {
-		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": "request_id is required"})
+		ctx.PureJSON(
+			http.StatusBadRequest, gin.H{
+				"error":      "request_id is required",
+				"request_id": requestId,
+			},
+		)
 		return
 	}
 
@@ -139,7 +182,12 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	appEndpoint := ctx.Query("app_endpoint")
 	user := ctx.Query("user")
 	if appName == "" || appEndpoint == "" || user == "" {
-		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": "app_name, app_endpoint and user are required"})
+		ctx.PureJSON(
+			http.StatusBadRequest, gin.H{
+				"error":      "app_name, app_endpoint and user are required",
+				"request_id": requestId,
+			},
+		)
 		return
 	}
 
@@ -173,12 +221,18 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	}
 
 	// send the response to the client
-	ctx.PureJSON(http.StatusOK, gin.H{"message": "Response received", "response": responseBody})
+	ctx.PureJSON(
+		http.StatusOK, gin.H{
+			"message":    "Response received",
+			"response":   responseBody,
+			"request_id": requestId,
+		},
+	)
 }
 
 func (h *SendHandler) pollForObject(ctx context.Context, blobPath string) (*blob.GetObjectResponse, error) {
 	startTime := time.Now()
-	maxTimeout := 30 * time.Second // or whatever timeout you want
+	maxTimeout := 10 * time.Second // or whatever timeout you want
 
 	for {
 		// check if timeout has been reached
