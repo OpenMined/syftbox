@@ -457,7 +457,7 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 			case syftmsg.MsgFileWrite:
 				go se.handlePriorityDownload(msg)
 			case syftmsg.MsgHttp:
-				go se.handleHttp(msg)
+				go se.processHttpMessage(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -485,44 +485,41 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 	}
 }
 
-func (se *SyncEngine) handleHttp(msg *syftmsg.Message) {
+func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	httpMsg := msg.Data.(syftmsg.HttpMsg)
 
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
 
 	// Unwrap the into a syftmsg.SyftRPCMessage
-	var fileExtension string
 	syftRPCMsg := syftmsg.NewSyftRPCMessage(httpMsg)
 
-	if httpMsg.Type == syftmsg.HttpMsgTypeRequest {
-		fileExtension = ".request"
-	} else if httpMsg.Type == syftmsg.HttpMsgTypeResponse {
-		fileExtension = ".response"
-	} else {
-		slog.Debug("handleHttp unhandled type", "type", httpMsg.Type)
-		return
+	getFileName := func(syftRPCMsg *syftmsg.SyftRPCMessage) string {
+		return syftRPCMsg.ID.String() + "." + string(httpMsg.Type)
 	}
 
-	fileName := syftRPCMsg.ID.String() + fileExtension
+	fileName := getFileName(syftRPCMsg)
 
-	filePath := filepath.Join(se.workspace.DatasiteAbsPath(syftRPCMsg.URL.ToLocalPath()), fileName)
+	getRPCPath := func(syftRPCMsg *syftmsg.SyftRPCMessage) string {
+		return filepath.Join(se.workspace.DatasiteAbsPath(syftRPCMsg.URL.ToLocalPath()), fileName)
+	}
 
-	slog.Info("file", "path", filePath, "extension", fileExtension)
+	filePath := getRPCPath(syftRPCMsg)
 
-	jsonMsg, err := json.Marshal(syftRPCMsg)
+	// Convert the syftRPCMsg to json
+	jsonRPCMsg, err := json.Marshal(syftRPCMsg)
 	if err != nil {
 		slog.Error("handleHttp marshal syftRPCMsg", "error", err)
 		return
 	}
 
-	// write the jsonMsg to the file
-	err = os.WriteFile(filePath, jsonMsg, 0644)
+	// write the RPCMsg to the file
+	err = os.WriteFile(filePath, jsonRPCMsg, 0644)
 	if err != nil {
 		slog.Error("handleHttp write file", "error", err)
 		return
 	}
 
-	slog.Info("SyftRPC Message", "msg", string(jsonMsg))
+	slog.Debug("SyftRPC Message", "msg", string(jsonRPCMsg))
 }
 
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {

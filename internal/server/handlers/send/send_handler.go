@@ -230,5 +230,7 @@ func unmarshalResponse(bodyBytes []byte) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("failed to unmarshal decoded body: %w", err)
 	}
 
+	// TODO: Clean up response and request files
+
 	return responseBody, nil
 }
