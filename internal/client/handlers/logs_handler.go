@@ -126,7 +126,7 @@ func (h *LogsHandler) findLinePosition(file *os.File, targetLine int64) (int64, 
 
 		// Seek to position
 		if _, err := file.Seek(mid, 0); err != nil {
-			return 0, err
+			return 0, fmt.Errorf("failed to seek to position %d: %w", mid, err)
 		}
 
 		// Read until we find a complete line
@@ -173,27 +173,27 @@ func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxR
 	// Open log file
 	logFilePath := h.getLogFilePath(appName)
 	if logFilePath == "" {
-		return []LogEntry{}, 0, false, fmt.Errorf("app not found")
+		return []LogEntry{}, 1, false, fmt.Errorf("app not found")
 	}
 	file, err := os.Open(logFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If file doesn't exist, return empty logs
-			return []LogEntry{}, 0, false, nil
+			return []LogEntry{}, 1, false, nil
 		}
-		return nil, 0, false, err
+		return nil, 1, false, err
 	}
 	defer file.Close()
 
 	// Find the approximate position of our target line to avoid reading the entire file
 	startPos, err := h.findLinePosition(file, startingToken)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, 1, false, err
 	}
 
 	// Seek to the found position
 	if _, err := file.Seek(startPos, 0); err != nil {
-		return nil, 0, false, err
+		return nil, 1, false, err
 	}
 
 	// Parse log lines
@@ -256,7 +256,7 @@ func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxR
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, 0, false, err
+		return nil, 1, false, err
 	}
 
 	if len(logs) == 0 {

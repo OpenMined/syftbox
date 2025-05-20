@@ -76,7 +76,7 @@ func (s *SyncJournal) Close() error {
 		slog.Error("Failed to close sync journal database", "error", err)
 		return err
 	}
-	slog.Info("sync journal closed")
+	slog.Debug("sync journal closed")
 	return nil
 }
 
@@ -198,6 +198,19 @@ func (s *SyncJournal) Delete(path string) error {
 	_, err := s.db.Exec("DELETE FROM sync_journal WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("failed to delete path %s: %w", path, err)
+	}
+	return nil
+}
+
+func (s *SyncJournal) Destroy() error {
+	if err := s.Close(); err != nil {
+		return fmt.Errorf("failed to clear journal: %w", err)
+	}
+
+	// move file to sql.db.timestamp
+	timestamp := time.Now().Format("20060102150405")
+	if err := os.Rename(s.dbPath, fmt.Sprintf("%s.%s.bak", s.dbPath, timestamp)); err != nil {
+		return fmt.Errorf("failed to rename journal file: %w", err)
 	}
 	return nil
 }

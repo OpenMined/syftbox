@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/openmined/syftbox/internal/client/workspace"
 )
@@ -15,6 +15,7 @@ import (
 type SyncLocalState struct {
 	rootDir   string
 	lastState map[string]*FileMetadata // Stores the result of the last successful scan
+	mu        sync.RWMutex
 }
 
 func NewSyncLocalState(rootDir string) *SyncLocalState {
@@ -25,11 +26,18 @@ func NewSyncLocalState(rootDir string) *SyncLocalState {
 }
 
 func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	newState := make(map[string]*FileMetadata)
 
 	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return fmt.Errorf("walk error: %w", walkErr)
+			return fmt.Errorf("walk error %s: %w", path, walkErr)
+		}
+
+		if d == nil {
+			return fmt.Errorf("walk error %s: nil directory entry", path)
 		}
 
 		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
@@ -39,18 +47,17 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 		// Get file info
 		info, err := d.Info()
 		if err != nil {
-			slog.Warn("Failed to get file info", "path", path, "error", err)
-			return nil // Skip this file
+			return fmt.Errorf("walk file info %s: %w", path, err)
 		}
 
 		// Get relative path
 		relPath, err := filepath.Rel(s.rootDir, path)
 		if err != nil {
-			return fmt.Errorf("walk rel path: %w", err)
+			return fmt.Errorf("walk rel path: %s: %w", path, err)
 		}
 		relPath = workspace.NormPath(relPath)
 
-		// Caching Logic
+		// Etag
 		var etag string
 		prevMeta, exists := s.lastState[relPath]
 
@@ -61,8 +68,7 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 			// File is new or modified, calculate ETag
 			calculatedETag, err := calculateETag(path)
 			if err != nil {
-				slog.Warn("Failed to calculate ETag", "file", path, "error", err)
-				return nil // Skip this file if ETag calculation fails
+				return fmt.Errorf("failed to calculate ETag for %s: %w", path, err)
 			}
 			etag = calculatedETag
 		}
@@ -87,7 +93,7 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 	// Update the cache for the next run
 	s.lastState = newState
 
-	return newState, nil
+	return s.lastState, nil
 }
 
 // calculateETag opens a file, calculates its MD5 hash, and returns it as a hex string.
