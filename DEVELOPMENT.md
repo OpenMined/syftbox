@@ -48,23 +48,31 @@ just
 
 Run the client:
 ```sh
-just run-client
+just run-client -e <email> -d <datadir> -s <server> -c <configpath>
 # Or directly:
-go run ./cmd/client
+go run ./cmd/client -e <email> -d <datadir> -s <server> -c <configpath>
 ```
 
-Run the server (using `config/dev.yaml`):
+Run the server (using `./config/server.dev.yaml`):
 ```sh
-just run-server -f config/dev.yaml
+just run-server -f ./config/server.dev.yaml
 # Or directly:
-go run ./cmd/server -f config/dev.yaml
+go run ./cmd/server -f ./config/server.dev.yaml
 ```
 
 Run the server with TLS (generates certs if needed):
 ```sh
 just run-server-tls
 # Or directly (ensure certs exist, e.g., via `just gen-certs`):
+just gen-certs
 go run ./cmd/server --cert certs/cert.pem --key certs/cert.key
+```
+
+Run a local server with two separate clients
+```sh
+go run ./cmd/server
+go run ./cmd/client -e user1@email.com -s http://localhost:8080 -d ~/SyftBox.user1 -c ~/.syftbox/config.user1.json
+go run ./cmd/client -e user2@email.com -s http://localhost:8080 -d ~/SyftBox.user2 -c ~/.syftbox/config.user2.json
 ```
 
 Run tests:

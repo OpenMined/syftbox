@@ -39,11 +39,11 @@ type AuthClaims struct {
 
 func (c *AuthClaims) Validate(email string, issuer string) error {
 	if c.Subject != email {
-		return fmt.Errorf("invalid claims: token subject '%s' does not match '%s'", c.Subject, email)
+		return fmt.Errorf("invalid claims: token subject %q does not match %q", c.Subject, email)
 	}
 
 	if strings.TrimSuffix(c.Issuer, "/") != strings.TrimSuffix(issuer, "/") {
-		return fmt.Errorf("invalid claims: token issuer '%s' does not match '%s'", c.Issuer, issuer)
+		return fmt.Errorf("invalid claims: token issuer %q does not match %q", c.Issuer, issuer)
 	}
 
 	return nil

@@ -100,13 +100,13 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 func calculateETag(filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return "", fmt.Errorf("failed to open file '%s': %w", filePath, err)
+		return "", fmt.Errorf("failed to open file %q: %w", filePath, err)
 	}
 	defer file.Close()
 
 	h := md5.New()
 	if _, err := io.Copy(h, file); err != nil {
-		return "", fmt.Errorf("failed to copy file content for hashing '%s': %w", filePath, err)
+		return "", fmt.Errorf("failed to copy file content for hashing %q: %w", filePath, err)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
