@@ -106,7 +106,7 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		header.AppName,
 		"rpc",
 		header.AppEp,
-		fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
+		fmt.Sprintf("%s.response", httpMsg.Id),
 	)
 
 	// poll for the object
@@ -237,7 +237,7 @@ func (h *SendHandler) pollForObject(ctx context.Context, blobPath string) (*blob
 	for {
 		// check if timeout has been reached
 		if time.Since(startTime) > maxTimeout {
-			return nil, fmt.Errorf("polling timeout exceeded")
+			return nil, fmt.Errorf("No response exists. Polling timed out")
 		}
 
 		// try to get the object
