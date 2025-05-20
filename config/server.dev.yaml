@@ -10,10 +10,11 @@ blob:
 
 auth:
   enabled: false # <--!!!
-  issuer: http://127.0.0.1:8080
+  token_issuer: http://127.0.0.1:8080
   refresh_token_secret: refresh_token_secret
-  refresh_token_expiry: 7d
+  refresh_token_expiry: 0
   access_token_secret: access_token_secret
-  access_token_expiry: 1h
+  access_token_expiry: 72h
+  email_addr: test@example.com
   email_otp_length: 8
   email_otp_expiry: 5m

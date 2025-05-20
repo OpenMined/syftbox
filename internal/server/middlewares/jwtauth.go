@@ -20,11 +20,12 @@ const (
 func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 	if !authService.IsEnabled() {
 		slog.Info("auth middleware disabled")
+
 		return func(ctx *gin.Context) {
 			user := ctx.Query("user")
 			if user == "" {
 				ctx.PureJSON(http.StatusForbidden, gin.H{
-					"error": "`user` is not set",
+					"error": "'user' query param required",
 				})
 				ctx.Abort()
 				return
@@ -33,12 +34,14 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 			ctx.Next()
 		}
 	}
+
 	slog.Info("auth middleware enabled")
+
 	return func(ctx *gin.Context) {
 		authHeaderValue := ctx.GetHeader(authHeader)
 		if authHeaderValue == "" {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header is missing",
+				"error": "authorization header required",
 			})
 			return
 		}
@@ -46,7 +49,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		// Check if the header starts with "Bearer "
 		if !strings.HasPrefix(authHeaderValue, bearerPrefix) {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Authorization header format must be Bearer {token}",
+				"error": "bearer token required",
 			})
 			return
 		}
@@ -55,7 +58,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		tokenString := strings.TrimPrefix(authHeaderValue, bearerPrefix)
 		if tokenString == "" {
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "Token is missing",
+				"error": "token missing",
 			})
 			return
 		}

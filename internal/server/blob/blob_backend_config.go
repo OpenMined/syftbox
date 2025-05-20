@@ -1,6 +1,10 @@
 package blob
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/openmined/syftbox/internal/utils"
+)
 
 type S3Config struct {
 	BucketName    string `mapstructure:"bucket_name"`
@@ -13,16 +17,19 @@ type S3Config struct {
 
 func (c *S3Config) Validate() error {
 	if c.BucketName == "" {
-		return fmt.Errorf("blob `bucket_name` is required")
+		return fmt.Errorf("bucket_name required")
 	}
 	if c.Region == "" {
-		return fmt.Errorf("blob `region` is required")
+		return fmt.Errorf("region required")
 	}
 	if c.AccessKey == "" {
-		return fmt.Errorf("blob `access_key` is required")
+		return fmt.Errorf("access_key required")
 	}
 	if c.SecretKey == "" {
-		return fmt.Errorf("blob `secret_key` is required")
+		return fmt.Errorf("secret_key required")
+	}
+	if c.Endpoint != "" && !utils.IsValidURL(c.Endpoint) {
+		return fmt.Errorf("invalid endpoint URL %q", c.Endpoint)
 	}
 	return nil
 }

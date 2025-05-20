@@ -21,19 +21,19 @@ func (c *Config) Validate() error {
 	var err error
 	c.DataDir, err = utils.ResolvePath(c.DataDir)
 	if err != nil {
-		return fmt.Errorf("invalid data dir: %w", err)
+		return fmt.Errorf("invalid data directory: %w", err)
 	}
 
 	if err := c.HTTP.Validate(); err != nil {
-		return fmt.Errorf("http config validation: %w", err)
+		return fmt.Errorf("invalid http config: %w", err)
 	}
 
 	if err := c.Blob.Validate(); err != nil {
-		return fmt.Errorf("blob config validation: %w", err)
+		return fmt.Errorf("invalid blob config: %w", err)
 	}
 
 	if err := c.Auth.Validate(); err != nil {
-		return fmt.Errorf("auth config validation: %w", err)
+		return fmt.Errorf("invalid auth config: %w", err)
 	}
 
 	return nil
@@ -52,10 +52,10 @@ func (c *HTTPConfig) HasCerts() bool {
 
 func (c *HTTPConfig) Validate() error {
 	if c.Addr == "" {
-		return fmt.Errorf("http `addr` is required")
+		return fmt.Errorf("http addr required")
 	}
 	if (c.CertFile != "" && c.KeyFile == "") || (c.CertFile == "" && c.KeyFile != "") {
-		return fmt.Errorf("http `cert_file` and `key_file` must be provided")
+		return fmt.Errorf("cert_file and key_file required together")
 	}
 	return nil
 }
