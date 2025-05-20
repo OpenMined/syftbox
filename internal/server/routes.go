@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	slogGin "github.com/samber/slog-gin"
@@ -42,7 +41,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	}))
 	r.Use(gin.Recovery())
 	r.Use(gzip.Gzip(gzip.BestSpeed))
-	r.Use(cors.Default())
+	r.Use(middlewares.InitCORS())
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
