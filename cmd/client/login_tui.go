@@ -44,8 +44,20 @@ var (
 	titleStyle       = cyan.Bold(true)
 )
 
+type LoginTUIOpts struct {
+	Email              string
+	ServerURL          string
+	DataDir            string
+	EmailSubmitHandler func(email string) error
+	OTPSubmitHandler   func(email, otp string) error
+	EmailValidator     func(email string) bool
+	OTPValidator       func(otp string) bool
+}
+
 // Model holds the application's state
 type loginModel struct {
+	opts *LoginTUIOpts
+
 	emailInput textinput.Model
 	otpInput   textinput.Model
 	spinner    spinner.Model
@@ -59,11 +71,6 @@ type loginModel struct {
 	width        int
 
 	submittedEmail string // To store the email for the OTP callback
-
-	doEmailSubmit  func(email string) error
-	doOtpSubmit    func(email, otp string) error
-	emailValidator func(email string) bool
-	otpValidator   func(otp string) bool
 }
 
 // --- Messages ---
@@ -72,10 +79,7 @@ type otpProcessedMsg struct{ err error }
 
 // newLoginModel creates the initial state of the application
 func newLoginModel(
-	emailHandler func(email string) error,
-	otpHandler func(email, otp string) error,
-	emailValidator func(email string) bool,
-	otpValidator func(otp string) bool,
+	opts *LoginTUIOpts,
 ) loginModel {
 	email := textinput.New()
 	email.Placeholder = txtEmailPlaceholder
@@ -99,16 +103,13 @@ func newLoginModel(
 	s.Style = spinnerStyle
 
 	return loginModel{
-		currentView:    emailView,
-		previousView:   emailView,
-		emailInput:     email,
-		otpInput:       otp,
-		spinner:        s,
-		isLoading:      false,
-		doEmailSubmit:  emailHandler,
-		doOtpSubmit:    otpHandler,
-		emailValidator: emailValidator,
-		otpValidator:   otpValidator,
+		opts:         opts,
+		currentView:  emailView,
+		previousView: emailView,
+		emailInput:   email,
+		otpInput:     otp,
+		spinner:      s,
+		isLoading:    false,
 	}
 }
 
@@ -200,7 +201,7 @@ func (m loginModel) submitEmail() (tea.Model, tea.Cmd) {
 	m.errorMessage = "" // Clear any previous error
 
 	emailVal := strings.TrimSpace(m.emailInput.Value())
-	if !m.emailValidator(emailVal) {
+	if !m.opts.EmailValidator(emailVal) {
 		m.errorMessage = txtInvalidEmail
 		return m, nil
 	}
@@ -215,7 +216,7 @@ func (m loginModel) submitEmail() (tea.Model, tea.Cmd) {
 	m.emailInput.Blur()
 
 	return m, func() tea.Msg {
-		err := m.doEmailSubmit(m.submittedEmail)
+		err := m.opts.EmailSubmitHandler(m.submittedEmail)
 		return emailProcessedMsg{err: err}
 	}
 }
@@ -226,7 +227,7 @@ func (m loginModel) submitOtp() (tea.Model, tea.Cmd) {
 	m.errorMessage = "" // Clear any previous error
 
 	otpVal := strings.TrimSpace(m.otpInput.Value())
-	if !m.otpValidator(otpVal) {
+	if !m.opts.OTPValidator(otpVal) {
 		m.errorMessage = txtInvalidOTP
 		return m, nil
 	}
@@ -239,7 +240,7 @@ func (m loginModel) submitOtp() (tea.Model, tea.Cmd) {
 	m.otpInput.Blur()
 
 	return m, func() tea.Msg {
-		err := m.doOtpSubmit(m.submittedEmail, otpVal)
+		err := m.opts.OTPSubmitHandler(m.submittedEmail, otpVal)
 		return otpProcessedMsg{err: err}
 	}
 }
@@ -286,7 +287,11 @@ func (m loginModel) View() string {
 	var b strings.Builder
 	// Render header
 	b.WriteString(titleStyle.Render(utils.SyftBoxArt))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Server    "), green.Render(m.opts.ServerURL)))
+	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Data Dir  "), green.Render(m.opts.DataDir)))
 	b.WriteString("\n\n")
+
 	// Render content based on current view
 	switch m.currentView {
 	case emailView:
@@ -341,13 +346,8 @@ func (m loginModel) renderHelpView(b *strings.Builder) {
 }
 
 // RunLoginTUI is the main entry point to start the Bubble Tea login interface.
-func RunLoginTUI(
-	emailSubmitHandler func(email string) error,
-	otpSubmitHandler func(email, otp string) error,
-	emailValidator func(email string) bool,
-	otpValidator func(otp string) bool,
-) error {
-	loginM := newLoginModel(emailSubmitHandler, otpSubmitHandler, emailValidator, otpValidator)
+func RunLoginTUI(opts LoginTUIOpts) error {
+	loginM := newLoginModel(&opts)
 	model, err := tea.NewProgram(loginM, tea.WithAltScreen()).Run()
 	if err != nil {
 		log.Printf("Error running TUI: %v", err)

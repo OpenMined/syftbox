@@ -22,10 +22,7 @@ import (
 )
 
 var (
-	home, _          = os.UserHomeDir()
-	defaultDataDir   = filepath.Join(home, "SyftBox")
-	defaultServerURL = "https://syftboxdev.openmined.org"
-	configFileName   = "config"
+	home, _ = os.UserHomeDir()
 )
 
 var rootCmd = &cobra.Command{
@@ -47,11 +44,7 @@ var rootCmd = &cobra.Command{
 			ClientURL:    config.DefaultClientURL,
 		}
 		if err := cfg.Validate(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %s - %s\n", red.Bold(true).Render("ERROR"), "syftbox config", err)
-			if errors.Is(err, config.ErrNoRefreshToken) || errors.Is(err, config.ErrInvalidEmail) {
-				fmt.Fprintf(os.Stderr, "Please authenticate by running `syftbox login`\n")
-				os.Exit(1)
-			}
+			fmt.Fprintf(os.Stderr, "%s: syftbox bad config: %s\n", red.Bold(true).Render("ERROR"), err)
 			os.Exit(1)
 		}
 
@@ -62,7 +55,7 @@ var rootCmd = &cobra.Command{
 		// create client
 		c, err := client.New(cfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %s - %s\n", red.Bold(true).Render("ERROR"), "starting client", err)
+			fmt.Fprintf(os.Stderr, "%s: starting client: %s\n", red.Bold(true).Render("ERROR"), err)
 			os.Exit(1)
 		}
 
@@ -70,7 +63,7 @@ var rootCmd = &cobra.Command{
 		defer slog.Info("Bye!")
 
 		if err := c.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "%s: %s\n", red.Bold(true).Render("ERROR"), err)
+			fmt.Fprintf(os.Stderr, "%s: syftbox client: %s\n", red.Bold(true).Render("ERROR"), err)
 			os.Exit(1)
 		}
 	},
@@ -79,8 +72,8 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.Flags().SortFlags = false
 	rootCmd.Flags().StringP("email", "e", "", "Email for the SyftBox datasite")
-	rootCmd.Flags().StringP("datadir", "d", defaultDataDir, "SyftBox Data Directory")
-	rootCmd.Flags().StringP("server", "s", defaultServerURL, "SyftBox Server")
+	rootCmd.Flags().StringP("datadir", "d", config.DefaultDataDir, "SyftBox Data Directory")
+	rootCmd.Flags().StringP("server", "s", config.DefaultServerURL, "SyftBox Server")
 	rootCmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "SyftBox config file")
 }
 
@@ -144,7 +137,7 @@ func loadConfig(cmd *cobra.Command) error {
 	} else {
 		viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
 		viper.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
-		viper.SetConfigName(configFileName)                         // Name of config file (without extension)
+		viper.SetConfigName("config")                               // Name of config file (without extension)
 		viper.SetConfigType("json")
 	}
 
@@ -168,7 +161,7 @@ func loadConfig(cmd *cobra.Command) error {
 
 	// override server url if remote url is set
 	if strings.Contains(viper.GetString("server_url"), "openmined.org") {
-		viper.Set("server_url", defaultServerURL)
+		viper.Set("server_url", config.DefaultServerURL)
 	}
 
 	return nil
