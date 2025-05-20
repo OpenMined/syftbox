@@ -37,6 +37,11 @@ func newLoginCmd() *cobra.Command {
 				os.Exit(0)
 			}
 
+			if err := utils.ValidateURL(serverURL); err != nil {
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
+				os.Exit(1)
+			}
+
 			onEmailSubmit := func(emailInput string) error {
 				return syftsdk.VerifyEmail(cmd.Context(), serverURL, emailInput)
 			}
@@ -56,7 +61,15 @@ func newLoginCmd() *cobra.Command {
 				return nil
 			}
 
-			if err := RunLoginTUI(onEmailSubmit, onOTPSubmit, utils.IsValidEmail, syftsdk.IsValidOTP); err != nil {
+			if err := RunLoginTUI(LoginTUIOpts{
+				Email:              email,
+				DataDir:            dataDir,
+				ServerURL:          serverURL,
+				EmailSubmitHandler: onEmailSubmit,
+				OTPSubmitHandler:   onOTPSubmit,
+				EmailValidator:     utils.IsValidEmail,
+				OTPValidator:       syftsdk.IsValidOTP,
+			}); err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
@@ -93,8 +106,8 @@ func newLoginCmd() *cobra.Command {
 	}
 
 	cmd.Flags().SortFlags = false
-	cmd.Flags().StringVarP(&dataDir, "data-dir", "d", defaultDataDir, "data directory")
-	cmd.Flags().StringVarP(&serverURL, "server-url", "u", defaultServerURL, "server URL")
+	cmd.Flags().StringVarP(&dataDir, "data-dir", "d", config.DefaultDataDir, "data directory")
+	cmd.Flags().StringVarP(&serverURL, "server-url", "s", config.DefaultServerURL, "server URL")
 
 	return cmd
 }
@@ -104,7 +117,13 @@ func getValidConfig(configPath string) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return cfg, cfg.Validate()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if cfg.RefreshToken == "" {
+		return nil, fmt.Errorf("no refresh token found")
+	}
+	return cfg, nil
 }
 
 func printConfig(cfg *config.Config) {

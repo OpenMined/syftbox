@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/openmined/syftbox/internal/utils"
@@ -40,6 +42,8 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 		SetHeader(HeaderUserAgent, "SyftBox/"+version.Version).
 		SetHeader(HeaderSyftVersion, version.Version).
 		SetHeader(HeaderSyftDeviceId, utils.HWID).
+		SetHeader(HeaderSyftUser, config.Email).
+		SetQueryParam("user", config.Email).
 		SetRetryMaxWaitTime(RetryInterval).
 		AddContentTypeEncoder("json", jsonEncoder).
 		AddContentTypeDecoder("json", jsonDecoder)
@@ -67,6 +71,11 @@ func (s *SyftSDK) Close() {
 
 // Authenticate sets the user authentication for API calls and events
 func (s *SyftSDK) Authenticate(ctx context.Context) error {
+	if isDevMode(s.config.BaseURL) {
+		slog.Debug("sdk dev mode, skipping auth")
+		return nil
+	}
+
 	// if we have an access token, set it
 	if s.config.AccessToken != "" {
 		slog.Debug("sdk using existing access token")
@@ -112,7 +121,7 @@ func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse refresh token: %w", err)
 	}
-	if err := refreshToken.ValidateUser(s.config.Email); err != nil {
+	if err := refreshToken.Validate(s.config.Email, s.config.BaseURL); err != nil {
 		return fmt.Errorf("validate refresh token: %w", err)
 	}
 
@@ -138,18 +147,25 @@ func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 func (s *SyftSDK) setAccessToken(accessToken string) error {
 	// validate access token
 	claims, err := parseToken(accessToken, AccessToken)
+
 	if err != nil {
 		return fmt.Errorf("failed to parse access token: %w", err)
 	}
-	if err := claims.ValidateUser(s.config.Email); err != nil {
+
+	if err := claims.Validate(s.config.Email, s.config.BaseURL); err != nil {
 		return fmt.Errorf("access token: %w", err)
 	}
 
 	// set access token
 	s.client.SetAuthToken("Bearer " + accessToken)
-	s.client.SetQueryParam("user", claims.Subject)
-	s.client.SetHeader(HeaderSyftUser, claims.Subject)
 
 	slog.Debug("sdk update access token", "user", claims.Subject, "expiry", claims.ExpiresAt)
 	return nil
+}
+
+func isDevMode(baseURL string) bool {
+	return strings.Contains(baseURL, "localhost") ||
+		strings.Contains(baseURL, "127.0.0.1") ||
+		strings.Contains(baseURL, "0.0.0.0") ||
+		os.Getenv("SYFTBOX_DEV_MODE") == "true"
 }

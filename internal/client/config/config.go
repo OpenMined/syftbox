@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,15 +15,15 @@ import (
 var (
 	home, _            = os.UserHomeDir()
 	DefaultConfigPath  = filepath.Join(home, ".syftbox", "config.json")
+	DefaultDataDir     = filepath.Join(home, "SyftBox")
 	DefaultServerURL   = "https://syftboxdev.openmined.org"
 	DefaultClientURL   = "http://localhost:7938"
 	DefaultLogFilePath = filepath.Join(home, ".syftbox", "logs", "SyftBoxDaemon.log")
 )
 
 var (
-	ErrInvalidURL     = errors.New("invalid url")
-	ErrNoRefreshToken = errors.New("credentials missing")
-	ErrInvalidEmail   = utils.ErrInvalidEmail
+	ErrInvalidURL   = errors.New("invalid url")
+	ErrInvalidEmail = utils.ErrInvalidEmail
 )
 
 type Config struct {
@@ -62,22 +61,20 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if err := utils.ValidateEmail(c.Email); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidEmail, err)
-	}
 	c.Email = strings.ToLower(c.Email)
-
-	if err := validateURL(c.ServerURL); err != nil {
-		return fmt.Errorf("invalid server url: %w", err)
+	if err := utils.ValidateEmail(c.Email); err != nil {
+		return err
 	}
 
-	if err := validateURL(c.ClientURL); err != nil {
-		return fmt.Errorf("invalid client url: %w", err)
+	if err := utils.ValidateURL(c.ServerURL); err != nil {
+		return fmt.Errorf("server url: %w", err)
 	}
 
-	if c.RefreshToken == "" {
-		return ErrNoRefreshToken
+	if err := utils.ValidateURL(c.ClientURL); err != nil {
+		return fmt.Errorf("client url: %w", err)
 	}
+
+	// do not validate refresh token... it can be empty for local dev.
 
 	return nil
 }
@@ -112,13 +109,4 @@ func LoadFromReader(path string, reader io.ReadCloser) (*Config, error) {
 	cfg.AppsEnabled = true
 
 	return &cfg, nil
-}
-
-func validateURL(urlString string) error {
-	if urlString == "" {
-		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
-	} else if _, err := url.ParseRequestURI(urlString); err != nil {
-		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
-	}
-	return nil
 }

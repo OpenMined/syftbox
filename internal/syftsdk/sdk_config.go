@@ -30,10 +30,6 @@ func (c *SyftSDKConfig) Validate() error {
 		c.BaseURL = DefaultBaseURL
 	}
 
-	if c.RefreshToken == "" {
-		return ErrNoRefreshToken
-	}
-
 	if err := utils.ValidateEmail(c.Email); err != nil {
 		return err
 	}
