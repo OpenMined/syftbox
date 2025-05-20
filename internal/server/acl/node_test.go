@@ -135,7 +135,7 @@ func TestGlobSpecificityScore(t *testing.T) {
 
 	for _, tc := range testCases {
 		score := globSpecificityScore(tc.pattern)
-		assert.Equal(t, tc.score, score, "Specificity score for '%s' should be %d, got %d", tc.pattern, tc.score, score)
+		assert.Equal(t, tc.score, score, "Specificity score for %q should be %d, got %d", tc.pattern, tc.score, score)
 	}
 }
 

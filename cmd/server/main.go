@@ -131,7 +131,7 @@ func loadConfig(cmd *cobra.Command) (*server.Config, error) {
 			return nil, err
 		}
 		if !enoent && !ok {
-			return nil, fmt.Errorf("config read '%s': %w", v.ConfigFileUsed(), err)
+			return nil, fmt.Errorf("config read %q: %w", v.ConfigFileUsed(), err)
 		}
 	}
 

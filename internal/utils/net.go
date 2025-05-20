@@ -23,13 +23,14 @@ func GetFreePort() (int, error) {
 }
 
 func ValidateURL(urlString string) error {
-	if urlString == "" {
-		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
-	} else if _, err := url.ParseRequestURI(urlString); err != nil {
-		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
-	} else if !regexURL.MatchString(urlString) {
-		return fmt.Errorf("%w '%s'", ErrInvalidURL, urlString)
+	if _, err := url.ParseRequestURI(urlString); err != nil {
+		return fmt.Errorf("%w %q", ErrInvalidURL, urlString)
 	}
+
+	if !regexURL.MatchString(urlString) {
+		return fmt.Errorf("%w %q", ErrInvalidURL, urlString)
+	}
+
 	return nil
 }
 
