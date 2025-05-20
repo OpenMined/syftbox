@@ -17,7 +17,7 @@ var (
 	ErrInvalidMailRecipient = errors.New("invalid mail recipient")
 )
 
-func Send(ctx context.Context, data *EmailData) error {
+func Send(ctx context.Context, data *EmailInfo) error {
 	sendgridApiKey := os.Getenv("SENDGRID_API_KEY")
 
 	if sendgridApiKey == "" {

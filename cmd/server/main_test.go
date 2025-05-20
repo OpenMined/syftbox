@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadConfigEnv(t *testing.T) {
@@ -21,7 +22,8 @@ func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_BLOB_SECRET_KEY", "test-secret-key")
 
 	t.Setenv("SYFTBOX_AUTH_ENABLED", "true")
-	t.Setenv("SYFTBOX_AUTH_TOKEN_ISSUER", "test-issuer")
+	t.Setenv("SYFTBOX_AUTH_TOKEN_ISSUER", "http://0.0.0.0:8080")
+	t.Setenv("SYFTBOX_AUTH_EMAIL_ADDR", "test@example.com")
 	t.Setenv("SYFTBOX_AUTH_EMAIL_OTP_LENGTH", "6")
 	t.Setenv("SYFTBOX_AUTH_EMAIL_OTP_EXPIRY", "5m")
 	t.Setenv("SYFTBOX_AUTH_REFRESH_TOKEN_SECRET", "test-refresh-secret")
@@ -31,7 +33,8 @@ func TestLoadConfigEnv(t *testing.T) {
 
 	// Call loadConfig
 	cfg, err := loadConfig(rootCmd)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
 
 	assert.Equal(t, cfg.HTTP.Addr, ":8080")
 	assert.Equal(t, cfg.HTTP.CertFile, "test-cert.pem")
@@ -42,7 +45,8 @@ func TestLoadConfigEnv(t *testing.T) {
 	assert.Equal(t, cfg.Blob.AccessKey, "test-access-key")
 	assert.Equal(t, cfg.Blob.SecretKey, "test-secret-key")
 	assert.Equal(t, cfg.Auth.Enabled, true)
-	assert.Equal(t, cfg.Auth.TokenIssuer, "test-issuer")
+	assert.Equal(t, cfg.Auth.TokenIssuer, "http://0.0.0.0:8080")
+	assert.Equal(t, cfg.Auth.EmailAddr, "test@example.com")
 	assert.Equal(t, cfg.Auth.EmailOTPLength, 6)
 	assert.Equal(t, cfg.Auth.EmailOTPExpiry, 5*time.Minute)
 	assert.Equal(t, cfg.Auth.RefreshTokenSecret, "test-refresh-secret")
@@ -66,7 +70,8 @@ blob:
 
 auth:
   enabled: true
-  token_issuer: test-issuer
+  token_issuer: http://0.0.0.0:8080
+  email_addr: test@example.com
   email_otp_length: 8
   email_otp_expiry: 5m
   refresh_token_secret: test-refresh-secret
@@ -85,7 +90,8 @@ auth:
 
 	// Call loadConfig
 	cfg, err := loadConfig(rootCmd)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
 
 	assert.Equal(t, cfg.HTTP.Addr, "localhost:8080")
 	assert.Equal(t, cfg.HTTP.CertFile, "test-cert.pem")
@@ -96,7 +102,8 @@ auth:
 	assert.Equal(t, cfg.Blob.AccessKey, "test-access-key")
 	assert.Equal(t, cfg.Blob.SecretKey, "test-secret-key")
 	assert.Equal(t, cfg.Auth.Enabled, true)
-	assert.Equal(t, cfg.Auth.TokenIssuer, "test-issuer")
+	assert.Equal(t, cfg.Auth.TokenIssuer, "http://0.0.0.0:8080")
+	assert.Equal(t, cfg.Auth.EmailAddr, "test@example.com")
 	assert.Equal(t, cfg.Auth.EmailOTPLength, 8)
 	assert.Equal(t, cfg.Auth.EmailOTPExpiry, 5*time.Minute)
 	assert.Equal(t, cfg.Auth.RefreshTokenSecret, "test-refresh-secret")
@@ -122,7 +129,8 @@ func TestLoadConfigJSON(t *testing.T) {
 	},
 	"auth": {
 		"enabled": true,
-		"token_issuer": "test-issuer",
+		"token_issuer": "http://0.0.0.0:8080",
+		"email_addr": "test@example.com",
 		"email_otp_length": 8,
 		"email_otp_expiry": 0,
 		"refresh_token_secret": "test-another-refresh-secret",
@@ -143,7 +151,8 @@ func TestLoadConfigJSON(t *testing.T) {
 
 	// Call loadConfig
 	cfg, err := loadConfig(rootCmd)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
 
 	assert.Equal(t, cfg.HTTP.Addr, "localhost:38080")
 	assert.Equal(t, cfg.HTTP.CertFile, "path/to/test-cert.pem")
@@ -154,7 +163,8 @@ func TestLoadConfigJSON(t *testing.T) {
 	assert.Equal(t, cfg.Blob.AccessKey, "test-another-access-key")
 	assert.Equal(t, cfg.Blob.SecretKey, "test-another-secret-key")
 	assert.Equal(t, cfg.Auth.Enabled, true)
-	assert.Equal(t, cfg.Auth.TokenIssuer, "test-issuer")
+	assert.Equal(t, cfg.Auth.TokenIssuer, "http://0.0.0.0:8080")
+	assert.Equal(t, cfg.Auth.EmailAddr, "test@example.com")
 	assert.Equal(t, cfg.Auth.EmailOTPLength, 8)
 	assert.Equal(t, cfg.Auth.EmailOTPExpiry, 0*time.Second)
 	assert.Equal(t, cfg.Auth.RefreshTokenSecret, "test-another-refresh-secret")
