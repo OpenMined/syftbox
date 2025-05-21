@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
-	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/appsv2"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,7 @@ func newAppCmdInstall() *cobra.Command {
 	var tag string
 	var commit string
 	var force bool
+	var useGit bool
 
 	appCmdInstall := &cobra.Command{
 		Use:     "install [URL]",
@@ -43,49 +45,53 @@ func newAppCmdInstall() *cobra.Command {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
-			app, err := installer.InstallRepo(repo, &apps.RepoOpts{
+			app, err := installer.InstallApp(cmd.Context(), appsv2.AppInstallOpts{
+				URI:    repo,
 				Branch: branch,
 				Tag:    tag,
 				Commit: commit,
-			}, force)
+				Force:  force,
+				UseGit: useGit,
+			})
 
 			if err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
 
-			fmt.Printf("Installed app '%s' at '%s'\n", green.Render(app.Name), cyan.Render(app.Path))
+			fmt.Printf("Installed '%s' at '%s'\n", cyan.Bold(true).Render(app.Name), green.Bold(true).Render(app.Path))
 		},
 	}
 
 	appCmdInstall.Flags().SortFlags = false
-	appCmdInstall.Flags().StringVarP(&branch, "branch", "b", "main", "Branch to install from")
-	appCmdInstall.Flags().StringVarP(&tag, "tag", "t", "", "Tag of the repo to install from")
-	appCmdInstall.Flags().StringVarP(&commit, "hash", "s", "", "Commit hash of the repo to install from")
-	appCmdInstall.Flags().BoolVarP(&force, "force", "", false, "Force install")
+	appCmdInstall.Flags().StringVarP(&branch, "branch", "", "main", "Branch to install from")
+	appCmdInstall.Flags().StringVarP(&tag, "tag", "", "", "Tag of the repo to install from")
+	appCmdInstall.Flags().StringVarP(&commit, "commit", "", "", "Commit hash of the repo to install from")
+	appCmdInstall.Flags().BoolVarP(&force, "force", "f", false, "Force install")
+	appCmdInstall.Flags().BoolVarP(&useGit, "use-git", "g", false, "Use git to install")
 
 	return appCmdInstall
 }
 
 func newAppCmdUninstall() *cobra.Command {
 	appCmdUninstall := &cobra.Command{
-		Use:     "uninstall [APP_NAME]",
+		Use:     "uninstall [APPID or URI]",
 		Aliases: []string{"u", "rm"},
 		Short:   "Uninstall a SyftBox app",
 		Args:    cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
-			appName := args[0]
+			uri := args[0]
 			manager, err := getAppManager(cmd)
 			if err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
-			err = manager.UninstallApp(appName)
+			appID, err := manager.UninstallApp(uri)
 			if err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
 			}
-			fmt.Printf("Uninstalled app '%s'\n", green.Render(appName))
+			fmt.Printf("Uninstalled '%s'\n", green.Bold(true).Render(appID))
 		},
 	}
 
@@ -111,20 +117,39 @@ func newAppCmdList() *cobra.Command {
 			}
 
 			if len(apps) == 0 {
-				fmt.Printf("No SyftBox Apps installed at '%s'\n", cyan.Render(manager.AppsDir))
+				fmt.Printf("No apps installed at '%s'\n", cyan.Render(manager.AppsDir))
 				os.Exit(0)
 			}
 
-			fmt.Printf("SyftBox Apps at '%s'\n", cyan.Render(manager.AppsDir))
-			for _, app := range apps {
-				fmt.Printf("- %s\n", green.Render(app))
+			var sb strings.Builder
+			for idx, app := range apps {
+				if idx > 0 {
+					sb.WriteString("\n")
+				}
+				var src string
+				sb.WriteString(fmt.Sprintf("%s%s\n", gray.Render("ID      "), green.Render(app.ID)))
+				sb.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Path    "), cyan.Render(app.Path)))
+				if app.Source != appsv2.AppSourceLocalDir {
+					if app.Branch != "" {
+						src = app.Branch
+					} else if app.Tag != "" {
+						src = app.Tag
+					} else {
+						src = app.Commit
+					}
+				} else {
+					src = app.Source
+				}
+
+				sb.WriteString(fmt.Sprintf("%s%s (%s)\n", gray.Render("Source  "), app.SourceURI, src))
 			}
+			fmt.Print(sb.String())
 		},
 	}
 	return appCmdList
 }
 
-func getAppManager(cmd *cobra.Command) (*apps.AppManager, error) {
+func getAppManager(cmd *cobra.Command) (*appsv2.AppManager, error) {
 	// fetched from main/rootCmd/persistentFlags
 	configPath := cmd.Flag("config").Value.String()
 
@@ -138,6 +163,6 @@ func getAppManager(cmd *cobra.Command) (*apps.AppManager, error) {
 		return nil, err
 	}
 
-	installer := apps.NewManager(datasite.AppsDir)
-	return installer, nil
+	manager := appsv2.NewManager(datasite.AppsDir, datasite.MetadataDir)
+	return manager, nil
 }
