@@ -36,8 +36,16 @@ run-server-tls *ARGS: gen-certs gen-swagger
     go run -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ ARGS }}
 
 [group('dev')]
+run-server-reload *ARGS:
+    wgo run -dir cmd -dir internal -dir config -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server {{ ARGS }}
+
+[group('dev')]
 run-client *ARGS: gen-swagger
     go run -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
+
+[group('dev')]
+run-client-reload *ARGS:
+    wgo run -dir cmd -dir internal -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
 
 [group('dev-minio')]
 run-minio:
@@ -117,6 +125,6 @@ deploy: deploy-client deploy-server
 
 [group('utils')]
 setup-toolchain:
-    brew install FiloSottile/musl-cross/musl-cross
-    go install github.com/air-verse/air@latest
     go install github.com/swaggo/swag/v2/cmd/swag@latest
+    go install github.com/bokwoon95/wgo@latest
+    go install filippo.io/mkcert@mkcert
