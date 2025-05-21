@@ -4,11 +4,24 @@ package apps
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 func (a *App) buildCommand(ctx context.Context, runScript string) *exec.Cmd {
+	var command strings.Builder
+
 	// the expectation is that they have git-bash installed. if not it will just error out.
 	shell := "C:\\Program Files\\Git\\bin\\bash.exe"
-	return exec.CommandContext(ctx, shell, "-l", runScript)
+
+	syftboxDesktopBinariesPath := os.Getenv("SYFTBOX_DESKTOP_BINARIES_PATH")
+	if syftboxDesktopBinariesPath != "" {
+		command.WriteString("export PATH=$PATH:" + syftboxDesktopBinariesPath + "; ")
+	}
+
+	command.WriteString("chmod +x " + runScript + "; ")
+	command.WriteString("exec " + runScript + ";")
+
+	return exec.CommandContext(ctx, shell, "-l", "-c", command.String())
 }

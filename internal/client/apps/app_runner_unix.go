@@ -32,6 +32,11 @@ func (a *App) buildCommand(ctx context.Context, runScript string) *exec.Cmd {
 		command.WriteString("test -f ~/.profile && source ~/.profile; ")
 	}
 
+	syftboxDesktopBinariesPath := os.Getenv("SYFTBOX_DESKTOP_BINARIES_PATH")
+	if syftboxDesktopBinariesPath != "" {
+		command.WriteString("export PATH=$PATH:" + syftboxDesktopBinariesPath + "; ")
+	}
+
 	command.WriteString("chmod +x " + runScript + "; ")
 	command.WriteString("exec " + runScript + ";")
 
