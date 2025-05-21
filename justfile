@@ -127,4 +127,4 @@ deploy: deploy-client deploy-server
 setup-toolchain:
     go install github.com/swaggo/swag/v2/cmd/swag@latest
     go install github.com/bokwoon95/wgo@latest
-    go install filippo.io/mkcert@mkcert
+    go install filippo.io/mkcert@latest
