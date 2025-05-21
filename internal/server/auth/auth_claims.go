@@ -29,7 +29,7 @@ func ParseClaims(tokenString, jwtSecret string) (*Claims, error) {
 	}
 
 	if !token.Valid {
-		return nil, fmt.Errorf("invalid token")
+		return nil, fmt.Errorf("failed to validate jwt")
 	}
 
 	return claims, nil

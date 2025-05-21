@@ -130,6 +130,10 @@ func IsValidOTP(otp string) bool {
 }
 
 func parseToken(token string, tokenType AuthTokenType) (*AuthClaims, error) {
+	if token == "" {
+		return nil, fmt.Errorf("token is empty")
+	}
+
 	var claims AuthClaims
 	_, _, err := jwt.NewParser().ParseUnverified(token, &claims)
 	if err != nil {

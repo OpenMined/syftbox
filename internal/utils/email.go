@@ -18,18 +18,14 @@ func IsValidEmail(email string) bool {
 }
 
 func ValidateEmail(email string) error {
-	if email == "" {
-		return fmt.Errorf("%w - '%s'", ErrInvalidEmail, email)
-	}
-
 	// this helps parse emails, but this implements RFC 5322 which allows example@value
 	if _, err := mail.ParseAddress(email); err != nil {
-		return fmt.Errorf("%w - '%s'", ErrInvalidEmail, email)
+		return fmt.Errorf("%w %q", ErrInvalidEmail, email)
 	}
 
 	// this is a fail safe for the above
 	if !emailRegex.MatchString(email) {
-		return fmt.Errorf("%w - '%s'", ErrInvalidEmail, email)
+		return fmt.Errorf("%w %q", ErrInvalidEmail, email)
 	}
 
 	return nil

@@ -49,13 +49,13 @@ var rootCmd = &cobra.Command{
 
 		c, err := server.New(cfg)
 		if err != nil {
-			slog.Error("Failed to create server", "error", err)
+			slog.Error("server", "error", err)
 			return err
 		}
 
 		defer slog.Info("Bye!")
 		if err := c.Start(cmd.Context()); err != nil {
-			slog.Error("Failed to start server", "error", err)
+			slog.Error("server", "error", err)
 			return err
 		}
 		return nil
@@ -108,10 +108,8 @@ func loadConfig(cmd *cobra.Command) (*server.Config, error) {
 	if cmd.Flag("config").Changed {
 		configFilePath := cmd.Flag("config").Value.String()
 		v.SetConfigFile(configFilePath)
-		slog.Info("Using config file specified via flag", "path", configFilePath)
 	} else {
 		v.AddConfigPath(".")
-		v.AddConfigPath("$HOME/.syftbox")
 		v.AddConfigPath("/etc/syftbox/")
 		v.SetConfigName("config")
 		v.SetConfigType("yaml")
@@ -129,8 +127,11 @@ func loadConfig(cmd *cobra.Command) (*server.Config, error) {
 	if err := v.ReadInConfig(); err != nil {
 		enoent := errors.Is(err, os.ErrNotExist)
 		_, ok := err.(viper.ConfigFileNotFoundError)
+		if cmd.Flag("config").Changed && enoent {
+			return nil, err
+		}
 		if !enoent && !ok {
-			return nil, fmt.Errorf("config read '%s': %w", v.ConfigFileUsed(), err)
+			return nil, fmt.Errorf("config read %q: %w", v.ConfigFileUsed(), err)
 		}
 	}
 
@@ -172,6 +173,7 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	// Auth section (config file/env vars only)
 	v.SetDefault("auth.enabled", DefaultAuthEnabled)
 	v.SetDefault("auth.token_issuer", "")
+	v.SetDefault("auth.email_addr", "")
 	v.SetDefault("auth.email_otp_length", DefaultEmailOTPLength)
 	v.SetDefault("auth.email_otp_expiry", DefaultEmailOTPExpiry)
 	v.SetDefault("auth.refresh_token_secret", "")
@@ -195,6 +197,7 @@ func logConfig(cfg *server.Config) {
 		"blob.secret_key", maskSecret(cfg.Blob.SecretKey),
 		"auth.enabled", cfg.Auth.Enabled,
 		"auth.token_issuer", cfg.Auth.TokenIssuer,
+		"auth.email_addr", cfg.Auth.EmailAddr,
 		"auth.email_otp_length", cfg.Auth.EmailOTPLength,
 		"auth.email_otp_expiry", cfg.Auth.EmailOTPExpiry,
 		"auth.refresh_token_secret", maskSecret(cfg.Auth.RefreshTokenSecret),

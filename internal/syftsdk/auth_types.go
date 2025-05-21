@@ -2,6 +2,7 @@ package syftsdk
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -36,9 +37,14 @@ type AuthClaims struct {
 	jwt.RegisteredClaims
 }
 
-func (c *AuthClaims) ValidateUser(email string) error {
+func (c *AuthClaims) Validate(email string, issuer string) error {
 	if c.Subject != email {
-		return fmt.Errorf("token subject %s does not match email %s", c.Subject, email)
+		return fmt.Errorf("invalid claims: token subject %q does not match %q", c.Subject, email)
 	}
+
+	if strings.TrimSuffix(c.Issuer, "/") != strings.TrimSuffix(issuer, "/") {
+		return fmt.Errorf("invalid claims: token issuer %q does not match %q", c.Issuer, issuer)
+	}
+
 	return nil
 }
