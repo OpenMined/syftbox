@@ -37,7 +37,7 @@ run-server-tls *ARGS: gen-certs gen-swagger
 
 [group('dev')]
 run-server-reload *ARGS:
-    wgo run -dir cmd -dir internal -dir config -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server {{ ARGS }}
+    wgo run -file 'cmd/.*' -file 'internal/.*' -file 'config/.*' -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server {{ ARGS }}
 
 [group('dev')]
 run-client *ARGS: gen-swagger
@@ -45,7 +45,7 @@ run-client *ARGS: gen-swagger
 
 [group('dev')]
 run-client-reload *ARGS:
-    wgo run -dir cmd -dir internal -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
+    wgo run -file 'cmd/.*' -file 'internal/.*' -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
 
 [group('dev-minio')]
 run-minio:
