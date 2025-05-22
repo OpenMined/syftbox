@@ -1,9 +1,10 @@
 package send
 
-// SendResponse represents the response for a successful message send request
-type SendResponse struct {
+// SendAcknowledgment represents the response for a successful message send request
+type SendAcknowledgment struct {
 	Message   string `json:"message"`
 	RequestID string `json:"request_id"`
+	PollURL   string `json:"poll_url"`
 }
 
 // SendError represents the error response for a failed message send request
