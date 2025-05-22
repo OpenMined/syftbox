@@ -45,6 +45,9 @@ var rootCmd = &cobra.Command{
 		}
 		if err := cfg.Validate(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: syftbox bad config: %s\n", red.Bold(true).Render("ERROR"), err)
+			if cfg.Email == "" || cfg.DataDir == "" || cfg.RefreshToken == "" {
+				fmt.Fprintf(os.Stderr, "Have you logged in? Run %s to fix this\n", green.Render("syftbox login"))
+			}
 			os.Exit(1)
 		}
 
