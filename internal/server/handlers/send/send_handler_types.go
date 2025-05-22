@@ -16,5 +16,13 @@ type MessageRequest struct {
 	Method  string            `header:"x-syft-method" binding:"required"`
 	Headers map[string]string `header:"x-syft-headers"`
 	Status  int               `header:"x-syft-status"`
-	Timeout int               `form:"timeout" header:"x-syft-timeout"`
+	Timeout int               `form:"timeout" header:"x-syft-timeout" binding:"gte=0"`
+}
+
+type PollForObjectQuery struct {
+	RequestId string `query:"request_id" binding:"required"`
+	AppName   string `query:"app_name" binding:"required"`
+	AppEp     string `query:"app_endpoint" binding:"required"`
+	User      string `query:"user" binding:"required"`
+	Timeout   int    `query:"timeout,omitempty" binding:"gte=0"`
 }

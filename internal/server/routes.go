@@ -72,7 +72,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
-		v1.POST("/send/msg", sendH.SendMsg)
+		v1.Any("/send/msg", sendH.SendMsg)
 		v1.GET("/send/poll", sendH.PollForResponse)
 	}
 

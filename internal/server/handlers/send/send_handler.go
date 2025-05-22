@@ -20,9 +20,10 @@ import (
 )
 
 var (
-	ErrPollTimeout   = errors.New("poll timed out")
-	defaultTimeoutMs = 5000
+	defaultTimeoutMs = 1000
 	maxTimeoutMs     = 10000
+	maxBodySize      = 4 << 20 // 4Mb
+	ErrPollTimeout   = errors.New("poll timed out")
 )
 
 type SendHandler struct {
@@ -34,6 +35,25 @@ func New(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
 	return &SendHandler{hub: hub, blob: blob}
 }
 
+// readRequestBody reads and validates the request body
+func readRequestBody(ctx *gin.Context, maxSize int64) ([]byte, error) {
+	body := ctx.Request.Body
+	defer ctx.Request.Body.Close()
+
+	// Read body bytes
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+
+	// Check if body size exceeds maximum allowed size
+	if maxSize > 0 && int64(len(bodyBytes)) > maxSize {
+		return nil, fmt.Errorf("request body too large: %d bytes (max: %d bytes)", len(bodyBytes), maxSize)
+	}
+
+	return bodyBytes, nil
+}
+
 func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	var req MessageRequest
 	if err := ctx.ShouldBindHeader(&req); err != nil {
@@ -41,26 +61,25 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		return
 	}
 
-	//  get the body
-	body := ctx.Request.Body
-	defer ctx.Request.Body.Close()
-
-	// Read body Bytes
-	bodyBytes, err := io.ReadAll(body)
+	// Read request body with size limit (e.g., 10MB)
+	bodyBytes, err := readRequestBody(ctx, int64(maxBodySize))
 	if err != nil {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// TODO: check if body bytes is not too large
 
-	msg := syftmsg.NewHttpMsg(req.From, req.To, req.AppName, req.AppEp, req.Method, bodyBytes, req.Headers, req.Status, syftmsg.HttpMsgType(req.Type))
-
-	slog.Info("sending message", "msg", msg)
-
-	if req.Type == SendMsgResp {
-		// TODO handler response messages
-		return
-	}
+	msg := syftmsg.NewHttpMsg(
+		req.From,
+		req.To,
+		req.AppName,
+		req.AppEp,
+		req.Method,
+		bodyBytes,
+		req.Headers,
+		req.Status,
+		syftmsg.HttpMsgType(req.Type),
+	)
+	slog.Debug("sending message", "msg", msg)
 
 	// httpMsg
 	httpMsg := msg.Data.(*syftmsg.HttpMsg)
@@ -70,7 +89,7 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		// Handle saving to blob storage
 		// get the blob path
 		blobPath := path.Join(
-			req.From,
+			req.To,
 			"app_data",
 			req.AppName,
 			"rpc",
@@ -108,7 +127,7 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	// create blobPath
 	blobPath := path.Join(
-		req.From,
+		req.To,
 		"app_data",
 		req.AppName,
 		"rpc",
@@ -118,13 +137,11 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	// poll for the object
 	var object *blob.GetObjectResponse
-	if req.Timeout > 0 {
-		object, err = h.pollForObject(context.Background(), blobPath, req.Timeout)
-		// if there was an error, return an internal server error
-		if err != nil && !errors.Is(err, ErrPollTimeout) {
-			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+
+	object, err = h.pollForObject(context.Background(), blobPath, req.Timeout)
+	if err != nil && err != ErrPollTimeout {
+		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	// if the object is not found, return an accepted message
@@ -175,41 +192,22 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	// get the app name
 	// get the app endpoint
 
-	requestId := ctx.Query("request_id")
-	if requestId == "" {
-		ctx.PureJSON(
-			http.StatusBadRequest, gin.H{
-				"error":      "request_id is required",
-				"request_id": requestId,
-			},
-		)
-		return
-	}
-
-	// get the app name and app endpoint from the query params
-	appName := ctx.Query("app_name")
-	appEndpoint := ctx.Query("app_endpoint")
-	user := ctx.Query("user")
-	if appName == "" || appEndpoint == "" || user == "" {
-		ctx.PureJSON(
-			http.StatusBadRequest, gin.H{
-				"error":      "app_name, app_endpoint and user are required",
-				"request_id": requestId,
-			},
-		)
+	var query PollForObjectQuery
+	if err := ctx.ShouldBindQuery(&query); err != nil {
+		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// create the blob path to the app endpoint
-	fileName := fmt.Sprintf("%s.response", requestId)
+	fileName := fmt.Sprintf("%s.response", query.RequestId)
 
 	// create the blob path to the app endpoint
-	blobPath := path.Join(user, "app_data", appName, "rpc", appEndpoint, fileName)
+	blobPath := path.Join(query.User, "app_data", query.AppName, "rpc", query.AppEp, fileName)
 
 	slog.Info("polling for response", "blobPath", blobPath)
 
 	// poll the blob storage for the response
-	object, err := h.pollForObject(context.Background(), blobPath, defaultTimeoutMs)
+	object, err := h.pollForObject(context.Background(), blobPath, query.Timeout)
 	if err != nil {
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -234,23 +232,28 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 		http.StatusOK, gin.H{
 			"message":    "Response received",
 			"response":   responseBody,
-			"request_id": requestId,
+			"request_id": query.RequestId,
 		},
 	)
 }
 
-func (h *SendHandler) pollForObject(ctx context.Context, blobPath string, timeout int) (*blob.GetObjectResponse, error) {
+func (h *SendHandler) pollForObject(
+	ctx context.Context,
+	blobPath string,
+	timeout int,
+) (*blob.GetObjectResponse, error) {
 	startTime := time.Now()
 
 	// clamp timeout
 	if timeout > maxTimeoutMs {
 		timeout = maxTimeoutMs
 	}
+
 	maxTimeout := time.Duration(timeout) * time.Millisecond
 
 	for {
 		// check if timeout has been reached
-		if time.Since(startTime) > maxTimeout {
+		if time.Since(startTime) > time.Duration(maxTimeout) {
 			return nil, ErrPollTimeout
 		}
 
@@ -288,7 +291,7 @@ func unmarshalResponse(bodyBytes []byte) (map[string]interface{}, error) {
 	}
 
 	// Decode the base64 body
-	decodedBody, err := base64.StdEncoding.DecodeString(bodyStr)
+	decodedBody, err := base64.URLEncoding.DecodeString(bodyStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode base64 body: %w", err)
 	}
