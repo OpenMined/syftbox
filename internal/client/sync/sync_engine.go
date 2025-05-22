@@ -543,6 +543,8 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 
 	filePath := getRPCPath(syftRPCMsg)
 
+	slog.Info("Received RPC message", "RPCPath", filePath)
+
 	// Convert the syftRPCMsg to json
 	jsonRPCMsg, err := json.Marshal(syftRPCMsg)
 	if err != nil {

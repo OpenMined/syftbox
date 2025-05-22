@@ -142,7 +142,8 @@ func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
 	}
 	// Decode base64 body
 	if aux.Body != "" {
-		body, err := base64.StdEncoding.DecodeString(aux.Body)
+		// decode the body, using URL encoding
+		body, err := base64.URLEncoding.DecodeString(aux.Body)
 		if err != nil {
 			return err
 		}
