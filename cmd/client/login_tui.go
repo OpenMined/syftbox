@@ -48,6 +48,7 @@ type LoginTUIOpts struct {
 	Email              string
 	ServerURL          string
 	DataDir            string
+	ConfigPath         string
 	EmailSubmitHandler func(email string) error
 	OTPSubmitHandler   func(email, otp string) error
 	EmailValidator     func(email string) bool
@@ -288,8 +289,9 @@ func (m loginModel) View() string {
 	// Render header
 	b.WriteString(titleStyle.Render(utils.SyftBoxArt))
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Server    "), green.Render(m.opts.ServerURL)))
-	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Data Dir  "), green.Render(m.opts.DataDir)))
+	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Server  "), green.Render(m.opts.ServerURL)))
+	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Data    "), green.Render(m.opts.DataDir)))
+	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Config  "), green.Render(m.opts.ConfigPath)))
 	b.WriteString("\n\n")
 
 	// Render content based on current view
