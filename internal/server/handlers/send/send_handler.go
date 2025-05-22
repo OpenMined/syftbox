@@ -121,9 +121,10 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 			return
 		}
 		slog.Info("saved message to blob storage", "blobPath", blobPath)
-		ctx.PureJSON(http.StatusAccepted, SendResponse{
+		ctx.PureJSON(http.StatusAccepted, SendAcknowledgment{
 			Message:   "Request has been accepted",
 			RequestID: httpMsg.Id,
+			PollURL:   h.constructPollURL(httpMsg.Id, req.AppName, req.AppEp),
 		})
 		return
 	}
@@ -152,9 +153,10 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	// if the object is not found, return an accepted message
 	if object == nil {
-		ctx.PureJSON(http.StatusAccepted, SendResponse{
+		ctx.PureJSON(http.StatusAccepted, SendAcknowledgment{
 			Message:   "Request has been accepted. Please check back later.",
 			RequestID: httpMsg.Id,
+			PollURL:   h.constructPollURL(httpMsg.Id, req.AppName, req.AppEp),
 		})
 		return
 	}
@@ -254,7 +256,6 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			RequestID: req.RequestID,
 		},
 	)
-	return
 }
 
 func (h *SendHandler) pollForObject(
@@ -293,6 +294,14 @@ func (h *SendHandler) pollForObject(
 			continue
 		}
 	}
+}
+
+func (h *SendHandler) constructPollURL(
+	requestID string,
+	appName string,
+	appEp string,
+) string {
+	return fmt.Sprintf("/poll?request_id=%s&app_name=%s&app_ep=%s", requestID, appName, appEp)
 }
 
 // unmarshalResponse handles the unmarshaling of a response from blob storage
