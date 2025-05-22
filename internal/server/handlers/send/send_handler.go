@@ -73,11 +73,11 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		req.To,
 		req.AppName,
 		req.AppEp,
-		req.Method,
+		ctx.Request.Method,
 		bodyBytes,
 		req.Headers,
 		req.Status,
-		syftmsg.HttpMsgType(req.Type),
+		syftmsg.HttpMsgTypeRequest,
 	)
 	slog.Debug("sending message", "msg", msg)
 
@@ -114,13 +114,16 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 			Size: int64(len(rpcMsgBytes)),
 		}); err != nil {
 			slog.Error("failed to save message to blob storage", "error", err)
-			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			ctx.PureJSON(http.StatusInternalServerError, SendError{
+				Error:     err.Error(),
+				RequestID: httpMsg.Id,
+			})
 			return
 		}
 		slog.Info("saved message to blob storage", "blobPath", blobPath)
-		ctx.PureJSON(http.StatusAccepted, gin.H{
-			"message":    "Request has been accepted",
-			"request_id": httpMsg.Id,
+		ctx.PureJSON(http.StatusAccepted, SendResponse{
+			Message:   "Request has been accepted",
+			RequestID: httpMsg.Id,
 		})
 		return
 	}
@@ -140,15 +143,18 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	object, err = h.pollForObject(context.Background(), blobPath, req.Timeout)
 	if err != nil && err != ErrPollTimeout {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusInternalServerError, SendError{
+			Error:     err.Error(),
+			RequestID: httpMsg.Id,
+		})
 		return
 	}
 
 	// if the object is not found, return an accepted message
 	if object == nil {
-		ctx.PureJSON(http.StatusAccepted, gin.H{
-			"message":    "Request has been accepted. Please check back later.",
-			"request_id": httpMsg.Id,
+		ctx.PureJSON(http.StatusAccepted, SendResponse{
+			Message:   "Request has been accepted. Please check back later.",
+			RequestID: httpMsg.Id,
 		})
 		return
 	}
@@ -158,9 +164,9 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	if readErr != nil {
 		ctx.PureJSON(
 			http.StatusInternalServerError,
-			gin.H{
-				"Failed to read object": readErr.Error(),
-				"request_id":            httpMsg.Id,
+			SendError{
+				Error:     "Failed to read object: " + readErr.Error(),
+				RequestID: httpMsg.Id,
 			},
 		)
 		return
@@ -171,74 +177,84 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	if unmarshalErr != nil {
 		ctx.PureJSON(
 			http.StatusInternalServerError,
-			gin.H{
-				"Failed to unmarshal response": unmarshalErr.Error(),
-				"request_id":                   httpMsg.Id,
+			SendError{
+				Error:     "Failed to unmarshal response: " + unmarshalErr.Error(),
+				RequestID: httpMsg.Id,
 			},
 		)
 		return
 	}
 
 	// send the response to the client
-	ctx.PureJSON(http.StatusOK, gin.H{
-		"request_id": httpMsg.Id,
-		"message":    responseBody,
+	ctx.PureJSON(http.StatusOK, PollResponse{
+		Message:   responseBody,
+		RequestID: httpMsg.Id,
 	})
 
 }
 
 func (h *SendHandler) PollForResponse(ctx *gin.Context) {
-	var query PollForObjectQuery
-	if err := ctx.ShouldBindQuery(&query); err != nil {
+	var req PollObjectRequest
+	if err := ctx.ShouldBindQuery(&req); err != nil {
 		slog.Error("failed to bind query parameters", "error", err)
 		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// create the blob path to the app endpoint
-	fileName := fmt.Sprintf("%s.response", query.RequestID)
+	fileName := fmt.Sprintf("%s.response", req.RequestID)
 
 	// create the blob path to the app endpoint
-	blobPath := path.Join(query.User, "app_data", query.AppName, "rpc", query.AppEp, fileName)
+	blobPath := path.Join(req.User, "app_data", req.AppName, "rpc", req.AppEp, fileName)
 
 	slog.Info("polling for response", "blobPath", blobPath)
 
 	// poll the blob storage for the response
 	var queryTimeout int
-	if query.Timeout > 0 {
-		queryTimeout = query.Timeout
+	if req.Timeout > 0 {
+		queryTimeout = req.Timeout
 	} else {
 		queryTimeout = defaultTimeoutMs
 	}
 
 	object, err := h.pollForObject(context.Background(), blobPath, queryTimeout)
 	if err != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusInternalServerError, PollError{
+			Error:     err.Error(),
+			RequestID: req.RequestID,
+		})
 		return
 	}
 
 	// Read the response body
 	bodyBytes, err := io.ReadAll(object.Body)
 	if err != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusInternalServerError, PollError{
+			Error:     err.Error(),
+			RequestID: req.RequestID,
+		})
 		return
 	}
 
 	// Unmarshal the response
 	responseBody, err := unmarshalResponse(bodyBytes)
 	if err != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusInternalServerError, PollError{
+			Error:     err.Error(),
+			RequestID: req.RequestID,
+		})
 		return
 	}
 
 	// send the response to the client
 	ctx.PureJSON(
-		http.StatusOK, gin.H{
-			"message":    "Response received",
-			"response":   responseBody,
-			"request_id": query.RequestID,
+		http.StatusOK,
+		PollResponse{
+			Message:   responseBody,
+			RequestID: req.RequestID,
 		},
 	)
+	return
 }
 
 func (h *SendHandler) pollForObject(
