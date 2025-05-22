@@ -29,24 +29,17 @@ var rootCmd = &cobra.Command{
 	Use:     "syftbox",
 	Short:   "SyftBox CLI",
 	Version: version.Detailed(),
-	PreRunE: func(cmd *cobra.Command, args []string) error {
-		return loadConfig(cmd)
-	},
 	Run: func(cmd *cobra.Command, args []string) {
-		// create & validate config
-		cfg := &config.Config{
-			Path:         viper.ConfigFileUsed(),
-			Email:        viper.GetString("email"),
-			DataDir:      viper.GetString("data_dir"),
-			ServerURL:    viper.GetString("server_url"),
-			RefreshToken: viper.GetString("refresh_token"),
-			AppsEnabled:  viper.GetBool("apps_enabled"),
-			ClientURL:    config.DefaultClientURL,
+		cfg, err := loadConfig(cmd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", red.Bold(true).Render("ERROR"), err)
+			os.Exit(1)
 		}
+
 		if err := cfg.Validate(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: syftbox bad config: %s\n", red.Bold(true).Render("ERROR"), err)
+			fmt.Fprintf(os.Stderr, "%s: syftbox config: %s\n", red.Bold(true).Render("ERROR"), err)
 			if cfg.Email == "" || cfg.DataDir == "" || cfg.RefreshToken == "" {
-				fmt.Fprintf(os.Stderr, "Have you logged in? Run %s to fix this\n", green.Render("syftbox login"))
+				fmt.Fprintf(os.Stderr, "Have you logged in? Run `%s` to fix this\n", green.Render("syftbox login"))
 			}
 			os.Exit(1)
 		}
@@ -74,10 +67,10 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.Flags().SortFlags = false
-	rootCmd.Flags().StringP("email", "e", "", "Email for the SyftBox datasite")
-	rootCmd.Flags().StringP("datadir", "d", config.DefaultDataDir, "SyftBox Data Directory")
-	rootCmd.Flags().StringP("server", "s", config.DefaultServerURL, "SyftBox Server")
-	rootCmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "SyftBox config file")
+	rootCmd.Flags().StringP("email", "e", "", "your email for your syftbox datasite")
+	rootCmd.Flags().StringP("datadir", "d", config.DefaultDataDir, "data directory where the syftbox workspace is stored")
+	rootCmd.Flags().StringP("server", "s", config.DefaultServerURL, "url of the syftbox server")
+	rootCmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "path to config file")
 }
 
 func main() {
@@ -132,42 +125,76 @@ func main() {
 	}
 }
 
-func loadConfig(cmd *cobra.Command) error {
+// loadConfig initializes a config by reading config file/env vars, and cli flags
+// it does not guarantee if the contents are valid, as validation is delegated to the client
+func loadConfig(cmd *cobra.Command) (*config.Config, error) {
+	v := viper.New()
+
 	// config path
 	if cmd.Flag("config").Changed {
-		configFilePath, _ := cmd.Flags().GetString("config")
-		viper.SetConfigFile(configFilePath)
+		configFilePath := cmd.Flag("config").Value.String()
+		v.SetConfigFile(configFilePath)
 	} else {
-		viper.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
-		viper.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
-		viper.SetConfigName("config")                               // Name of config file (without extension)
-		viper.SetConfigType("json")
+		v.AddConfigPath(filepath.Join(home, ".syftbox"))        // Then check .syftbox
+		v.AddConfigPath(filepath.Join(home, ".config/syftbox")) // Then check .config/syftbox
+		v.SetConfigName("config")                               // Name of config file (without extension)
+		v.SetConfigType("json")
 	}
 
-	// Read config file
-	if err := viper.ReadInConfig(); err != nil {
+	// Set up environment variables
+	v.SetEnvPrefix("SYFTBOX")
+	v.AutomaticEnv()
+
+	// Bind cmd flags to viper & set defaults
+	v.BindPFlag("email", cmd.Flags().Lookup("email"))
+	v.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
+	v.BindPFlag("server_url", cmd.Flags().Lookup("server"))
+	v.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config"))
+	v.SetDefault("client_url", config.DefaultClientURL) // this is not used in standard mode
+	v.SetDefault("apps_enabled", config.DefaultAppsEnabled)
+
+	// Read config filew
+	if err := v.ReadInConfig(); err != nil {
 		enoent := errors.Is(err, os.ErrNotExist)
 		_, ok := err.(viper.ConfigFileNotFoundError)
 		if !enoent && !ok {
-			return fmt.Errorf("config read '%s': %w", viper.ConfigFileUsed(), err)
+			return nil, fmt.Errorf("config read '%s': %w", v.ConfigFileUsed(), err)
 		}
 	}
 
-	// Bind flags to viper
-	viper.BindPFlag("email", cmd.Flags().Lookup("email"))
-	viper.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
-	viper.BindPFlag("server_url", cmd.Flags().Lookup("server"))
-
-	// Set up environment variables
-	viper.SetEnvPrefix("SYFTBOX")
-	viper.AutomaticEnv()
-
-	// override server url if remote url is set
-	if strings.Contains(viper.GetString("server_url"), "openmined.org") {
-		viper.Set("server_url", config.DefaultServerURL)
+	// Unmarshal to server.Config
+	var cfg *config.Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("config read: %w", err)
 	}
 
-	return nil
+	return cfg, nil
+}
+
+// readValidConfig loads a valid config file at a path
+// does not rely on viper or cobra
+func readValidConfig(configPath string) (*config.Config, error) {
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if cfg.RefreshToken == "" {
+		return nil, fmt.Errorf("no refresh token found")
+	}
+	return cfg, nil
+}
+
+func logConfig(cfg *config.Config) {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("\n%s\n", lightGray.Render("SYFTBOX DATASITE CONFIG")))
+	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Email"), cyan.Render(cfg.Email)))
+	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Data"), cyan.Render(cfg.DataDir)))
+	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Config"), cfg.Path))
+	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Server"), cfg.ServerURL))
+	fmt.Println(sb.String())
 }
 
 func showSyftBoxHeader() {

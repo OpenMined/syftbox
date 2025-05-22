@@ -7,7 +7,6 @@ import (
 	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 func init() {
@@ -22,9 +21,6 @@ func newAppCmd() *cobra.Command {
 	appCmd := &cobra.Command{
 		Use:   "app",
 		Short: "Manage SyftBox apps",
-		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			return loadConfig(cmd)
-		},
 	}
 	return appCmd
 }
@@ -42,7 +38,7 @@ func newAppCmdInstall() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			repo := args[0]
-			installer, err := getAppManager()
+			installer, err := getAppManager(cmd)
 			if err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
@@ -79,7 +75,7 @@ func newAppCmdUninstall() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			appName := args[0]
-			manager, err := getAppManager()
+			manager, err := getAppManager(cmd)
 			if err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
@@ -102,7 +98,7 @@ func newAppCmdList() *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List SyftBox apps",
 		Run: func(cmd *cobra.Command, args []string) {
-			manager, err := getAppManager()
+			manager, err := getAppManager(cmd)
 			if err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
@@ -128,11 +124,16 @@ func newAppCmdList() *cobra.Command {
 	return appCmdList
 }
 
-func getAppManager() (*apps.AppManager, error) {
-	user := viper.GetString("email")
-	dataDir := viper.GetString("data_dir")
+func getAppManager(cmd *cobra.Command) (*apps.AppManager, error) {
+	// fetched from main/rootCmd/persistentFlags
+	configPath := cmd.Flag("config").Value.String()
 
-	datasite, err := workspace.NewWorkspace(dataDir, user)
+	cfg, err := readValidConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	datasite, err := workspace.NewWorkspace(cfg.DataDir, cfg.Email)
 	if err != nil {
 		return nil, err
 	}

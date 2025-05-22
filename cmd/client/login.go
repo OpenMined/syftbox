@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/openmined/syftbox/internal/client/config"
@@ -32,10 +31,10 @@ func newLoginCmd() *cobra.Command {
 			// fetched from main/rootCmd/persistentFlags
 			configPath := cmd.Flag("config").Value.String()
 
-			if cfg, err := getValidConfig(configPath); err == nil {
+			if cfg, err := readValidConfig(configPath); err == nil {
 				if !quiet {
 					fmt.Println(green.Render("**Already logged in**"))
-					printConfig(cfg)
+					logConfig(cfg)
 				}
 				os.Exit(0)
 			}
@@ -118,39 +117,15 @@ func newLoginCmd() *cobra.Command {
 
 			if !quiet {
 				fmt.Println(green.Render("SyftBox datasite initialized"))
-				printConfig(cfg)
+				logConfig(cfg)
 			}
 		},
 	}
 
 	cmd.Flags().SortFlags = false
-	cmd.Flags().StringVarP(&dataDir, "data-dir", "d", config.DefaultDataDir, "data directory")
-	cmd.Flags().StringVarP(&serverURL, "server-url", "s", config.DefaultServerURL, "server url")
+	cmd.Flags().StringVarP(&dataDir, "datadir", "d", config.DefaultDataDir, "data directory where the syftbox workspace is stored")
+	cmd.Flags().StringVarP(&serverURL, "server", "s", config.DefaultServerURL, "url of the syftbox server")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "disable output")
 
 	return cmd
-}
-
-func getValidConfig(configPath string) (*config.Config, error) {
-	cfg, err := config.LoadFromFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.RefreshToken == "" {
-		return nil, fmt.Errorf("no refresh token found")
-	}
-	return cfg, nil
-}
-
-func printConfig(cfg *config.Config) {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("\n%s\n", lightGray.Render("SYFTBOX DATASITE CONFIG")))
-	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Email"), cyan.Render(cfg.Email)))
-	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Data"), cyan.Render(cfg.DataDir)))
-	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Config"), cfg.Path))
-	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Server"), cfg.ServerURL))
-	fmt.Println(sb.String())
 }
