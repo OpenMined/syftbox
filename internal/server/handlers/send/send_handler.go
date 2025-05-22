@@ -188,18 +188,15 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 }
 
 func (h *SendHandler) PollForResponse(ctx *gin.Context) {
-	// get the request_id from the query params
-	// get the app name
-	// get the app endpoint
-
 	var query PollForObjectQuery
 	if err := ctx.ShouldBindQuery(&query); err != nil {
+		slog.Error("failed to bind query parameters", "error", err)
 		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	// create the blob path to the app endpoint
-	fileName := fmt.Sprintf("%s.response", query.RequestId)
+	fileName := fmt.Sprintf("%s.response", query.RequestID)
 
 	// create the blob path to the app endpoint
 	blobPath := path.Join(query.User, "app_data", query.AppName, "rpc", query.AppEp, fileName)
@@ -207,7 +204,14 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	slog.Info("polling for response", "blobPath", blobPath)
 
 	// poll the blob storage for the response
-	object, err := h.pollForObject(context.Background(), blobPath, query.Timeout)
+	var queryTimeout int
+	if query.Timeout > 0 {
+		queryTimeout = query.Timeout
+	} else {
+		queryTimeout = defaultTimeoutMs
+	}
+
+	object, err := h.pollForObject(context.Background(), blobPath, queryTimeout)
 	if err != nil {
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -232,7 +236,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 		http.StatusOK, gin.H{
 			"message":    "Response received",
 			"response":   responseBody,
-			"request_id": query.RequestId,
+			"request_id": query.RequestID,
 		},
 	)
 }

@@ -20,9 +20,9 @@ type MessageRequest struct {
 }
 
 type PollForObjectQuery struct {
-	RequestId string `query:"request_id" binding:"required"`
-	AppName   string `query:"app_name" binding:"required"`
-	AppEp     string `query:"app_endpoint" binding:"required"`
-	User      string `query:"user" binding:"required"`
-	Timeout   int    `query:"timeout,omitempty" binding:"gte=0"`
+	RequestID string `form:"request_id" binding:"required"`
+	AppName   string `form:"app_name" binding:"required"`
+	AppEp     string `form:"app_endpoint" binding:"required"`
+	User      string `form:"user" binding:"required"`
+	Timeout   int    `form:"timeout,omitempty" binding:"gte=0"`
 }
