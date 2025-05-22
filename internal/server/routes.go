@@ -41,7 +41,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	}))
 	r.Use(gin.Recovery())
 	r.Use(gzip.Gzip(gzip.BestSpeed))
-	r.Use(middlewares.InitCORS())
+	r.Use(middlewares.CORS())
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
