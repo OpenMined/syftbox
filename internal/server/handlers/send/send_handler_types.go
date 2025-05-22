@@ -7,7 +7,7 @@ const (
 	SendMsgResp MsgType = "response"
 )
 
-type MessageHeaders struct {
+type MessageRequest struct {
 	Type    MsgType           `header:"x-syft-msg-type" binding:"required"`
 	From    string            `header:"x-syft-from" binding:"required"`
 	To      string            `header:"x-syft-to" binding:"required"`
@@ -16,4 +16,5 @@ type MessageHeaders struct {
 	Method  string            `header:"x-syft-method" binding:"required"`
 	Headers map[string]string `header:"x-syft-headers"`
 	Status  int               `header:"x-syft-status"`
+	Timeout int               `form:"timeout" header:"x-syft-timeout"`
 }

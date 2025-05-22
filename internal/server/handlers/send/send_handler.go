@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,6 +19,12 @@ import (
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
+var (
+	ErrPollTimeout   = errors.New("poll timed out")
+	defaultTimeoutMs = 5000
+	maxTimeoutMs     = 10000
+)
+
 type SendHandler struct {
 	hub  *ws.WebsocketHub
 	blob *blob.BlobService
@@ -28,8 +35,8 @@ func New(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
 }
 
 func (h *SendHandler) SendMsg(ctx *gin.Context) {
-	var header MessageHeaders
-	if err := ctx.ShouldBindHeader(&header); err != nil {
+	var req MessageRequest
+	if err := ctx.ShouldBindHeader(&req); err != nil {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -46,11 +53,11 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	}
 	// TODO: check if body bytes is not too large
 
-	msg := syftmsg.NewHttpMsg(header.From, header.To, header.AppName, header.AppEp, header.Method, bodyBytes, header.Headers, header.Status, syftmsg.HttpMsgType(header.Type))
+	msg := syftmsg.NewHttpMsg(req.From, req.To, req.AppName, req.AppEp, req.Method, bodyBytes, req.Headers, req.Status, syftmsg.HttpMsgType(req.Type))
 
 	slog.Info("sending message", "msg", msg)
 
-	if header.Type == SendMsgResp {
+	if req.Type == SendMsgResp {
 		// TODO handler response messages
 		return
 	}
@@ -59,15 +66,15 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	httpMsg := msg.Data.(*syftmsg.HttpMsg)
 
 	//  send the message to the websocket hub
-	if ok := h.hub.SendMessageUser(header.To, msg); !ok {
+	if ok := h.hub.SendMessageUser(req.To, msg); !ok {
 		// Handle saving to blob storage
 		// get the blob path
 		blobPath := path.Join(
-			header.From,
+			req.From,
 			"app_data",
-			header.AppName,
+			req.AppName,
 			"rpc",
-			header.AppEp,
+			req.AppEp,
 			fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
 		)
 
@@ -101,16 +108,24 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	// create blobPath
 	blobPath := path.Join(
-		header.From,
+		req.From,
 		"app_data",
-		header.AppName,
+		req.AppName,
 		"rpc",
-		header.AppEp,
+		req.AppEp,
 		fmt.Sprintf("%s.response", httpMsg.Id),
 	)
 
 	// poll for the object
-	object, err := h.pollForObject(context.Background(), blobPath)
+	var object *blob.GetObjectResponse
+	if req.Timeout > 0 {
+		object, err = h.pollForObject(context.Background(), blobPath, req.Timeout)
+		// if there was an error, return an internal server error
+		if err != nil && !errors.Is(err, ErrPollTimeout) {
+			ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	// if the object is not found, return an accepted message
 	if object == nil {
@@ -118,12 +133,6 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 			"message":    "Request has been accepted. Please check back later.",
 			"request_id": httpMsg.Id,
 		})
-		return
-	}
-
-	// if there was an error, return an internal server error
-	if err != nil {
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{"Failed to get object": err.Error()})
 		return
 	}
 
@@ -200,7 +209,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	slog.Info("polling for response", "blobPath", blobPath)
 
 	// poll the blob storage for the response
-	object, err := h.pollForObject(context.Background(), blobPath)
+	object, err := h.pollForObject(context.Background(), blobPath, defaultTimeoutMs)
 	if err != nil {
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -230,19 +239,25 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	)
 }
 
-func (h *SendHandler) pollForObject(ctx context.Context, blobPath string) (*blob.GetObjectResponse, error) {
+func (h *SendHandler) pollForObject(ctx context.Context, blobPath string, timeout int) (*blob.GetObjectResponse, error) {
 	startTime := time.Now()
-	maxTimeout := 10 * time.Second // or whatever timeout you want
+
+	// clamp timeout
+	if timeout > maxTimeoutMs {
+		timeout = maxTimeoutMs
+	}
+	maxTimeout := time.Duration(timeout) * time.Millisecond
 
 	for {
 		// check if timeout has been reached
 		if time.Since(startTime) > maxTimeout {
-			return nil, fmt.Errorf("No response exists. Polling timed out")
+			return nil, ErrPollTimeout
 		}
 
 		// try to get the object
-		object, err := h.blob.Backend().GetObject(ctx, blobPath)
-		if err == nil {
+		// todo this error should be handled correctly
+		object, _ := h.blob.Backend().GetObject(ctx, blobPath)
+		if object != nil {
 			return object, nil
 		}
 
@@ -251,7 +266,7 @@ func (h *SendHandler) pollForObject(ctx context.Context, blobPath string) (*blob
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond): // adjust polling interval as needed
+		case <-time.After(500 * time.Millisecond): // adjust polling interval as needed
 			continue
 		}
 	}
