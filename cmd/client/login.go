@@ -19,6 +19,7 @@ func init() {
 func newLoginCmd() *cobra.Command {
 	var dataDir string
 	var serverURL string
+	var quiet bool
 
 	cmd := &cobra.Command{
 		Use:     "login",
@@ -32,8 +33,10 @@ func newLoginCmd() *cobra.Command {
 			configPath := cmd.Flag("config").Value.String()
 
 			if cfg, err := getValidConfig(configPath); err == nil {
-				fmt.Println(green.Render("**Already logged in**"))
-				printConfig(cfg)
+				if !quiet {
+					fmt.Println(green.Render("**Already logged in**"))
+					printConfig(cfg)
+				}
 				os.Exit(0)
 			}
 
@@ -61,10 +64,23 @@ func newLoginCmd() *cobra.Command {
 				return nil
 			}
 
+			resolvedDataDir, err := utils.ResolvePath(dataDir)
+			if err != nil {
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
+				os.Exit(1)
+			}
+
+			resolvedConfigPath, err := utils.ResolvePath(configPath)
+			if err != nil {
+				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
+				os.Exit(1)
+			}
+
 			if err := RunLoginTUI(LoginTUIOpts{
 				Email:              email,
-				DataDir:            dataDir,
 				ServerURL:          serverURL,
+				DataDir:            resolvedDataDir,
+				ConfigPath:         resolvedConfigPath,
 				EmailSubmitHandler: onEmailSubmit,
 				OTPSubmitHandler:   onOTPSubmit,
 				EmailValidator:     utils.IsValidEmail,
@@ -100,14 +116,17 @@ func newLoginCmd() *cobra.Command {
 				os.Exit(1)
 			}
 
-			fmt.Println(green.Render("SyftBox datasite initialized"))
-			printConfig(cfg)
+			if !quiet {
+				fmt.Println(green.Render("SyftBox datasite initialized"))
+				printConfig(cfg)
+			}
 		},
 	}
 
 	cmd.Flags().SortFlags = false
 	cmd.Flags().StringVarP(&dataDir, "data-dir", "d", config.DefaultDataDir, "data directory")
-	cmd.Flags().StringVarP(&serverURL, "server-url", "s", config.DefaultServerURL, "server URL")
+	cmd.Flags().StringVarP(&serverURL, "server-url", "s", config.DefaultServerURL, "server url")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "disable output")
 
 	return cmd
 }
