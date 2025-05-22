@@ -9,9 +9,13 @@ ASK_RUN_CLIENT=1
 # --run => disables the prompt & runs the client
 RUN_CLIENT=0
 
+# --apps => installs these apps (comma separated list)
+INSTALL_APPS=${INSTALL_APPS:-""}
+
 APP_NAME="syftbox"
 ARTIFACT_BASE_URL=${ARTIFACT_BASE_URL:-"https://syftboxdev.openmined.org"}
 ARTIFACT_DOWNLOAD_URL="$ARTIFACT_BASE_URL/releases"
+SYFTBOX_BINARY_PATH="$HOME/.local/bin/syftbox"
 
 red='\033[1;31m'
 yellow='\033[0;33m'
@@ -141,7 +145,8 @@ prompt_restart_shell() {
     echo "  \`source ~/.bash_profile\` (for bash)"
     echo "  \`source ~/.profile\`      (for sh)"
 
-    success "\nAfter reloading, start the client"
+    success "\nAfter reloading, login and start the client"
+    echo "  \`syftbox login\`"
     echo "  \`syftbox\`"
 }
 
@@ -158,7 +163,27 @@ prompt_restart_shell() {
 run_client() {
     echo
     success "Starting SyftBox client..."
-    exec ~/.local/bin/syftbox < /dev/tty
+    exec $SYFTBOX_BINARY_PATH
+}
+
+setup_client() {
+    info "Setting up SyftBox"
+    # Run login command and capture exit code
+    if ! $SYFTBOX_BINARY_PATH login --quiet; then
+        return 1
+    fi
+
+    if [ -n "$INSTALL_APPS" ];
+    then
+        info "Installing Apps"
+        IFS=',' read -r -a apps <<< "$INSTALL_APPS"
+        for app in "${apps[@]}"; do
+            echo "App: $app"
+            $SYFTBOX_BINARY_PATH app install $app || true
+        done
+    fi
+
+    return 0
 }
 
 prompt_run_client() {
@@ -190,7 +215,7 @@ uninstall_old_version() {
 
         # just yank the path to confirm
         rm -f "$path"
-        rm -f "$HOME/.local/bin/syftbox"
+        rm -f "$SYFTBOX_BINARY_PATH"
     fi
 }
 
@@ -204,7 +229,15 @@ pre_install() {
 }
 
 post_install() {
-    success "Installation completed! $(~/.local/bin/syftbox -v)"
+    success "Installation completed! $($SYFTBOX_BINARY_PATH -v)"
+
+    if ! setup_client; then
+        RUN_CLIENT=0
+        ASK_RUN_CLIENT=0
+        prompt_restart_shell
+        echo
+        err "Setup did not complete. Please login manually."
+    fi
 
     if [ $RUN_CLIENT -eq 1 ]
     then run_client
@@ -227,22 +260,33 @@ install_syftbox() {
     info "Installing SyftBox"
     tar -xzf "$tmp_dir/$pkg_name.tar.gz" -C $tmp_dir
     mkdir -p $HOME/.local/bin
-    cp "$tmp_dir/$pkg_name/syftbox" $HOME/.local/bin/syftbox
+    cp "$tmp_dir/$pkg_name/syftbox" $SYFTBOX_BINARY_PATH
 
     rm -rf $tmp_dir
     patch_path
 }
 
 do_install() {
+    local next_arg=""
     for arg in "$@"; do
         case "$arg" in
-            -r|--run|run)
+            -r|--run)
                 RUN_CLIENT=1
                 ;;
-            -n|--no-prompt|no-prompt)
+            -n|--no-prompt)
                 ASK_RUN_CLIENT=0
                 ;;
+            -a=*|--apps=*)
+                INSTALL_APPS="${arg#*=}"
+                ;;
+            -a|--apps)
+                next_arg="apps"
+                ;;
             *)
+                if [ "$next_arg" = "apps" ]; then
+                    INSTALL_APPS="$arg"
+                    next_arg=""
+                fi
                 ;;
         esac
     done
