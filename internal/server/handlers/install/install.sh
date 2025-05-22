@@ -167,7 +167,7 @@ run_client() {
 }
 
 setup_client() {
-    info "Setting up SyftBox"
+    info "Setting up..."
     # Run login command and capture exit code
     if ! $SYFTBOX_BINARY_PATH login --quiet; then
         return 1
@@ -175,10 +175,10 @@ setup_client() {
 
     if [ -n "$INSTALL_APPS" ];
     then
-        info "Installing Apps"
+        info "Installing SyftBox Apps..."
         IFS=',' read -r -a apps <<< "$INSTALL_APPS"
         for app in "${apps[@]}"; do
-            echo "App: $app"
+            echo "* $app"
             $SYFTBOX_BINARY_PATH app install $app || true
         done
     fi
@@ -229,8 +229,6 @@ pre_install() {
 }
 
 post_install() {
-    success "Installation completed! $($SYFTBOX_BINARY_PATH -v)"
-
     if ! setup_client; then
         RUN_CLIENT=0
         ASK_RUN_CLIENT=0
@@ -238,6 +236,8 @@ post_install() {
         echo
         err "Setup did not complete. Please login manually."
     fi
+
+    success "Installation completed!"
 
     if [ $RUN_CLIENT -eq 1 ]
     then run_client
@@ -253,14 +253,15 @@ install_syftbox() {
     local pkg_name="${APP_NAME}_client_${os}_${arch}"
     local tmp_dir=$(mktemp -d)
 
-    info "Downloading SyftBox"
+    info "Downloading..."
     mkdir -p $tmp_dir
     downloader "${ARTIFACT_DOWNLOAD_URL}/${pkg_name}.tar.gz" "$tmp_dir/$pkg_name.tar.gz"
 
-    info "Installing SyftBox"
+    info "Installing..."
     tar -xzf "$tmp_dir/$pkg_name.tar.gz" -C $tmp_dir
     mkdir -p $HOME/.local/bin
     cp "$tmp_dir/$pkg_name/syftbox" $SYFTBOX_BINARY_PATH
+    info "Installed $($SYFTBOX_BINARY_PATH -v)"
 
     rm -rf $tmp_dir
     patch_path
