@@ -3,6 +3,7 @@ package handlers
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -107,6 +108,92 @@ func (h *LogsHandler) GetLogs(c *gin.Context) {
 	})
 }
 
+// truncatingLineScanner wraps bufio.Reader to provide scanner-like interface with line truncation.
+//
+// Why: The default bufio.Scanner fails with a "token too long" error when encountering lines
+// that exceed its buffer size (default 64KB). This is problematic for log files which may
+// contain extremely long lines (e.g., large JSON payloads, stack traces, or malformed output).
+// Rather than failing completely, we truncate long lines at 64KB and append "..." to indicate
+// truncation, allowing log parsing to continue for subsequent lines.
+type truncatingLineScanner struct {
+	reader *bufio.Reader
+	line   []byte
+	err    error
+}
+
+// newTruncatingLineScanner creates a scanner that truncates long lines instead of failing
+func newTruncatingLineScanner(r io.Reader) *truncatingLineScanner {
+	size := 64 * 1024
+	return &truncatingLineScanner{
+		reader: bufio.NewReaderSize(r, size),
+	}
+}
+
+// Scan reads the next line, truncating if necessary
+func (s *truncatingLineScanner) Scan() bool {
+	var fullLine []byte
+	wasTruncated := false
+
+	for {
+		line, isPrefix, err := s.reader.ReadLine()
+		if err != nil {
+			s.err = err
+			return false
+		}
+
+		// If this is the first chunk or we're still within limit, append it
+		if len(fullLine) < s.reader.Size() {
+			remaining := s.reader.Size() - len(fullLine)
+			if len(line) > remaining {
+				fullLine = append(fullLine, line[:remaining]...)
+				wasTruncated = true
+			} else {
+				fullLine = append(fullLine, line...)
+			}
+		}
+
+		// If line is complete (no prefix), we're done
+		if !isPrefix {
+			if wasTruncated {
+				// Append ellipsis to indicate truncation
+				fullLine = append(fullLine, []byte("...")...)
+			}
+			s.line = fullLine
+			return true
+		}
+
+		// If we've already read maxLineLength, skip the rest
+		if len(fullLine) >= s.reader.Size() {
+			wasTruncated = true
+			// Keep reading and discarding until we find the end of line
+			for isPrefix {
+				_, isPrefix, err = s.reader.ReadLine()
+				if err != nil {
+					s.err = err
+					return false
+				}
+			}
+			// Append ellipsis to indicate truncation
+			fullLine = append(fullLine, []byte("...")...)
+			s.line = fullLine
+			return true
+		}
+	}
+}
+
+// Text returns the most recently read line
+func (s *truncatingLineScanner) Text() string {
+	return string(s.line)
+}
+
+// Err returns the first non-EOF error that occurred
+func (s *truncatingLineScanner) Err() error {
+	if s.err == io.EOF {
+		return nil
+	}
+	return s.err
+}
+
 // findLinePosition performs binary search to find the approximate position of a target line number
 func (h *LogsHandler) findLinePosition(file *os.File, targetLine int64) (int64, error) {
 	// Get file size
@@ -130,7 +217,7 @@ func (h *LogsHandler) findLinePosition(file *os.File, targetLine int64) (int64, 
 		}
 
 		// Read until we find a complete line
-		scanner := bufio.NewScanner(file)
+		scanner := newTruncatingLineScanner(file)
 		if !scanner.Scan() {
 			// If we can't read a line, move left
 			right = mid - 1
@@ -198,7 +285,7 @@ func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxR
 
 	// Parse log lines
 	var logs []LogEntry
-	scanner := bufio.NewScanner(file)
+	scanner := newTruncatingLineScanner(file)
 	nextToken := int64(1)
 	hasMore := false
 
