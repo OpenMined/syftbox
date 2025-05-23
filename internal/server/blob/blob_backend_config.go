@@ -2,6 +2,7 @@ package blob
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/openmined/syftbox/internal/utils"
 )
@@ -32,4 +33,15 @@ func (c *S3Config) Validate() error {
 		return fmt.Errorf("invalid endpoint URL %q", c.Endpoint)
 	}
 	return nil
+}
+
+func (s3c S3Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("bucket_name", s3c.BucketName),
+		slog.String("region", s3c.Region),
+		slog.String("endpoint", s3c.Endpoint),
+		slog.String("access_key", utils.MaskSecret(s3c.AccessKey)),
+		slog.String("secret_key", utils.MaskSecret(s3c.SecretKey)),
+		slog.Bool("use_accelerate", s3c.UseAccelerate),
+	)
 }

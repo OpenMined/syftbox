@@ -28,11 +28,11 @@ gen-swagger:
     swag init --pd -g controlplane_routes.go -ot go ./
 
 [group('dev')]
-run-server *ARGS: gen-swagger
+run-server *ARGS:
     go run -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server {{ ARGS }}
 
 [group('dev')]
-run-server-tls *ARGS: gen-certs gen-swagger
+run-server-tls *ARGS: gen-certs
     go run -tags="{{ SERVER_BUILD_TAGS }}" ./cmd/server --cert certs/cert.pem --key certs/cert.key {{ ARGS }}
 
 [group('dev')]

@@ -172,10 +172,10 @@ func (s *Server) runHttpServer() error {
 	if s.config.HTTP.HasCerts() {
 		slog.Info("server start https",
 			"addr", fmt.Sprintf("https://%s", s.config.HTTP.Addr),
-			"cert", s.config.HTTP.CertFile,
-			"key", s.config.HTTP.KeyFile,
+			"cert", s.config.HTTP.CertFilePath,
+			"key", s.config.HTTP.KeyFilePath,
 		)
-		return s.server.ListenAndServeTLS(s.config.HTTP.CertFile, s.config.HTTP.KeyFile)
+		return s.server.ListenAndServeTLS(s.config.HTTP.CertFilePath, s.config.HTTP.KeyFilePath)
 	} else {
 		slog.Info("server start http", "addr", fmt.Sprintf("http://%s", s.config.HTTP.Addr))
 		return s.server.ListenAndServe()

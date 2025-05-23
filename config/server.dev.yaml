@@ -15,6 +15,6 @@ auth:
   refresh_token_expiry: 0
   access_token_secret: access_token_secret
   access_token_expiry: 72h
-  email_addr: test@example.com
+  email_addr: info@openmined.org
   email_otp_length: 8
   email_otp_expiry: 5m

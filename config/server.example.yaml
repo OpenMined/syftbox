@@ -1,0 +1,50 @@
+# this is an example config file for the syftbox server
+
+http:
+  # address of the server
+  addr: localhost:8080
+  # certificate file for the server
+  cert_file: /path/to/cert.pem
+  # key file for the server
+  key_file: /path/to/key.pem
+
+blob:
+  # name of the bucket (required)
+  bucket_name: example-bucket
+  # region of the bucket (required)
+  region: us-east-1
+  # endpoint of the bucket
+  endpoint: https://bucket-endpoint.com
+  # access key of the bucket (required)
+  access_key: example-access-key
+  # secret key of the bucket (required)
+  secret_key: example-secret-key
+
+auth:
+  # whether to enable auth
+  enabled: true
+  # issuer of the JWT tokens (required)
+  token_issuer: https://example.com
+  # secret for the refresh token (required)
+  # recommended to use SYFTBOX_AUTH_REFRESH_TOKEN_SECRET env var
+  refresh_token_secret: refresh_token_secret
+  # expiry of the refresh token (required)
+  refresh_token_expiry: 0
+  # secret for the access token (required)
+  # recommended to use SYFTBOX_AUTH_ACCESS_TOKEN_SECRET env var
+  access_token_secret: access_token_secret
+  # expiry of the access token (required)
+  access_token_expiry: 72h
+  # sender email address for OTPs (required)
+  email_addr: info@openmined.org
+  # length of the OTP code (required)
+  email_otp_length: 8
+  # expiry of the OTP code (required)
+  email_otp_expiry: 5m
+
+email:
+  # whether to enable email
+  enabled: true
+  # sendgrid api key (required)
+  # recommended to use SYFTBOX_EMAIL_SENDGRID_API_KEY env var
+  sendgrid_api_key: sendgrid_api_key

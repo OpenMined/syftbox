@@ -19,13 +19,15 @@ type AuthService struct {
 	config        *Config
 	codes         *expirable.LRU[string, string]
 	emailTemplate *template.Template
+	emailSvc      email.Service
 }
 
-func NewAuthService(config *Config) *AuthService {
+func NewAuthService(config *Config, emailSvc email.Service) *AuthService {
 	return &AuthService{
 		config:        config,
 		codes:         expirable.NewLRU[string, string](0, nil, config.EmailOTPExpiry), // 0 = LRU off
 		emailTemplate: template.Must(template.New("emailTemplate").Parse(emailTemplate)),
+		emailSvc:      emailSvc,
 	}
 }
 
@@ -34,28 +36,23 @@ func (s *AuthService) IsEnabled() bool {
 }
 
 func (s *AuthService) SendOTP(ctx context.Context, userEmail string) error {
-	// If auth is disabled, we don't need to send an OTP
-	if !s.IsEnabled() {
-		return nil
-	}
-
 	// Generate an OTP
 	otp, err := s.generateOTP(userEmail)
 	if err != nil {
 		return err
 	}
 
+	// If auth is disabled, we don't need to send an OTP
+	if !s.emailSvc.IsEnabled() {
+		slog.Warn("email is disabled", "email", userEmail, "otp", otp)
+		return nil
+	}
+
 	// Send the OTP to the user's email
 	return s.sendOTPEmail(ctx, userEmail, otp)
 }
 
-func (s *AuthService) GenerateTokens(ctx context.Context, userEmail string, otp string) (string, string, error) {
-	// If auth is disabled, we don't need to generate tokens
-	if !s.IsEnabled() {
-		slog.Debug("auth is disabled, will not generate tokens")
-		return "", "", nil
-	}
-
+func (s *AuthService) GenerateTokensPair(ctx context.Context, userEmail string, otp string) (string, string, error) {
 	// Verify the OTP
 	if err := s.verifyOTP(userEmail, otp); err != nil {
 		return "", "", fmt.Errorf("failed to generate token pair: %w", err)
@@ -169,7 +166,7 @@ func (s *AuthService) sendOTPEmail(ctx context.Context, to, code string) error {
 		return fmt.Errorf("failed to generate email: %w", err)
 	}
 
-	return email.Send(ctx, &email.EmailInfo{
+	return s.emailSvc.Send(ctx, &email.EmailInfo{
 		FromName:  "SyftBox",
 		FromEmail: s.config.EmailAddr,
 		Subject:   "SyftBox Verification Code",

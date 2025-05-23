@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/openmined/syftbox/internal/utils"
@@ -39,4 +40,18 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Bool("enabled", c.Enabled),
+		slog.String("token_issuer", c.TokenIssuer),
+		slog.String("refresh_token_secret", utils.MaskSecret(c.RefreshTokenSecret)),
+		slog.Duration("refresh_token_expiry", c.RefreshTokenExpiry),
+		slog.String("access_token_secret", utils.MaskSecret(c.AccessTokenSecret)),
+		slog.Duration("access_token_expiry", c.AccessTokenExpiry),
+		slog.String("email_addr", c.EmailAddr),
+		slog.Int("email_otp_length", c.EmailOTPLength),
+		slog.Duration("email_otp_expiry", c.EmailOTPExpiry),
+	)
 }
