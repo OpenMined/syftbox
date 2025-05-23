@@ -73,7 +73,7 @@ func (hc HTTPConfig) LogValue() slog.Value {
 	)
 }
 
-func (c *HTTPConfig) HasCerts() bool {
+func (c *HTTPConfig) HTTPSEnabled() bool {
 	return c.CertFilePath != "" && c.KeyFilePath != ""
 }
 
