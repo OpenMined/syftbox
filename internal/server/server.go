@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -52,7 +53,7 @@ func New(config *Config) (*Server, error) {
 	}
 
 	hub := ws.NewHub()
-	httpHandler := SetupRoutes(services, hub)
+	httpHandler := SetupRoutes(services, hub, config.HTTP.HTTPSEnabled())
 
 	return &Server{
 		config: config,
@@ -68,7 +69,10 @@ func New(config *Config) (*Server, error) {
 			IdleTimeout:       120 * time.Second,
 			ReadHeaderTimeout: 10 * time.Second,
 			// Connection control
-			MaxHeaderBytes: 1 << 20, // 1 MB
+			MaxHeaderBytes: 1 << 20, // 1 MB,
+			TLSConfig: &tls.Config{
+				MinVersion: tls.VersionTLS12, // TLS 1.2 or higher
+			},
 		},
 	}, nil
 }
@@ -169,7 +173,7 @@ func (s *Server) Stop(ctx context.Context) error {
 }
 
 func (s *Server) runHttpServer() error {
-	if s.config.HTTP.HasCerts() {
+	if s.config.HTTP.HTTPSEnabled() {
 		slog.Info("server start https",
 			"addr", fmt.Sprintf("https://%s", s.config.HTTP.Addr),
 			"cert", s.config.HTTP.CertFilePath,

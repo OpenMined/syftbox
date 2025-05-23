@@ -2,6 +2,7 @@ package syftsdk
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
@@ -37,6 +38,9 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 
 	client := resty.New().
 		SetBaseURL(config.BaseURL).
+		SetTLSClientConfig(&tls.Config{
+			MinVersion: tls.VersionTLS13,
+		}).
 		SetRetryCount(3).
 		SetRetryWaitTime(1*time.Second).
 		SetHeader(HeaderUserAgent, "SyftBox/"+version.Version).

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/lmittmann/tint"
 	"github.com/openmined/syftbox/internal/server"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
@@ -29,7 +30,10 @@ const (
 	DefaultEmailEnabled       = false
 )
 
-var dotenvLoaded bool
+var (
+	dotenvLoaded bool
+	prodEnv      bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:     "server",
@@ -80,14 +84,30 @@ func init() {
 	} else {
 		dotenvLoaded = true
 	}
+
+	prodEnv = os.Getenv("SYFTBOX_ENV") == "PROD"
 }
 
 func main() {
 	// Setup logger
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+	var handler slog.Handler
+	if prodEnv {
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})
+	} else {
+		handler = tint.NewHandler(os.Stdout, &tint.Options{
+			Level:      slog.LevelDebug,
+			AddSource:  true,
+			TimeFormat: time.DateTime,
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				if a.Key != "msg" && a.Value.Kind() == slog.KindString {
+					a.Value = slog.StringValue(fmt.Sprintf("'%s'", a.Value.String()))
+				}
+				return a
+			},
+		})
 	}
-	handler := slog.NewJSONHandler(os.Stdout, opts)
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 

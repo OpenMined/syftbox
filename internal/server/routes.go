@@ -1,12 +1,10 @@
 package server
 
 import (
-	"log/slog"
 	"net/http"
 
-	"github.com/gin-contrib/gzip"
+	"github.com/gin-contrib/secure"
 	"github.com/gin-gonic/gin"
-	slogGin "github.com/samber/slog-gin"
 
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
@@ -19,9 +17,20 @@ import (
 	"github.com/openmined/syftbox/internal/version"
 )
 
-func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
+func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Handler {
 	r := gin.New()
-	r.MaxMultipartMemory = 8 << 20 // 8 MiB
+
+	// --------------------------- middlewares ---------------------------
+
+	r.Use(gin.Recovery())
+	r.Use(middlewares.Logger())
+	r.Use(middlewares.CORS())
+	r.Use(middlewares.GZIP())
+	if httpsEnabled {
+		r.Use(secure.New(secure.DefaultConfig()))
+	}
+
+	// --------------------------- handlers ---------------------------
 
 	blobH := blob.New(svc.Blob)
 	dsH := datasite.New(svc.Datasite)
@@ -29,19 +38,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	authH := auth.New(svc.Auth)
 	sendH := send.New(hub, svc.Blob)
 
-	httpLogger := slog.Default().WithGroup("http")
-	r.Use(slogGin.NewWithConfig(httpLogger, slogGin.Config{
-		DefaultLevel:      slog.LevelInfo,
-		ClientErrorLevel:  slog.LevelWarn,
-		ServerErrorLevel:  slog.LevelError,
-		WithRequestID:     true,
-		WithRequestHeader: true,
-		WithTraceID:       true,
-		WithSpanID:        true,
-	}))
-	r.Use(gin.Recovery())
-	r.Use(gzip.Gzip(gzip.BestSpeed))
-	r.Use(middlewares.CORS())
+	// --------------------------- routes ---------------------------
 
 	r.GET("/", IndexHandler)
 	r.GET("/healthz", HealthHandler)
@@ -50,12 +47,17 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
 
-	r.POST("/auth/otp/request", authH.OTPRequest)
-	r.POST("/auth/otp/verify", authH.OTPVerify)
-	r.POST("/auth/refresh", authH.Refresh)
+	auth := r.Group("/auth")
+	auth.Use(middlewares.RateLimiter("10-M")) // 10 req/min
+	{
+		auth.POST("/otp/request", authH.OTPRequest)
+		auth.POST("/otp/verify", authH.OTPVerify)
+		auth.POST("/refresh", authH.Refresh)
+	}
 
 	v1 := r.Group("/api/v1")
 	v1.Use(middlewares.JWTAuth(svc.Auth))
+	// v1.Use(middlewares.RateLimiter("100-S")) // todo
 	{
 		// blob
 		v1.GET("/blob/list", blobH.ListObjects)
@@ -68,7 +70,6 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub) http.Handler {
 
 		// datasite
 		v1.GET("/datasite/view", dsH.GetView)
-		// v1.POST("/datasite/download", ds.DownloadFiles)
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
