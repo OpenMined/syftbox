@@ -20,8 +20,9 @@ func (a *App) buildCommand(ctx context.Context, runScript string) *exec.Cmd {
 		command.WriteString("export PATH=$PATH:" + syftboxDesktopBinariesPath + "; ")
 	}
 
-	command.WriteString("chmod +x " + runScript + "; ")
-	command.WriteString("exec " + runScript + ";")
+	command.WriteString("RUN_SH_PATH=$(cygpath -u '" + runScript + "'); ")
+	command.WriteString("chmod +x $RUN_SH_PATH; ")
+	command.WriteString("exec $RUN_SH_PATH;")
 
 	return exec.CommandContext(ctx, shell, "-l", "-c", command.String())
 }
