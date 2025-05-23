@@ -64,7 +64,7 @@ func New(config *config.Config) (*Datasite, error) {
 }
 
 func (d *Datasite) Start(ctx context.Context) error {
-	slog.Info("datasite start", "id", d.id, "datadir", d.config.DataDir, "email", d.config.Email, "serverURL", d.config.ServerURL, "clientURL", d.config.ClientURL)
+	slog.Info("datasite start", "id", d.id, "config", d.config)
 
 	// Setup local datasite first.
 	if err := d.workspace.Setup(); err != nil {

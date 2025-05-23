@@ -16,6 +16,8 @@ func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_CLIENT_URL", "http://localhost:7938")
 	t.Setenv("SYFTBOX_APPS_ENABLED", "true")
 	t.Setenv("SYFTBOX_REFRESH_TOKEN", "test-refresh-token")
+	t.Setenv("SYFTBOX_ACCESS_TOKEN", "test-access-token")
+	t.Setenv("SYFTBOX_CONFIG_PATH", "/tmp/syftbox-test.json")
 
 	cfg, err := loadConfig(rootCmd)
 	require.NoError(t, err)
@@ -27,6 +29,8 @@ func TestLoadConfigEnv(t *testing.T) {
 	assert.Equal(t, "http://localhost:7938", cfg.ClientURL)
 	assert.Equal(t, true, cfg.AppsEnabled)
 	assert.Equal(t, "test-refresh-token", cfg.RefreshToken)
+	assert.Equal(t, "test-access-token", cfg.AccessToken)
+	assert.Equal(t, "/tmp/syftbox-test.json", cfg.Path)
 }
 
 func TestLoadConfigJSON(t *testing.T) {
@@ -37,7 +41,8 @@ func TestLoadConfigJSON(t *testing.T) {
 	"data_dir": "/tmp/syftbox-test-json",
 	"server_url": "https://test-json.openmined.org",
 	"client_url": "http://localhost:8080",
-	"refresh_token": "test-refresh-token-json"
+	"refresh_token": "test-refresh-token-json",
+	"access_token": "test-access-token-json"
 }
 `
 	dummyConfigFile := filepath.Join(os.TempDir(), "dummy.json")
@@ -60,4 +65,5 @@ func TestLoadConfigJSON(t *testing.T) {
 	assert.Equal(t, "https://test-json.openmined.org", cfg.ServerURL)
 	assert.Equal(t, "http://localhost:8080", cfg.ClientURL)
 	assert.Equal(t, "test-refresh-token-json", cfg.RefreshToken)
+	assert.Equal(t, "test-access-token-json", cfg.AccessToken) // can read, but not persist!
 }
