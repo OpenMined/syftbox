@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,8 +34,8 @@ type Config struct {
 	ServerURL    string `json:"server_url" mapstructure:"server_url"`
 	ClientURL    string `json:"client_url,omitempty" mapstructure:"client_url,omitempty"`
 	AppsEnabled  bool   `json:"-" mapstructure:"apps_enabled"`
-	AccessToken  string `json:"-"` // must never be persisted. always in memory
 	RefreshToken string `json:"refresh_token,omitempty" mapstructure:"refresh_token,omitempty"`
+	AccessToken  string `json:"-" mapstructure:"access_token"` // must never be persisted. always in memory
 	Path         string `json:"-" mapstructure:"config_path"`
 }
 
@@ -78,6 +79,19 @@ func (c *Config) Validate() error {
 	// do not validate refresh token... it can be empty for local dev.
 
 	return nil
+}
+
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("data_dir", c.DataDir),
+		slog.String("email", c.Email),
+		slog.String("server_url", c.ServerURL),
+		slog.String("client_url", c.ClientURL),
+		slog.Bool("apps_enabled", c.AppsEnabled),
+		slog.Bool("refresh_token", c.RefreshToken != ""),
+		slog.Bool("access_token", c.AccessToken != ""),
+		slog.String("path", c.Path),
+	)
 }
 
 func LoadFromFile(path string) (*Config, error) {
