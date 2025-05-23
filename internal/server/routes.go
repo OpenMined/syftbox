@@ -3,7 +3,6 @@ package server
 import (
 	"net/http"
 
-	"github.com/gin-contrib/secure"
 	"github.com/gin-gonic/gin"
 
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
@@ -26,7 +25,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	r.Use(middlewares.CORS())
 	r.Use(middlewares.GZIP())
 	if httpsEnabled {
-		r.Use(secure.New(secure.DefaultConfig()))
+		r.Use(middlewares.HSTS())
 	}
 
 	// --------------------------- handlers ---------------------------
