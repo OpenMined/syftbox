@@ -56,7 +56,7 @@ func (h *AuthHandler) OTPVerify(ctx *gin.Context) {
 		return
 	}
 
-	accessToken, refreshToken, err := h.auth.GenerateTokens(ctx, req.Email, req.Code)
+	accessToken, refreshToken, err := h.auth.GenerateTokensPair(ctx, req.Email, req.Code)
 	if err != nil {
 		ctx.Error(fmt.Errorf("failed to generate tokens: %w", err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{

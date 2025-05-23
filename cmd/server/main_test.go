@@ -11,16 +11,18 @@ import (
 )
 
 func TestLoadConfigEnv(t *testing.T) {
+	t.Setenv("SYFTBOX_DATA_DIR", "/tmp/syftbox-test")
+	// http
 	t.Setenv("SYFTBOX_HTTP_ADDR", ":8080")
 	t.Setenv("SYFTBOX_HTTP_CERT_FILE", "test-cert.pem")
 	t.Setenv("SYFTBOX_HTTP_KEY_FILE", "test-key.pem")
-
+	// blob
 	t.Setenv("SYFTBOX_BLOB_BUCKET_NAME", "test-bucket")
 	t.Setenv("SYFTBOX_BLOB_REGION", "test-region")
 	t.Setenv("SYFTBOX_BLOB_ENDPOINT", "http://test-endpoint")
 	t.Setenv("SYFTBOX_BLOB_ACCESS_KEY", "test-access-key")
 	t.Setenv("SYFTBOX_BLOB_SECRET_KEY", "test-secret-key")
-
+	// auth
 	t.Setenv("SYFTBOX_AUTH_ENABLED", "true")
 	t.Setenv("SYFTBOX_AUTH_TOKEN_ISSUER", "http://0.0.0.0:8080")
 	t.Setenv("SYFTBOX_AUTH_EMAIL_ADDR", "test@example.com")
@@ -30,15 +32,19 @@ func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_AUTH_REFRESH_TOKEN_EXPIRY", "1h")
 	t.Setenv("SYFTBOX_AUTH_ACCESS_TOKEN_SECRET", "test-access-secret")
 	t.Setenv("SYFTBOX_AUTH_ACCESS_TOKEN_EXPIRY", "1h")
+	// email
+	t.Setenv("SYFTBOX_EMAIL_ENABLED", "true")
+	t.Setenv("SYFTBOX_EMAIL_SENDGRID_API_KEY", "sendgrid_api_key")
 
 	// Call loadConfig
 	cfg, err := loadConfig(rootCmd)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
+	assert.Equal(t, cfg.DataDir, "/tmp/syftbox-test")
 	assert.Equal(t, cfg.HTTP.Addr, ":8080")
-	assert.Equal(t, cfg.HTTP.CertFile, "test-cert.pem")
-	assert.Equal(t, cfg.HTTP.KeyFile, "test-key.pem")
+	assert.Equal(t, cfg.HTTP.CertFilePath, "test-cert.pem")
+	assert.Equal(t, cfg.HTTP.KeyFilePath, "test-key.pem")
 	assert.Equal(t, cfg.Blob.BucketName, "test-bucket")
 	assert.Equal(t, cfg.Blob.Region, "test-region")
 	assert.Equal(t, cfg.Blob.Endpoint, "http://test-endpoint")
@@ -53,6 +59,8 @@ func TestLoadConfigEnv(t *testing.T) {
 	assert.Equal(t, cfg.Auth.RefreshTokenExpiry, 1*time.Hour)
 	assert.Equal(t, cfg.Auth.AccessTokenSecret, "test-access-secret")
 	assert.Equal(t, cfg.Auth.AccessTokenExpiry, 1*time.Hour)
+	assert.Equal(t, cfg.Email.Enabled, true)
+	assert.Equal(t, cfg.Email.SendgridAPIKey, "sendgrid_api_key")
 }
 
 func TestLoadConfigYAML(t *testing.T) {
@@ -78,6 +86,10 @@ auth:
   refresh_token_expiry: 1h
   access_token_secret: test-access-secret
   access_token_expiry: 1h
+
+email:
+  enabled: false
+  sendgrid_api_key: sendgrid_api_key
 `
 	dummyConfigFile := filepath.Join(os.TempDir(), "dummy.yaml")
 	err := os.WriteFile(dummyConfigFile, []byte(dummyConfig), 0644)
@@ -93,9 +105,10 @@ auth:
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
+	assert.Equal(t, filepath.Base(cfg.DataDir), DefaultDataDir) // default data dir
 	assert.Equal(t, cfg.HTTP.Addr, "localhost:8080")
-	assert.Equal(t, cfg.HTTP.CertFile, "test-cert.pem")
-	assert.Equal(t, cfg.HTTP.KeyFile, "test-key.pem")
+	assert.Equal(t, cfg.HTTP.CertFilePath, "test-cert.pem")
+	assert.Equal(t, cfg.HTTP.KeyFilePath, "test-key.pem")
 	assert.Equal(t, cfg.Blob.BucketName, "test-bucket")
 	assert.Equal(t, cfg.Blob.Region, "test-region")
 	assert.Equal(t, cfg.Blob.Endpoint, "http://test-endpoint")
@@ -110,6 +123,8 @@ auth:
 	assert.Equal(t, cfg.Auth.RefreshTokenExpiry, 1*time.Hour)
 	assert.Equal(t, cfg.Auth.AccessTokenSecret, "test-access-secret")
 	assert.Equal(t, cfg.Auth.AccessTokenExpiry, 1*time.Hour)
+	assert.Equal(t, cfg.Email.Enabled, false)
+	assert.Equal(t, cfg.Email.SendgridAPIKey, "sendgrid_api_key")
 }
 
 func TestLoadConfigJSON(t *testing.T) {
@@ -137,6 +152,10 @@ func TestLoadConfigJSON(t *testing.T) {
 		"refresh_token_expiry": 0,
 		"access_token_secret": "test-another-access-secret",
 		"access_token_expiry": 0
+	},
+	"email": {
+		"enabled": true,
+		"sendgrid_api_key": "123"
 	}
 }
 `
@@ -155,8 +174,8 @@ func TestLoadConfigJSON(t *testing.T) {
 	require.NotNil(t, cfg)
 
 	assert.Equal(t, cfg.HTTP.Addr, "localhost:38080")
-	assert.Equal(t, cfg.HTTP.CertFile, "path/to/test-cert.pem")
-	assert.Equal(t, cfg.HTTP.KeyFile, "path/to/test-key.pem")
+	assert.Equal(t, cfg.HTTP.CertFilePath, "path/to/test-cert.pem")
+	assert.Equal(t, cfg.HTTP.KeyFilePath, "path/to/test-key.pem")
 	assert.Equal(t, cfg.Blob.BucketName, "test-another-bucket")
 	assert.Equal(t, cfg.Blob.Region, "test-another-region")
 	assert.Equal(t, cfg.Blob.Endpoint, "") // no endpoint in json
@@ -171,4 +190,6 @@ func TestLoadConfigJSON(t *testing.T) {
 	assert.Equal(t, cfg.Auth.RefreshTokenExpiry, 0*time.Second)
 	assert.Equal(t, cfg.Auth.AccessTokenSecret, "test-another-access-secret")
 	assert.Equal(t, cfg.Auth.AccessTokenExpiry, 0*time.Second)
+	assert.Equal(t, cfg.Email.Enabled, true)
+	assert.Equal(t, cfg.Email.SendgridAPIKey, "123")
 }

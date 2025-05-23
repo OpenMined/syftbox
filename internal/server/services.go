@@ -9,6 +9,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/auth"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/email"
 )
 
 type Services struct {
@@ -16,25 +17,29 @@ type Services struct {
 	ACL      *acl.AclService
 	Datasite *datasite.DatasiteService
 	Auth     *auth.AuthService
+	Email    *email.EmailService
 }
 
 func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
-	aclSvc := acl.NewAclService()
+	emailSvc := email.NewEmailService(&config.Email)
 
 	blobSvc, err := blob.NewBlobService(&config.Blob, db)
 	if err != nil {
 		return nil, err
 	}
 
+	aclSvc := acl.NewAclService()
+
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 
-	authSvc := auth.NewAuthService(&config.Auth)
+	authSvc := auth.NewAuthService(&config.Auth, emailSvc)
 
 	return &Services{
 		Blob:     blobSvc,
 		ACL:      aclSvc,
 		Datasite: datasiteSvc,
 		Auth:     authSvc,
+		Email:    emailSvc,
 	}, nil
 }
 
