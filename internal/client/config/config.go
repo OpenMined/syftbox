@@ -18,7 +18,8 @@ var (
 	DefaultDataDir     = filepath.Join(home, "SyftBox")
 	DefaultServerURL   = "https://syftboxdev.openmined.org"
 	DefaultClientURL   = "http://localhost:7938"
-	DefaultLogFilePath = filepath.Join(home, ".syftbox", "logs", "SyftBoxDaemon.log")
+	DefaultLogFilePath = filepath.Join(home, ".syftbox", "logs", "syftbox.log")
+	DefaultAppsEnabled = true
 )
 
 var (
@@ -27,14 +28,14 @@ var (
 )
 
 type Config struct {
-	DataDir      string `json:"data_dir"`
-	Email        string `json:"email"`
-	ServerURL    string `json:"server_url"`
-	ClientURL    string `json:"client_url,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
+	DataDir      string `json:"data_dir" mapstructure:"data_dir"`
+	Email        string `json:"email" mapstructure:"email"`
+	ServerURL    string `json:"server_url" mapstructure:"server_url"`
+	ClientURL    string `json:"client_url,omitempty" mapstructure:"client_url,omitempty"`
+	AppsEnabled  bool   `json:"-" mapstructure:"apps_enabled"`
 	AccessToken  string `json:"-"` // must never be persisted. always in memory
-	AppsEnabled  bool   `json:"-"`
-	Path         string `json:"-"`
+	RefreshToken string `json:"refresh_token,omitempty" mapstructure:"refresh_token,omitempty"`
+	Path         string `json:"-" mapstructure:"config_path"`
 }
 
 func (c *Config) Save() error {

@@ -2,9 +2,11 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/openmined/syftbox/internal/server/auth"
 	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/email"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
@@ -13,7 +15,19 @@ type Config struct {
 	HTTP    HTTPConfig    `mapstructure:"http"`
 	Blob    blob.S3Config `mapstructure:"blob"`
 	Auth    auth.Config   `mapstructure:"auth"`
+	Email   email.Config  `mapstructure:"email"`
 	DataDir string        `mapstructure:"data_dir"`
+}
+
+// LogValue for Config
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("data_dir", c.DataDir),
+		slog.Any("http", c.HTTP),
+		slog.Any("blob", c.Blob),
+		slog.Any("auth", c.Auth),
+		slog.Any("email", c.Email),
+	)
 }
 
 // Validate checks the configuration for essential values and consistency.
@@ -36,26 +50,39 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid auth config: %w", err)
 	}
 
+	if err := c.Email.Validate(); err != nil {
+		return fmt.Errorf("invalid email config: %w", err)
+	}
+
 	return nil
 }
 
 // HTTPConfig holds HTTP server specific configuration.
 type HTTPConfig struct {
-	Addr     string `mapstructure:"addr"`
-	CertFile string `mapstructure:"cert_file"`
-	KeyFile  string `mapstructure:"key_file"`
+	Addr         string `mapstructure:"addr"`
+	CertFilePath string `mapstructure:"cert_file"`
+	KeyFilePath  string `mapstructure:"key_file"`
 }
 
-func (c *HTTPConfig) HasCerts() bool {
-	return c.CertFile != "" && c.KeyFile != ""
+// LogValue for HTTPConfig
+func (hc HTTPConfig) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("address", hc.Addr),
+		slog.String("cert_file", hc.CertFilePath),
+		slog.String("key_file", hc.KeyFilePath),
+	)
+}
+
+func (c *HTTPConfig) HTTPSEnabled() bool {
+	return c.CertFilePath != "" && c.KeyFilePath != ""
 }
 
 func (c *HTTPConfig) Validate() error {
 	if c.Addr == "" {
 		return fmt.Errorf("http addr required")
 	}
-	if (c.CertFile != "" && c.KeyFile == "") || (c.CertFile == "" && c.KeyFile != "") {
-		return fmt.Errorf("cert_file and key_file required together")
+	if (c.CertFilePath != "" && c.KeyFilePath == "") || (c.CertFilePath == "" && c.KeyFilePath != "") {
+		return fmt.Errorf("cert_file and key_file paths are required together")
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/lmittmann/tint"
 	"github.com/openmined/syftbox/internal/server"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
@@ -26,9 +27,13 @@ const (
 	DefaultEmailOTPExpiry     = 5 * time.Minute
 	DefaultRefreshTokenExpiry = 0
 	DefaultAccessTokenExpiry  = 7 * 24 * time.Hour
+	DefaultEmailEnabled       = false
 )
 
-var dotenvLoaded bool
+var (
+	dotenvLoaded bool
+	prodEnv      bool
+)
 
 var rootCmd = &cobra.Command{
 	Use:     "server",
@@ -45,7 +50,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Log the final configuration details (masking secrets)
-		logConfig(cfg)
+		slog.Info("server config", "dotenvLoaded", dotenvLoaded, "config", cfg.LogValue())
 
 		c, err := server.New(cfg)
 		if err != nil {
@@ -79,14 +84,30 @@ func init() {
 	} else {
 		dotenvLoaded = true
 	}
+
+	prodEnv = os.Getenv("SYFTBOX_ENV") == "PROD"
 }
 
 func main() {
 	// Setup logger
-	opts := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+	var handler slog.Handler
+	if prodEnv {
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		})
+	} else {
+		handler = tint.NewHandler(os.Stdout, &tint.Options{
+			Level:      slog.LevelDebug,
+			AddSource:  true,
+			TimeFormat: time.DateTime,
+			ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+				if a.Key != "msg" && a.Value.Kind() == slog.KindString {
+					a.Value = slog.StringValue(fmt.Sprintf("'%s'", a.Value.String()))
+				}
+				return a
+			},
+		})
 	}
-	handler := slog.NewJSONHandler(os.Stdout, opts)
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 
@@ -156,8 +177,7 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("http.key_file", cmd.Flags().Lookup("key"))
 	v.BindPFlag("data_dir", cmd.Flags().Lookup("dataDir"))
 
-	// Set default values. REQUIRED.
-
+	// Set default values. REQUIRED to make env vars work
 	// Data directory
 	v.SetDefault("data_dir", DefaultDataDir)
 	// HTTP section
@@ -180,36 +200,7 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.SetDefault("auth.refresh_token_expiry", DefaultRefreshTokenExpiry)
 	v.SetDefault("auth.access_token_secret", "")
 	v.SetDefault("auth.access_token_expiry", DefaultAccessTokenExpiry)
-
-}
-
-func logConfig(cfg *server.Config) {
-	slog.Info("server config",
-		"dotenv", dotenvLoaded,
-		"http.addr", cfg.HTTP.Addr,
-		"http.cert_file", cfg.HTTP.CertFile,
-		"http.key_file", cfg.HTTP.KeyFile,
-		"data_dir", cfg.DataDir,
-		"blob.bucket_name", cfg.Blob.BucketName,
-		"blob.region", cfg.Blob.Region,
-		"blob.endpoint", cfg.Blob.Endpoint,
-		"blob.access_key", maskSecret(cfg.Blob.AccessKey),
-		"blob.secret_key", maskSecret(cfg.Blob.SecretKey),
-		"auth.enabled", cfg.Auth.Enabled,
-		"auth.token_issuer", cfg.Auth.TokenIssuer,
-		"auth.email_addr", cfg.Auth.EmailAddr,
-		"auth.email_otp_length", cfg.Auth.EmailOTPLength,
-		"auth.email_otp_expiry", cfg.Auth.EmailOTPExpiry,
-		"auth.refresh_token_secret", maskSecret(cfg.Auth.RefreshTokenSecret),
-		"auth.refresh_token_expiry", cfg.Auth.RefreshTokenExpiry,
-		"auth.access_token_secret", maskSecret(cfg.Auth.AccessTokenSecret),
-		"auth.access_token_expiry", cfg.Auth.AccessTokenExpiry,
-	)
-}
-
-func maskSecret(s string) string {
-	if len(s) <= 4 {
-		return "***"
-	}
-	return s[:4] + "***"
+	// Email section (config file/env vars only)
+	v.SetDefault("email.enabled", DefaultEmailEnabled)
+	v.SetDefault("email.sendgrid_api_key", "")
 }
