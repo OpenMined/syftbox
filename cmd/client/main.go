@@ -47,6 +47,7 @@ var rootCmd = &cobra.Command{
 		// all good now, show header
 		cmd.SilenceUsage = true
 		showSyftBoxHeader()
+		slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
 
 		// create client
 		c, err := client.New(cfg)
@@ -146,12 +147,7 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 	v.AutomaticEnv()
 
 	// Bind cmd flags to viper & set defaults
-	v.BindPFlag("email", cmd.Flags().Lookup("email"))
-	v.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
-	v.BindPFlag("server_url", cmd.Flags().Lookup("server"))
-	v.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config"))
-	v.SetDefault("client_url", config.DefaultClientURL) // this is not used in standard mode
-	v.SetDefault("apps_enabled", config.DefaultAppsEnabled)
+	bindWithDefaults(v, cmd)
 
 	// Read config filew
 	if err := v.ReadInConfig(); err != nil {
@@ -169,6 +165,17 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
+	v.BindPFlag("email", cmd.Flags().Lookup("email"))
+	v.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
+	v.BindPFlag("server_url", cmd.Flags().Lookup("server"))
+	v.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config"))
+	v.SetDefault("client_url", config.DefaultClientURL) // this is not used in standard mode
+	v.SetDefault("apps_enabled", config.DefaultAppsEnabled)
+	v.SetDefault("refresh_token", "")
+	v.SetDefault("access_token", "")
 }
 
 // readValidConfig loads a valid config file at a path
