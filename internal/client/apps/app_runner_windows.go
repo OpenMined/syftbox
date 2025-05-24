@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 func (a *App) buildCommand(ctx context.Context, runScript string) *exec.Cmd {
@@ -24,5 +25,7 @@ func (a *App) buildCommand(ctx context.Context, runScript string) *exec.Cmd {
 	command.WriteString("chmod +x $RUN_SH_PATH; ")
 	command.WriteString("exec $RUN_SH_PATH;")
 
-	return exec.CommandContext(ctx, shell, "-l", "-c", command.String())
+	cmd := exec.CommandContext(ctx, shell, "-l", "-c", command.String())
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	return cmd
 }
