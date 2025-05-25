@@ -18,6 +18,7 @@ import (
 
 const (
 	fullSyncInterval = 5 * time.Second
+	syncDbName       = "sync.db"
 )
 
 var (
@@ -46,7 +47,7 @@ func NewSyncEngine(
 	priority *SyncPriorityList,
 	watcher *FileWatcher,
 ) (*SyncEngine, error) {
-	journalDir := filepath.Join(workspace.InternalDataDir, "sync.db")
+	journalDir := filepath.Join(workspace.MetadataDir, syncDbName)
 	journal, err := NewSyncJournal(journalDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync journal: %w", err)
@@ -70,6 +71,13 @@ func NewSyncEngine(
 
 func (se *SyncEngine) Start(ctx context.Context) error {
 	slog.Info("sync start")
+
+	// don't put this in the constructor
+	// there would be crucial migrations that might happen before the sync engine is started
+	// and we don't want to load pre-migrations state
+	if err := se.journal.Open(); err != nil {
+		return fmt.Errorf("failed to open sync journal: %w", err)
+	}
 
 	// run sync once and wait before starting watcher//websocket
 	slog.Info("running initial sync")
@@ -184,37 +192,6 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	tReconcileStart := time.Now()
 	result := se.reconcile(localState, remoteState, journalState)
 	tReconcile := time.Since(tReconcileStart)
-
-	if result.HasChanges() {
-		slog.Debug("reconcile decisions",
-			"downloads", result.LocalWrites,
-			"uploads", result.RemoteWrites,
-			"remoteDeletes", result.RemoteDeletes,
-			"localDeletes", result.LocalDeletes,
-			"conflicts", result.Conflicts,
-			"syncing", se.syncStatus.status,
-		)
-	}
-
-	// temporary workaround for detecting bad sync
-	if len(result.RemoteDeletes) > result.Total/2 {
-		// delete the journal so client run doesn't trigger bad sync again
-		if err := se.journal.Destroy(); err != nil {
-			slog.Error("failed to clear journal", "error", err)
-		}
-
-		// dump details
-		slog.Error("FATAL! bad reconcile. Please report this issue.",
-			"total", result.Total,
-			"remoteDeletes", len(result.RemoteDeletes),
-			"journalState", len(journalState),
-			"localState", len(localState),
-			"remoteState", len(remoteState),
-			"lastSyncIntervals", se.syncIntervals,
-		)
-
-		os.Exit(2)
-	}
 
 	se.executeReconcileOperations(ctx, result)
 	tTotal := time.Since(tStart)
