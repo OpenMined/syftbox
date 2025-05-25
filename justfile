@@ -49,6 +49,10 @@ run-client-reload *ARGS:
 
 [group('dev-minio')]
 run-minio:
+    #!/bin/bash
+    set -eou pipefail
+
+    docker rm -f syftbox-minio || true
     docker run -d \
       --name syftbox-minio \
       -p 9000:9000 \
@@ -57,8 +61,12 @@ run-minio:
       -e MINIO_ROOT_PASSWORD=minioadmin \
       -v minio-data:/data \
       -v $(pwd)/minio/init.d:/etc/minio/init.d \
-      minio/minio server /data --console-address ':9001' & \
-    sleep 1 && \
+      minio/minio:RELEASE.2025-04-22T22-12-26Z server /data --console-address ':9001'
+
+    until docker exec syftbox-minio sh -c "mc --version" >/dev/null 2>&1; do
+      sleep 1
+    done
+
     docker exec syftbox-minio /etc/minio/init.d/setup.sh
 
 [group('dev-minio')]
