@@ -112,6 +112,10 @@ func (w *Workspace) Setup() error {
 		}
 	}
 
+	if err := setFolderIcon(w.Root); err != nil {
+		slog.Warn("failed to set folder icon", "error", err)
+	}
+
 	// TODO: write a .syftignore file
 
 	// Setup ACL files
