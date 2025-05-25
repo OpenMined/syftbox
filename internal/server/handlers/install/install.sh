@@ -176,11 +176,16 @@ setup_client() {
     if [ -n "$INSTALL_APPS" ];
     then
         info "Installing SyftBox Apps..."
-        IFS=',' read -r -a apps <<< "$INSTALL_APPS"
-        for app in "${apps[@]}"; do
+        original_ifs="$IFS"
+        IFS=','
+        set -f
+        for app in $INSTALL_APPS
+        do
             echo "* $app"
             $SYFTBOX_BINARY_PATH app install $app || true
         done
+        set +f
+        IFS="$original_ifs"
     fi
 
     return 0
