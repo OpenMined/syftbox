@@ -128,7 +128,7 @@ func getAppManager(cmd *cobra.Command) (*apps.AppManager, error) {
 	// fetched from main/rootCmd/persistentFlags
 	configPath := cmd.Flag("config").Value.String()
 
-	cfg, err := readValidConfig(configPath)
+	cfg, err := readValidConfig(configPath, false)
 	if err != nil {
 		return nil, err
 	}

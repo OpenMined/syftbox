@@ -31,7 +31,7 @@ func newLoginCmd() *cobra.Command {
 			// fetched from main/rootCmd/persistentFlags
 			configPath := cmd.Flag("config").Value.String()
 
-			if cfg, err := readValidConfig(configPath); err == nil {
+			if cfg, err := readValidConfig(configPath, true); err == nil {
 				if !quiet {
 					fmt.Println(green.Render("**Already logged in**"))
 					logConfig(cfg)
