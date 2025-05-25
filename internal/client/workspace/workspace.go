@@ -14,13 +14,14 @@ import (
 )
 
 const (
-	appsDir      = "apps"
-	logsDir      = "logs"
-	datasitesDir = "datasites"
-	publicDir    = "public"
-	dataDir      = ".data"
-	pathSep      = string(filepath.Separator)
-	lockFile     = "syftbox.lock"
+	appsDir            = "apps"
+	logsDir            = "logs"
+	datasitesDir       = "datasites"
+	publicDir          = "public"
+	metadataDir        = ".data"
+	pathSep            = string(filepath.Separator)
+	lockFile           = "syftbox.lock"
+	legacyMetadataFile = ".metadata.json"
 )
 
 var (
@@ -28,14 +29,14 @@ var (
 )
 
 type Workspace struct {
-	Owner           string
-	Root            string
-	AppsDir         string
-	DatasitesDir    string
-	InternalDataDir string
-	LogsDir         string
-	UserDir         string
-	UserPublicDir   string
+	Owner         string
+	Root          string
+	AppsDir       string
+	DatasitesDir  string
+	MetadataDir   string
+	LogsDir       string
+	UserDir       string
+	UserPublicDir string
 
 	flock *flock.Flock
 }
@@ -46,26 +47,26 @@ func NewWorkspace(rootDir string, user string) (*Workspace, error) {
 		return nil, fmt.Errorf("failed to resolve path %s: %w", rootDir, err)
 	}
 
-	lockFilePath := filepath.Join(root, dataDir, lockFile)
+	lockFilePath := filepath.Join(root, metadataDir, lockFile)
 	flock := flock.New(lockFilePath)
 
 	return &Workspace{
-		Owner:           user,
-		Root:            root,
-		AppsDir:         filepath.Join(root, appsDir),
-		LogsDir:         filepath.Join(root, logsDir),
-		DatasitesDir:    filepath.Join(root, datasitesDir),
-		InternalDataDir: filepath.Join(root, dataDir),
-		UserDir:         filepath.Join(root, datasitesDir, user),
-		UserPublicDir:   filepath.Join(root, datasitesDir, user, publicDir),
-		flock:           flock,
+		Owner:         user,
+		Root:          root,
+		AppsDir:       filepath.Join(root, appsDir),
+		LogsDir:       filepath.Join(root, logsDir),
+		DatasitesDir:  filepath.Join(root, datasitesDir),
+		MetadataDir:   filepath.Join(root, metadataDir),
+		UserDir:       filepath.Join(root, datasitesDir, user),
+		UserPublicDir: filepath.Join(root, datasitesDir, user, publicDir),
+		flock:         flock,
 	}, nil
 }
 
 func (w *Workspace) Lock() error {
 	// create a .data/syftbox.lock file so that other syftbox instances cannot access the workspace
-	if err := utils.EnsureDir(w.InternalDataDir); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", w.InternalDataDir, err)
+	if err := utils.EnsureDir(w.MetadataDir); err != nil {
+		return fmt.Errorf("failed to create directory %s: %w", w.MetadataDir, err)
 	}
 
 	locked, err := w.flock.TryLock()
@@ -89,10 +90,12 @@ func (w *Workspace) Unlock() error {
 
 func (w *Workspace) Setup() error {
 	if w.isLegacyWorkspace() {
-		slog.Info("legacy workspace detected, cleaning up")
-		if err := os.RemoveAll(w.Root); err != nil {
-			return fmt.Errorf("failed to clean up legacy workspace: %w", err)
+		// rename it to from w.Root to w.Root.old
+		newPath := w.Root + ".old"
+		if err := os.Rename(w.Root, newPath); err != nil {
+			return fmt.Errorf("failed to move legacy workspace to %s: %w", newPath, err)
 		}
+		slog.Warn("legacy workspace detected. moved to " + newPath)
 	}
 
 	if err := w.Lock(); err != nil {
@@ -102,7 +105,7 @@ func (w *Workspace) Setup() error {
 	slog.Info("workspace", "root", w.Root)
 
 	// Create required directories
-	dirs := []string{w.AppsDir, w.InternalDataDir, w.UserPublicDir}
+	dirs := []string{w.AppsDir, w.MetadataDir, w.UserPublicDir}
 	for _, dir := range dirs {
 		if err := utils.EnsureDir(dir); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
@@ -169,7 +172,8 @@ func (w *Workspace) PathOwner(path string) string {
 }
 
 func (w *Workspace) isLegacyWorkspace() bool {
-	return utils.DirExists(filepath.Join(w.Root, "plugins"))
+	// .data is missing & plugins exists
+	return utils.FileExists(filepath.Join(w.Root, legacyMetadataFile))
 }
 
 func NormPath(path string) string {
