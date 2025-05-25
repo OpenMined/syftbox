@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/openmined/syftbox/internal/db"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 const schema = `
@@ -44,33 +45,42 @@ type SyncJournal struct {
 
 // NewSyncJournal creates or opens a SyncJournal backed by an SQLite database.
 func NewSyncJournal(dbPath string) (*SyncJournal, error) {
-	// Ensure the directory exists
-	dbDir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create journal directory %s: %w", dbDir, err)
+	return &SyncJournal{
+		dbPath: dbPath,
+	}, nil
+}
+
+// Open the sync journal and the underlying database
+func (s *SyncJournal) Open() error {
+	if s.db != nil {
+		return fmt.Errorf("sync journal already open")
 	}
 
-	db, err := db.NewSqliteDb(db.WithPath(dbPath), db.WithMaxOpenConns(1))
+	// Ensure the directory exists
+	dbDir := filepath.Dir(s.dbPath)
+	if err := utils.EnsureDir(dbDir); err != nil {
+		return fmt.Errorf("failed to create journal directory %s: %w", dbDir, err)
+	}
+
+	db, err := db.NewSqliteDb(db.WithPath(s.dbPath), db.WithMaxOpenConns(1))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create sync journal: %w", err)
+		return fmt.Errorf("failed to create sync journal: %w", err)
 	}
 
 	// Create table if it doesn't exist
 	if _, err := db.Exec(schema); err != nil {
 		db.Close() // Close the connection if schema init fails
-		return nil, fmt.Errorf("failed to initialize journal schema: %w", err)
+		return fmt.Errorf("failed to initialize journal schema: %w", err)
 	}
 
-	return &SyncJournal{
-		db:     db,
-		dbPath: dbPath,
-	}, nil
+	s.db = db
+	return nil
 }
 
 // Close closes the underlying database connection.
 func (s *SyncJournal) Close() error {
 	if s.db == nil {
-		return nil
+		return fmt.Errorf("sync journal not open")
 	}
 	if err := s.db.Close(); err != nil {
 		slog.Error("Failed to close sync journal database", "error", err)

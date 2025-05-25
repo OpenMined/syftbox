@@ -95,7 +95,7 @@ func NewSqliteDb(opts ...SqliteOption) (*sqlx.DB, error) {
 	}
 
 	// Connect to the database
-	slog.Info("db", "driver", driverName, "path", cfg.path)
+	slog.Debug("open db", "driver", driverName, "path", cfg.path)
 	db, err := sqlx.Connect(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("connect to database: %w", err)

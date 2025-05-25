@@ -83,6 +83,7 @@ build-client-target goos=`go env GOOS` goarch=`go env GOARCH`:
     export GOOS="{{ goos }}"
     export GOARCH="{{ goarch }}"
     export CGO_ENABLED=0
+    export GO_LDFLAGS="$([ '{{ goos }}' = 'windows' ] && echo '-H windowsgui '){{ BUILD_LD_FLAGS }}"
 
     if [ "{{ goos }}" = "darwin" ]; then
         echo "Building for darwin. CGO_ENABLED=1"
@@ -91,7 +92,7 @@ build-client-target goos=`go env GOOS` goarch=`go env GOARCH`:
 
     rm -rf .out && mkdir -p .out
     go build -x -trimpath --tags="{{ CLIENT_BUILD_TAGS }}" \
-        -ldflags="{{ BUILD_LD_FLAGS }}" \
+        -ldflags="$GO_LDFLAGS" \
         -o .out/syftbox_client_{{ goos }}_{{ goarch }} ./cmd/client
 
 [group('build')]
@@ -128,3 +129,7 @@ setup-toolchain:
     go install github.com/swaggo/swag/v2/cmd/swag@latest
     go install github.com/bokwoon95/wgo@latest
     go install filippo.io/mkcert@latest
+
+[group('utils')]
+clean:
+    rm -rf .data .out releases certs cover.out

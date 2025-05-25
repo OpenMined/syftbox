@@ -22,7 +22,9 @@ import (
 )
 
 var (
-	home, _ = os.UserHomeDir()
+	home, _      = os.UserHomeDir()
+	oldServerURL = "syftbox.openmined.org"
+	oldStageURL  = "syftboxstage.openmined.org"
 )
 
 var rootCmd = &cobra.Command{
@@ -164,6 +166,13 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 		return nil, fmt.Errorf("config read: %w", err)
 	}
 
+	// perform migrations
+	// this will error out because a re-auth with server will be required
+	if strings.Contains(cfg.ServerURL, oldServerURL) ||
+		strings.Contains(cfg.ServerURL, oldStageURL) {
+		return nil, fmt.Errorf("legacy config detected. please run `syftbox login` to re-authenticate")
+	}
+
 	return cfg, nil
 }
 
@@ -180,7 +189,7 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 
 // readValidConfig loads a valid config file at a path
 // does not rely on viper or cobra
-func readValidConfig(configPath string) (*config.Config, error) {
+func readValidConfig(configPath string, checkAuth bool) (*config.Config, error) {
 	cfg, err := config.LoadFromFile(configPath)
 	if err != nil {
 		return nil, err
@@ -188,7 +197,7 @@ func readValidConfig(configPath string) (*config.Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if cfg.RefreshToken == "" {
+	if checkAuth && cfg.RefreshToken == "" {
 		return nil, fmt.Errorf("no refresh token found")
 	}
 	return cfg, nil
