@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/datasite"
 )
 
 func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
@@ -28,7 +29,7 @@ func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
 	urls := make([]*BlobUrl, 0, len(req.Keys))
 	errors := make([]*BlobError, 0)
 	for _, key := range req.Keys {
-		if !isValidDatasiteKey(key) {
+		if !datasite.IsValidPath(key) {
 			ctx.Error(fmt.Errorf("invalid datasite path: %s", key))
 			errors = append(errors, &BlobError{
 				Key:   key,

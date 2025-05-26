@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/datasite"
 )
 
 func (h *BlobHandler) Upload(ctx *gin.Context) {
@@ -19,10 +20,12 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		return
 	}
 
-	if !isValidDatasiteKey(req.Key) {
+	// todo check if new change using etag
+
+	if !datasite.IsValidPath(req.Key) {
 		ctx.Error(fmt.Errorf("invalid datasite path: %s", req.Key))
 		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "invalid key",
+			"error": fmt.Sprintf("invalid key: %s", req.Key),
 		})
 		return
 	}
@@ -54,8 +57,8 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		})
 		return
 	}
-
 	defer fd.Close()
+
 	result, err := h.blob.Backend().PutObject(ctx.Request.Context(), &blob.PutObjectParams{
 		Key:  req.Key,
 		Size: file.Size,
@@ -64,7 +67,7 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 	if err != nil {
 		ctx.Error(fmt.Errorf("failed to put object: %w", err))
 		ctx.PureJSON(http.StatusInternalServerError, gin.H{
-			"error": "server error: could not persist file",
+			"error": fmt.Sprintf("failed to put object: %s", err),
 		})
 		return
 	}

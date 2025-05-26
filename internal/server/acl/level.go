@@ -5,25 +5,19 @@ type AccessLevel uint8
 
 // Action constants define different types of file permissions
 const (
-	AccessRead AccessLevel = 1 << iota
-	AccessCreate
+	AccessRead AccessLevel = iota + 1
 	AccessWrite
-	AccessReadACL
-	AccessWriteACL
+	AccessAdmin
 )
 
 func (a AccessLevel) String() string {
 	switch a {
 	case AccessRead:
 		return "Read"
-	case AccessCreate:
-		return "Create"
 	case AccessWrite:
 		return "Write"
-	case AccessReadACL:
-		return "ReadACL"
-	case AccessWriteACL:
-		return "WriteACL"
+	case AccessAdmin:
+		return "Admin"
 	default:
 		return "Unknown"
 	}
