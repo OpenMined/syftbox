@@ -61,7 +61,7 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		return
 	}
 
-	// Read request body with size limit (e.g., 10MB)
+	// Read request body with size limit (4MB)
 	bodyBytes, err := readRequestBody(ctx, int64(maxBodySize))
 	if err != nil {
 		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -142,7 +142,13 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	// poll for the object
 	var object *blob.GetObjectResponse
 
-	object, err = h.pollForObject(context.Background(), blobPath, req.Timeout)
+	// Ensure a valid timeout value
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = defaultTimeoutMs
+	}
+
+	object, err = h.pollForObject(context.Background(), blobPath, timeout)
 	if err != nil && err != ErrPollTimeout {
 		ctx.PureJSON(http.StatusInternalServerError, SendError{
 			Error:     err.Error(),

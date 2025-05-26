@@ -501,30 +501,27 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 }
 
 func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
+	slog.Info("processHttpMessage", "msgType", msg.Type, "msgId", msg.Id)
 	httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
 	if !ok {
 		slog.Error("processHttpMessage: invalid type assertion for msg.Data")
 		return
 	}
 
-	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
+	slog.Debug("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
 
 	// Unwrap the into a syftmsg.SyftRPCMessage
 	syftRPCMsg := syftmsg.NewSyftRPCMessage(*httpMsg)
 
-	getFileName := func(syftRPCMsg *syftmsg.SyftRPCMessage) string {
-		return syftRPCMsg.ID.String() + "." + string(httpMsg.Type)
-	}
+	// rpc message file name
+	fileName := syftRPCMsg.ID.String() + "." + string(httpMsg.Type)
 
-	fileName := getFileName(syftRPCMsg)
+	filePath := filepath.Join(
+		se.workspace.DatasiteAbsPath(syftRPCMsg.URL.ToLocalPath()), // app_data/{app_name}/rpc/{endpoint}
+		fileName,
+	)
 
-	getRPCPath := func(syftRPCMsg *syftmsg.SyftRPCMessage) string {
-		return filepath.Join(se.workspace.DatasiteAbsPath(syftRPCMsg.URL.ToLocalPath()), fileName)
-	}
-
-	filePath := getRPCPath(syftRPCMsg)
-
-	slog.Info("Received RPC message", "RPCPath", filePath)
+	slog.Debug("Received RPC message", "RPCPath", filePath)
 
 	// Convert the syftRPCMsg to json
 	jsonRPCMsg, err := json.Marshal(syftRPCMsg)
@@ -536,11 +533,11 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	// write the RPCMsg to the file
 	err = os.WriteFile(filePath, jsonRPCMsg, 0644)
 	if err != nil {
-		slog.Error("handleHttp write file", "error", err)
+		slog.Error("handleHttp write file", "error", err, "filePath", filePath)
 		return
 	}
 
-	slog.Debug("SyftRPC Message", "msg", string(jsonRPCMsg))
+	slog.Debug("SyftRPC Message", "msg", string(jsonRPCMsg), "filePath", filePath)
 }
 
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {

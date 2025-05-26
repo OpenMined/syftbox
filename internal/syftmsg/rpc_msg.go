@@ -20,7 +20,8 @@ type SyftStatus int
 
 const (
 	// DefaultMessageExpiry is the default time in seconds before a message expires
-	DefaultMessageExpiry = 24 * time.Hour
+	// 1 day
+	DefaultMessageExpiry = 24 * 60 * 60 * time.Second
 
 	// HTTP Methods
 	MethodGET    SyftMethod = "GET"
@@ -101,7 +102,7 @@ func NewSyftRPCMessage(httpMsg HttpMsg) *SyftRPCMessage {
 		Body:       httpMsg.Body,
 		Headers:    headers,
 		Created:    now,
-		Expires:    now.Add(DefaultMessageExpiry),
+		Expires:    now.Add(time.Duration(DefaultMessageExpiry)),
 		Method:     SyftMethod(httpMsg.Method),
 		StatusCode: SyftStatus(httpMsg.Status),
 	}
