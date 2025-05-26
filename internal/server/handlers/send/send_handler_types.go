@@ -32,11 +32,6 @@ type PollObjectRequest struct {
 	Timeout   int    `form:"timeout,omitempty" binding:"gte=0"`
 }
 
-type PollObjectResponse struct {
-	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
-}
-
 type PollResponse struct {
 	Message   map[string]interface{} `json:"message"`
 	RequestID string                 `json:"request_id"`
@@ -45,4 +40,19 @@ type PollResponse struct {
 type PollError struct {
 	Error     string `json:"error"`
 	RequestID string `json:"request_id"`
+}
+
+// SendResult represents the result of a send operation
+type SendResult struct {
+	Status    int
+	RequestID string
+	PollURL   string
+	Response  map[string]interface{}
+}
+
+// PollResult represents the result of a poll operation
+type PollResult struct {
+	Status    int
+	RequestID string
+	Response  map[string]interface{}
 }
