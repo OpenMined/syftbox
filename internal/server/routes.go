@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/openmined/syftbox/internal/server/handlers/acl"
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
@@ -36,6 +37,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
+	aclH := acl.NewACLHandler(svc.ACL)
 
 	// --------------------------- routes ---------------------------
 
@@ -73,6 +75,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 		// datasite
 		v1.GET("/datasite/view", dsH.GetView)
+
+		v1.PUT("/acl", blobH.UploadACL)
+		v1.GET("/acl/check", aclH.CheckAccess)
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
