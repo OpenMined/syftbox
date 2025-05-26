@@ -32,9 +32,11 @@ func (d *DatasiteAPI) GetView(ctx context.Context, params *DatasiteViewParams) (
 		Get(v1View)
 
 	if err != nil {
-		return nil, err
-	} else if res.IsError() {
-		return nil, fmt.Errorf("error: %s", sdkError.Error)
+		return nil, fmt.Errorf("sdk: datasite view: %w", err)
+	}
+
+	if res.IsError() {
+		return nil, fmt.Errorf("sdk: datasite view: %s %s", res.Status(), sdkError.Error)
 	}
 
 	return &resp, nil
