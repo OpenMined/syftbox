@@ -37,6 +37,9 @@ func (m SyftMethod) IsValid() bool {
 
 // Validate validates the method
 func (m SyftMethod) Validate() error {
+	if m == "" {
+		return nil
+	}
 	if !m.IsValid() {
 		return &ValidationError{
 			Field:   "method",
@@ -54,8 +57,15 @@ func (s SyftStatus) IsValid() bool {
 	return s >= 100 && s <= 599
 }
 
+func (s SyftStatus) isDefined() bool {
+	return s != 0
+}
+
 // Validate validates the status code
 func (s SyftStatus) Validate() error {
+	if !s.isDefined() {
+		return nil
+	}
 	if !s.IsValid() {
 		return &ValidationError{
 			Field:   "status_code",
@@ -188,7 +198,10 @@ type SyftRPCMessage struct {
 
 // NewSyftMessage creates a new SyftMessage with default values
 func NewSyftRPCMessage(httpMsg HttpMsg) (*SyftRPCMessage, error) {
+
+	// Timezone is UTC by default for SyftRPC messages
 	now := time.Now().UTC()
+
 	headers := httpMsg.Headers
 	if headers == nil {
 		headers = make(map[string]string)
@@ -321,9 +334,13 @@ func (m *SyftRPCMessage) Validate() error {
 	if err := m.URL.Validate(); err != nil {
 		return err
 	}
+
+	// If Method is defined, validate it
 	if err := m.Method.Validate(); err != nil {
 		return err
 	}
+
+	// If StatusCode is defined, validate it
 	if err := m.StatusCode.Validate(); err != nil {
 		return err
 	}
