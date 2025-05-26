@@ -22,7 +22,17 @@ type HttpMsg struct {
 	Type    HttpMsgType       `json:"type,omitempty"`
 }
 
-func NewHttpMsg(from, to, appName, appEp, method string, body []byte, headers map[string]string, status int, msgType HttpMsgType) *Message {
+func NewHttpMsg(
+	from string,
+	to string,
+	appName string,
+	appEp string,
+	method string,
+	body []byte,
+	headers map[string]string,
+	status int,
+	msgType HttpMsgType,
+) *Message {
 	return &Message{
 		Id:   generateID(),
 		Type: MsgHttp,

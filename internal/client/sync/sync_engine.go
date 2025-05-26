@@ -504,14 +504,25 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	slog.Info("processHttpMessage", "msgType", msg.Type, "msgId", msg.Id)
 	httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
 	if !ok {
-		slog.Error("processHttpMessage: invalid type assertion for msg.Data")
+		slog.Error("processHttpMessage: invalid type assertion for msg.Data",
+			"msgType", msg.Type,
+			"msgId", msg.Id,
+			"dataType", fmt.Sprintf("%T", msg.Data))
 		return
 	}
 
 	slog.Debug("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
 
 	// Unwrap the into a syftmsg.SyftRPCMessage
-	syftRPCMsg := syftmsg.NewSyftRPCMessage(*httpMsg)
+	syftRPCMsg, err := syftmsg.NewSyftRPCMessage(*httpMsg)
+	if err != nil {
+		slog.Error("processHttpMessage: failed to create syftRPCMsg",
+			"error", err,
+			"msgType", msg.Type,
+			"msgId", msg.Id,
+			"httpMsg", httpMsg)
+		return
+	}
 
 	// rpc message file name
 	fileName := syftRPCMsg.ID.String() + "." + string(httpMsg.Type)
@@ -526,14 +537,21 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	// Convert the syftRPCMsg to json
 	jsonRPCMsg, err := json.Marshal(syftRPCMsg)
 	if err != nil {
-		slog.Error("handleHttp marshal syftRPCMsg", "error", err)
+		slog.Error("handleHttp marshal syftRPCMsg",
+			"error", err,
+			"msgId", syftRPCMsg.ID,
+			"filePath", filePath)
 		return
 	}
 
 	// write the RPCMsg to the file
 	err = os.WriteFile(filePath, jsonRPCMsg, 0644)
 	if err != nil {
-		slog.Error("handleHttp write file", "error", err, "filePath", filePath)
+		slog.Error("handleHttp write file",
+			"error", err,
+			"filePath", filePath,
+			"msgId", syftRPCMsg.ID,
+			"fileSize", len(jsonRPCMsg))
 		return
 	}
 
