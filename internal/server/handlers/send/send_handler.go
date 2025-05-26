@@ -279,8 +279,15 @@ func (h *SendHandler) pollForObject(
 		}
 
 		// try to get the object
-		// todo this error should be handled correctly
-		object, _ := h.blob.Backend().GetObject(ctx, blobPath)
+		// Attempt to get the object and handle any errors
+		object, err := h.blob.Backend().GetObject(ctx, blobPath)
+		if err != nil {
+			// Log the error for visibility
+			slog.Error("Failed to get object from backend", "error", err, "blobPath", blobPath)
+			// Optionally, decide whether to break the loop for non-recoverable errors
+			// For now, we continue retrying
+			continue
+		}
 		if object != nil {
 			return object, nil
 		}

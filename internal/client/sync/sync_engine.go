@@ -501,12 +501,16 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 }
 
 func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
-	httpMsg := msg.Data.(syftmsg.HttpMsg)
+	httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
+	if !ok {
+		slog.Error("processHttpMessage: invalid type assertion for msg.Data")
+		return
+	}
 
 	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
 
 	// Unwrap the into a syftmsg.SyftRPCMessage
-	syftRPCMsg := syftmsg.NewSyftRPCMessage(httpMsg)
+	syftRPCMsg := syftmsg.NewSyftRPCMessage(*httpMsg)
 
 	getFileName := func(syftRPCMsg *syftmsg.SyftRPCMessage) string {
 		return syftRPCMsg.ID.String() + "." + string(httpMsg.Type)

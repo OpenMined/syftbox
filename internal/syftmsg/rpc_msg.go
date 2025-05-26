@@ -117,7 +117,7 @@ func (m *SyftRPCMessage) MarshalJSON() ([]byte, error) {
 	}{
 		Alias: (*Alias)(m),
 		URL:   m.URL.String(),
-		Body:  base64.StdEncoding.EncodeToString(m.Body),
+		Body:  base64.URLEncoding.EncodeToString(m.Body),
 	})
 }
 
@@ -137,8 +137,8 @@ func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
 	// Parse the URL string into SyftBoxURL
 	// Assuming URL format is "syft://{datasite}/app_data/{app_name}/rpc/{endpoint}"
 	urlParts := strings.Split(strings.TrimPrefix(aux.URL, "syft://"), "/")
-	if len(urlParts) >= 4 {
-		m.URL = *NewSyftBoxURL(urlParts[0], urlParts[2], urlParts[3])
+	if len(urlParts) >= 5 {
+		m.URL = *NewSyftBoxURL(urlParts[0], urlParts[2], urlParts[4])
 	}
 	// Decode base64 body
 	if aux.Body != "" {
