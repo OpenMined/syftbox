@@ -3,7 +3,6 @@ package send
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -328,30 +327,12 @@ func (h *SendHandler) constructPollURL(
 // It expects the response to have a base64 encoded body field that contains JSON
 func unmarshalResponse(bodyBytes []byte) (map[string]interface{}, error) {
 	// First unmarshal the outer response
-	var response map[string]interface{}
-	if err := json.Unmarshal(bodyBytes, &response); err != nil {
+	var rpcMsg syftmsg.SyftRPCMessage
+	err := json.Unmarshal(bodyBytes, &rpcMsg)
+	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Get the base64 encoded body
-	bodyStr, ok := response["body"].(string)
-	if !ok {
-		return nil, fmt.Errorf("body field is not a string")
-	}
-
-	// Decode the base64 body
-	decodedBody, err := base64.URLEncoding.DecodeString(bodyStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 body: %w", err)
-	}
-
-	// Unmarshal the decoded body as JSON
-	var responseBody map[string]interface{}
-	if err := json.Unmarshal(decodedBody, &responseBody); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal decoded body: %w", err)
-	}
-
-	// TODO: Clean up response and request files
-
-	return responseBody, nil
+	// return the SyftRPCMessage as a different json representation
+	return map[string]interface{}{"message": rpcMsg.ToJsonMap()}, nil
 }

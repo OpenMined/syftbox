@@ -54,6 +54,30 @@ func NewSyftBoxURL(datasite, appName, endpoint string) *SyftBoxURL {
 	}
 }
 
+func FromSyftURL(url string) (*SyftBoxURL, error) {
+
+	if !strings.HasPrefix(url, "syft://") {
+		return nil, fmt.Errorf("invalid syft url: %s", url)
+	}
+
+	// remove the syft:// prefix
+	url = strings.TrimPrefix(url, "syft://")
+
+	// split the url into parts
+	parts := strings.Split(url, "/")
+
+	if len(parts) < 4 {
+		return nil, fmt.Errorf("invalid syft url: %s", url)
+	}
+
+	// Extract components
+	datasite := parts[0]
+	appName := parts[2]
+	endpoint := strings.Join(parts[4:], "/")
+
+	return NewSyftBoxURL(datasite, appName, endpoint), nil
+}
+
 func (u *SyftBoxURL) ToLocalPath() string {
 	// Clean the endpoint to remove any leading/trailing slashes
 	endpoint := strings.Trim(u.Endpoint, "/")
@@ -122,33 +146,69 @@ func (m *SyftRPCMessage) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON implements custom JSON unmarshaling to handle bytes from base64
+// UnmarshalJSON implements custom JSON unmarshaling
 func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
-	type Alias SyftRPCMessage
-	aux := &struct {
-		*Alias
-		URL  string `json:"url"`
-		Body string `json:"body,omitempty"`
-	}{
-		Alias: (*Alias)(m),
+	type Alias struct {
+		ID         uuid.UUID         `json:"id"`
+		Sender     string            `json:"sender"`
+		URL        string            `json:"url"`
+		Body       string            `json:"body,omitempty"`
+		Headers    map[string]string `json:"headers"`
+		Created    time.Time         `json:"created"`
+		Expires    time.Time         `json:"expires"`
+		Method     SyftMethod        `json:"method,omitempty"`
+		StatusCode SyftStatus        `json:"status_code,omitempty"`
 	}
+
+	var aux Alias
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	// Parse the URL string into SyftBoxURL
-	// Assuming URL format is "syft://{datasite}/app_data/{app_name}/rpc/{endpoint}"
-	urlParts := strings.Split(strings.TrimPrefix(aux.URL, "syft://"), "/")
-	if len(urlParts) >= 5 {
-		m.URL = *NewSyftBoxURL(urlParts[0], urlParts[2], urlParts[4])
+
+	// Parse URL
+	url, err := FromSyftURL(aux.URL)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
 	}
-	// Decode base64 body
+
+	// Set fields
+	m.ID = aux.ID
+	m.Sender = aux.Sender
+	m.URL = *url
+	m.Headers = aux.Headers
+	m.Created = aux.Created
+	m.Expires = aux.Expires
+	m.Method = aux.Method
+	m.StatusCode = aux.StatusCode
+
+	// Handle body
 	if aux.Body != "" {
-		// decode the body, using URL encoding
-		body, err := base64.URLEncoding.DecodeString(aux.Body)
-		if err != nil {
-			return err
+		if body, err := base64.URLEncoding.DecodeString(aux.Body); err == nil {
+			m.Body = body
+		} else {
+			m.Body = []byte(aux.Body)
 		}
-		m.Body = body
 	}
+
 	return nil
+}
+
+// JSONString returns a properly formatted JSON string with decoded body
+func (m *SyftRPCMessage) ToJsonMap() map[string]interface{} {
+	var bodyContent interface{}
+	if err := json.Unmarshal(m.Body, &bodyContent); err != nil {
+		bodyContent = string(m.Body)
+	}
+
+	return map[string]interface{}{
+		"id":          m.ID,
+		"sender":      m.Sender,
+		"url":         m.URL.String(),
+		"headers":     m.Headers,
+		"created":     m.Created,
+		"expires":     m.Expires,
+		"method":      m.Method,
+		"status_code": m.StatusCode,
+		"body":        bodyContent,
+	}
 }
