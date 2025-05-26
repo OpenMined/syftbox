@@ -1,12 +1,14 @@
 package middlewares
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/auth" // Import your auth package
+	"github.com/openmined/syftbox/internal/utils"
 	// Import types for error constants
 )
 
@@ -22,12 +24,13 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		slog.Info("auth middleware disabled")
 
 		return func(ctx *gin.Context) {
+			// expect user to be an email address
 			user := ctx.Query("user")
-			if user == "" {
-				ctx.PureJSON(http.StatusForbidden, gin.H{
-					"error": "'user' query param required",
+			if !utils.IsValidEmail(user) {
+				ctx.Error(fmt.Errorf("invalid email"))
+				ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+					"error": "invalid email",
 				})
-				ctx.Abort()
 				return
 			}
 			ctx.Set("user", user)
@@ -40,7 +43,8 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		authHeaderValue := ctx.GetHeader(authHeader)
 		if authHeaderValue == "" {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			ctx.Error(fmt.Errorf("authorization header required"))
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": "authorization header required",
 			})
 			return
@@ -48,7 +52,8 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 
 		// Check if the header starts with "Bearer "
 		if !strings.HasPrefix(authHeaderValue, bearerPrefix) {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			ctx.Error(fmt.Errorf("bearer token required"))
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": "bearer token required",
 			})
 			return
@@ -57,7 +62,8 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		// Extract the token string
 		tokenString := strings.TrimPrefix(authHeaderValue, bearerPrefix)
 		if tokenString == "" {
-			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			ctx.Error(fmt.Errorf("token missing"))
+			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error": "token missing",
 			})
 			return
@@ -66,6 +72,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		// Validate the token using the method added to AuthService
 		claims, err := authService.ValidateAccessToken(ctx, tokenString)
 		if err != nil {
+			ctx.Error(err)
 			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": err.Error(),
 			})
