@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -51,8 +52,13 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			// todo ChecksumCRC64NVME: op.Local.ChecksumCRC64NVME
 		})
 		if err != nil {
-			// todo check for permission errors
-			slog.Error("sync", "op", OpWriteRemote, "path", op.RelPath, "error", err)
+			if errors.Is(err, syftsdk.ErrNoPermissions) {
+				slog.Error("sync", "op", OpWriteRemote, "path", op.RelPath, "error", err)
+				markRejected(localAbsPath)
+				se.journal.Delete(op.RelPath)
+			} else {
+				slog.Error("sync unknown error", "op", OpWriteRemote, "path", op.RelPath, "error", err)
+			}
 			return
 		}
 

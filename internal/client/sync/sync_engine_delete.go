@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/openmined/syftbox/internal/syftsdk"
 )
@@ -28,7 +27,7 @@ func (se *SyncEngine) handleLocalDeletes(_ context.Context, batch BatchLocalDele
 		// delete the file
 		if err := os.Remove(localPath); err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				se.syncStatus.SetError(op.RelPath, "standard local delete")
+				se.syncStatus.SetCompleted(op.RelPath, "standard local delete")
 				slog.Warn("sync", "op", OpDeleteLocal, "path", localPath, "error", err)
 				continue
 			} else {
@@ -73,7 +72,12 @@ func (se *SyncEngine) handleRemoteDeletes(ctx context.Context, batch BatchRemote
 		Keys: keysToDelete,
 	})
 	if err != nil {
-		slog.Error("sync", "op", OpDeleteRemote, "http error", err)
+		for _, op := range batch {
+			// todo redownload all of these
+			se.journal.Delete(op.RelPath)
+			se.syncStatus.SetCompleted(op.RelPath, "standard remote delete")
+		}
+		slog.Error("sync", "op", OpDeleteRemote, "keys", keysToDelete, "error", err)
 		return
 	}
 
@@ -88,16 +92,17 @@ func (se *SyncEngine) handleRemoteDeletes(ctx context.Context, batch BatchRemote
 
 	for _, err := range result.Errors {
 		// set sync status
-		se.syncStatus.SetError(err.Key, "standard remote delete")
+		se.syncStatus.SetCompleted(err.Key, "standard remote delete")
 		slog.Warn("sync", "op", OpDeleteRemote, "path", err.Key, "error", err.Error)
 	}
 }
+
 func cleanupEmptyParentDirs(initialDirToCleanup string, workspaceRoot string) {
 	currentDir := initialDirToCleanup
 
 	for {
 		// Safety checks for currentDir:
-		if currentDir == workspaceRoot || !strings.HasPrefix(currentDir, workspaceRoot) || currentDir == filepath.Dir(currentDir) {
+		if currentDir == workspaceRoot {
 			break // Stop: reached workspace/filesystem boundary or root itself
 		}
 
@@ -111,6 +116,15 @@ func cleanupEmptyParentDirs(initialDirToCleanup string, workspaceRoot string) {
 		if err != nil {
 			slog.Warn("sync", "op", OpDeleteLocal, "path", currentDir, "error", err)
 			break
+		}
+
+		// delete all .DS_Store
+		for _, entry := range dirEntries {
+			if entry.Name() == ".DS_Store" {
+				if err := os.RemoveAll(filepath.Join(currentDir, entry.Name())); err != nil {
+					slog.Warn("sync", "op", OpDeleteLocal, "path", currentDir, "error", err)
+				}
+			}
 		}
 
 		if len(dirEntries) > 0 {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 )
 
 type ACLHandler struct {
@@ -20,10 +21,7 @@ func NewACLHandler(svc *acl.ACLService) *ACLHandler {
 func (h *ACLHandler) CheckAccess(ctx *gin.Context) {
 	var req ACLCheckRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
-		ctx.Error(err)
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, err)
 		return
 	}
 
@@ -33,10 +31,7 @@ func (h *ACLHandler) CheckAccess(ctx *gin.Context) {
 		&acl.File{Path: req.Path, Size: req.Size},
 		acl.AccessLevel(req.Level),
 	); err != nil {
-		ctx.Error(err)
-		ctx.PureJSON(http.StatusForbidden, gin.H{
-			"error": err.Error(),
-		})
+		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
 		return
 	}
 

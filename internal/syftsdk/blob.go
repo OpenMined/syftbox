@@ -3,6 +3,7 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"resty.dev/v3"
@@ -112,10 +113,12 @@ func (b *BlobAPI) Delete(ctx context.Context, params *DeleteParams) (*DeleteResp
 		Post(v1BlobDelete)
 
 	if err != nil {
+		slog.Error("sdk: blob delete", "error", err)
 		return nil, fmt.Errorf("sdk: blob delete: %q", err)
 	}
 
 	if res.IsError() {
+		slog.Error("sdk: blob delete", "error", res.Error())
 		return nil, fmt.Errorf("sdk blob delete: %q %q", res.Status(), sdkError.Error)
 	}
 
