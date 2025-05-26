@@ -29,13 +29,13 @@ var notFoundOfTmpl string
 
 type ExplorerHandler struct {
 	blob     *blob.BlobService
-	acl      *acl.AclService
+	acl      *acl.ACLService
 	tplIndex *template.Template
 	tpl404   *template.Template
 }
 
 // New creates a new Explorer instance
-func New(svc *blob.BlobService, acl *acl.AclService) *ExplorerHandler {
+func New(svc *blob.BlobService, acl *acl.ACLService) *ExplorerHandler {
 	funcMap := template.FuncMap{
 		"basename": filepath.Base,
 		"humanizeSize": func(size int64) string {
@@ -157,7 +157,7 @@ func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *direct
 // Serve a file from S3
 func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	if err := e.acl.CanAccess(
-		&acl.User{ID: aclspec.Everyone, IsOwner: false},
+		&acl.User{ID: aclspec.Everyone},
 		&acl.File{Path: key},
 		acl.AccessRead,
 	); err != nil {

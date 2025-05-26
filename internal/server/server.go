@@ -17,7 +17,6 @@ import (
 	"github.com/openmined/syftbox/internal/db"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
-	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/ws"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"golang.org/x/sync/errgroup"
@@ -263,7 +262,7 @@ func (s *Server) checkPermission(user string, path string, access acl.AccessLeve
 		return nil
 	}
 	return s.svc.ACL.CanAccess(
-		&acl.User{ID: user, IsOwner: datasite.IsOwner(path, user)},
+		&acl.User{ID: user},
 		&acl.File{Path: path},
 		access,
 	)

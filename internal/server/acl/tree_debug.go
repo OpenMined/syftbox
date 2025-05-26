@@ -8,17 +8,19 @@ import (
 )
 
 // String implements the Stringer interface for PTree
-func (t *Tree) String() string {
+func (t *ACLTree) String() string {
+	var sb strings.Builder
+
 	if t.root == nil {
 		return "<empty tree>"
 	}
-	var sb strings.Builder
+
 	t.root.buildString(&sb, "", true, true)
 	return sb.String()
 }
 
 // buildString recursively builds the string representation of the tree
-func (n *Node) buildString(sb *strings.Builder, prefix string, isLast bool, isRoot bool) {
+func (n *ACLNode) buildString(sb *strings.Builder, prefix string, isLast bool, isRoot bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
@@ -27,6 +29,7 @@ func (n *Node) buildString(sb *strings.Builder, prefix string, isLast bool, isRo
 		if !isLast {
 			marker = "├── "
 		}
+
 		sb.WriteString(prefix)
 		sb.WriteString(marker)
 	}
@@ -35,16 +38,19 @@ func (n *Node) buildString(sb *strings.Builder, prefix string, isLast bool, isRo
 	sb.WriteString(filepath.Base(n.path))
 	sb.WriteString(fmt.Sprintf(" (d:%d, v:%d", n.depth, n.version))
 	if len(n.rules) > 0 {
-		sb.WriteString(fmt.Sprintf(", rules:%d", len(n.rules)))
 		// sb.WriteString(fmt.Sprintf(", rules:%d, ptr:%p", len(n.rules), n.rules))
+		sb.WriteString(fmt.Sprintf(", rules:%d", len(n.rules)))
 	}
+
 	if n.terminal {
 		sb.WriteString(", TERMINAL")
 	}
+
 	sb.WriteString(")\n")
 
 	// Calculate the new prefix for children
 	childPrefix := prefix
+
 	if !isRoot {
 		if isLast {
 			childPrefix += "    "
@@ -77,6 +83,7 @@ func (n *Node) buildString(sb *strings.Builder, prefix string, isLast bool, isRo
 	for k := range n.children {
 		children = append(children, k)
 	}
+
 	sort.Strings(children)
 
 	// Print children

@@ -43,7 +43,9 @@ func (h *BlobHandler) ListObjects(ctx *gin.Context) {
 		return
 	}
 
-	ctx.PureJSON(http.StatusOK, res)
+	ctx.PureJSON(http.StatusOK, &gin.H{
+		"blobs": res,
+	})
 }
 
 func isValidDatasiteKey(key string) bool {

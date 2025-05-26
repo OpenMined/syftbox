@@ -15,10 +15,10 @@ import (
 
 type DatasiteService struct {
 	blob *blob.BlobService
-	acl  *acl.AclService
+	acl  *acl.ACLService
 }
 
-func NewDatasiteService(blobSvc *blob.BlobService, aclSvc *acl.AclService) *DatasiteService {
+func NewDatasiteService(blobSvc *blob.BlobService, aclSvc *acl.ACLService) *DatasiteService {
 	return &DatasiteService{
 		blob: blobSvc,
 		acl:  aclSvc,
@@ -50,7 +50,7 @@ func (d *DatasiteService) Start(ctx context.Context) error {
 
 	// Load the ACL rulesets
 	start = time.Now()
-	d.acl.LoadRuleSets(ruleSets)
+	d.acl.AddRuleSets(ruleSets)
 	slog.Debug("acl build", "count", len(ruleSets), "took", time.Since(start))
 
 	// Warm up the ACL cache
@@ -81,8 +81,13 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 
 	// Filter blobs based on ACL
 	for _, blob := range blobs {
+		if IsOwner(blob.Key, user) {
+			view = append(view, blob)
+			continue
+		}
+
 		if err := d.acl.CanAccess(
-			&acl.User{ID: user, IsOwner: IsOwner(blob.Key, user)},
+			&acl.User{ID: user},
 			&acl.File{Path: blob.Key},
 			acl.AccessRead,
 		); err == nil {

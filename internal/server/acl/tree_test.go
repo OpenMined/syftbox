@@ -8,17 +8,17 @@ import (
 )
 
 func TestNewTree(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 	assert.NotNil(t, tree)
 	assert.NotNil(t, tree.root)
 	assert.Equal(t, "/", tree.root.path)
-	assert.Equal(t, pathSep, tree.root.path)
+	assert.Equal(t, PathSep, tree.root.path)
 	assert.Empty(t, tree.root.children)
 	assert.Empty(t, tree.root.rules)
 }
 
 func TestAddRuleSet(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	ruleset := aclspec.NewRuleSet(
 		"test/path",
@@ -26,14 +26,15 @@ func TestAddRuleSet(t *testing.T) {
 		aclspec.NewDefaultRule(aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset)
+	ver, err := tree.AddRuleSet(ruleset)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// check root node "/"
 	assert.NoError(t, err)
 	assert.Empty(t, tree.root.rules)
 	assert.Contains(t, tree.root.children, "test")
 	assert.Equal(t, tree.root.path, "/")
-	assert.Equal(t, tree.root.depth, uint8(0))
+	assert.Equal(t, tree.root.depth, ACLDepth(0))
 
 	// check node "test"
 	child, ok := tree.root.GetChild("test")
@@ -42,18 +43,18 @@ func TestAddRuleSet(t *testing.T) {
 	assert.Empty(t, child.rules)
 	assert.Contains(t, child.children, "path")
 	assert.Equal(t, child.path, "test")
-	assert.Equal(t, child.depth, uint8(1))
+	assert.Equal(t, child.depth, ACLDepth(1))
 
 	// check node "path"
 	child, ok = child.GetChild("path")
 	assert.True(t, ok)
 	assert.NotNil(t, child)
 	assert.Equal(t, child.path, "test/path")
-	assert.Equal(t, child.depth, uint8(2))
+	assert.Equal(t, child.depth, ACLDepth(2))
 }
 
 func TestTreeTraversal(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add rulesets with nested paths
 	ruleset1 := aclspec.NewRuleSet(
@@ -74,36 +75,39 @@ func TestTreeTraversal(t *testing.T) {
 		aclspec.NewRule("*.go", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	ver, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset3)
+	ver, err = tree.AddRuleSet(ruleset3)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Test finding nearest node with rules for different paths
-	node := tree.GetNearestNodeWithRules("parent/file.txt")
+	node := tree.LookupNearestNode("parent/file.txt")
 	assert.Equal(t, "parent", node.path)
 
-	node = tree.GetNearestNodeWithRules("parent/child/document.md")
+	node = tree.LookupNearestNode("parent/child/document.md")
 	assert.Equal(t, "parent/child", node.path)
 
-	node = tree.GetNearestNodeWithRules("parent/child/grandchild/main.go")
+	node = tree.LookupNearestNode("parent/child/grandchild/main.go")
 	assert.Equal(t, "parent/child", node.path)
 
 	// Test inheritance - terminal nodes (like parent/child) block inheritance from higher levels
-	node = tree.GetNearestNodeWithRules("parent/child/unknown.txt")
+	node = tree.LookupNearestNode("parent/child/unknown.txt")
 	assert.Equal(t, "parent/child", node.path)
 
 	// Test path that doesn't exist in the tree
-	node = tree.GetNearestNodeWithRules("unknown/path")
+	node = tree.LookupNearestNode("unknown/path")
 	assert.Nil(t, node)
 }
 
 func TestRemoveRuleSet(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add rulesets
 	ruleset1 := aclspec.NewRuleSet(
@@ -118,11 +122,13 @@ func TestRemoveRuleSet(t *testing.T) {
 		aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	ver, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Verify both rulesets are in the tree
 	_, ok := tree.root.GetChild("folder1")
@@ -149,7 +155,7 @@ func TestRemoveRuleSet(t *testing.T) {
 }
 
 func TestNestedRuleSetRemoval(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add nested rulesets
 	ruleset1 := aclspec.NewRuleSet(
@@ -164,11 +170,13 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 		aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	ver, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Remove parent - should also remove child
 	removed := tree.RemoveRuleSet("parent")
@@ -179,12 +187,14 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 	assert.False(t, ok)
 
 	// Add the parent ruleset back
-	err = tree.AddRuleSet(ruleset1)
+	ver, err = tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Add the child ruleset back
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Remove just the child
 	removed = tree.RemoveRuleSet("parent/child")
