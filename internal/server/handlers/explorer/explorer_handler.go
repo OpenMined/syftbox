@@ -57,7 +57,7 @@ func New(svc *blob.BlobService, acl *acl.AclService) *ExplorerHandler {
 func (e *ExplorerHandler) Handler(c *gin.Context) {
 	path := strings.TrimPrefix(c.Param("filepath"), "/")
 	contents := e.listContents(path)
-	if contents.IsDir {
+	if contents.IsDir || contents.IsEmpty() {
 		e.serveDir(c, path, contents)
 	} else {
 		e.serveFile(c, path)
