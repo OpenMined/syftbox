@@ -27,7 +27,7 @@ type UploadResponse struct {
 }
 
 type PresignUrlRequest struct {
-	Keys []string `json:"keys" binding:"required"`
+	Keys []string `json:"keys" binding:"required,min=1"`
 }
 
 type PresignUrlResponse struct {
@@ -36,7 +36,7 @@ type PresignUrlResponse struct {
 }
 
 type DeleteRequest struct {
-	Keys []string `json:"keys" binding:"required"`
+	Keys []string `json:"keys" binding:"required,min=1"`
 }
 
 type DeleteResponse struct {

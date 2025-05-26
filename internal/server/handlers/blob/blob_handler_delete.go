@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/datasite"
 )
 
 func (h *BlobHandler) DeleteObjects(ctx *gin.Context) {
@@ -17,18 +18,10 @@ func (h *BlobHandler) DeleteObjects(ctx *gin.Context) {
 		return
 	}
 
-	if len(req.Keys) == 0 {
-		ctx.Error(fmt.Errorf("keys cannot be empty"))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "keys cannot be empty",
-		})
-		return
-	}
-
 	deleted := make([]string, 0, len(req.Keys))
 	errors := make([]*BlobError, 0)
 	for _, key := range req.Keys {
-		if !isValidDatasiteKey(key) {
+		if !datasite.IsValidPath(key) {
 			ctx.Error(fmt.Errorf("invalid datasite path: %s", key))
 			errors = append(errors, &BlobError{
 				Key:   key,
@@ -36,6 +29,7 @@ func (h *BlobHandler) DeleteObjects(ctx *gin.Context) {
 			})
 			continue
 		}
+
 		_, err := h.blob.Backend().DeleteObject(ctx.Request.Context(), key)
 		if err != nil {
 			ctx.Error(fmt.Errorf("failed to delete object: %w", err))
