@@ -50,8 +50,9 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	if result.Response != nil {
 		ctx.PureJSON(result.Status, PollResponse{
-			Message:   result.Response,
-			RequestID: result.RequestID,
+			Message:    result.Response,
+			RequestID:  result.RequestID,
+			PollStatus: PollStatusComplete,
 		})
 		return
 	}
@@ -75,10 +76,10 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	result, err := h.service.PollForResponse(ctx.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
-			ctx.PureJSON(http.StatusAccepted, SendAcknowledgment{
-				Message:   "Request has been accepted. Please check back later.",
-				RequestID: req.RequestID,
-				PollURL:   h.service.constructPollURL(req.RequestID, req.User, req.AppName, req.AppEp),
+			ctx.PureJSON(http.StatusOK, PollResponse{
+				Message:    nil,
+				RequestID:  req.RequestID,
+				PollStatus: PollStatusPending,
 			})
 			return
 		}
@@ -92,8 +93,9 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	}
 
 	ctx.PureJSON(result.Status, PollResponse{
-		Message:   result.Response,
-		RequestID: result.RequestID,
+		Message:    result.Response,
+		RequestID:  result.RequestID,
+		PollStatus: PollStatusComplete,
 	})
 }
 

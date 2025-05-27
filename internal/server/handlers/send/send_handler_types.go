@@ -1,5 +1,12 @@
 package send
 
+type PollStatus string
+
+const (
+	PollStatusPending  PollStatus = "pending"
+	PollStatusComplete PollStatus = "complete"
+)
+
 // SendAcknowledgment represents the response for a successful message send request
 type SendAcknowledgment struct {
 	Message   string `json:"message"`
@@ -33,8 +40,9 @@ type PollObjectRequest struct {
 }
 
 type PollResponse struct {
-	Message   map[string]interface{} `json:"message"`
-	RequestID string                 `json:"request_id"`
+	Message    map[string]interface{} `json:"message"`
+	RequestID  string                 `json:"request_id"`
+	PollStatus PollStatus             `json:"poll_status"`
 }
 
 type PollError struct {
