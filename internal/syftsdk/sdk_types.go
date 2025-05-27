@@ -6,7 +6,3 @@ const (
 	HeaderSyftUser     = "X-Syft-User"
 	HeaderSyftDeviceId = "X-Syft-Device-Id"
 )
-
-type SyftSDKError struct {
-	Error string `json:"error"`
-}

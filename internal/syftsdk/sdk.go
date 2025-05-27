@@ -9,20 +9,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imroc/req/v3"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/openmined/syftbox/internal/version"
-	"resty.dev/v3"
 )
 
 const (
-	RetryInterval        = 5 * time.Second
 	TokenRefreshInterval = 24 * time.Hour
 )
 
 // SyftSDK is the main client for interacting with the Syft API
 type SyftSDK struct {
 	config   *SyftSDKConfig
-	client   *resty.Client
+	client   *req.Client
 	Datasite *DatasiteAPI
 	Blob     *BlobAPI
 	Events   *EventsAPI
@@ -36,21 +35,21 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 		return nil, fmt.Errorf("invalid sdk config: %w", err)
 	}
 
-	client := resty.New().
+	client := req.C().
 		SetBaseURL(config.BaseURL).
 		SetTLSClientConfig(&tls.Config{
 			MinVersion: tls.VersionTLS13,
+			NextProtos: []string{"h2", "http/1.1"},
 		}).
-		SetRetryCount(3).
-		SetRetryWaitTime(1*time.Second).
-		SetHeader(HeaderUserAgent, "SyftBox/"+version.Version).
-		SetHeader(HeaderSyftVersion, version.Version).
-		SetHeader(HeaderSyftDeviceId, utils.HWID).
-		SetHeader(HeaderSyftUser, config.Email).
-		SetQueryParam("user", config.Email).
-		SetRetryMaxWaitTime(RetryInterval).
-		AddContentTypeEncoder("json", jsonEncoder).
-		AddContentTypeDecoder("json", jsonDecoder)
+		SetCommonRetryCount(3).
+		SetCommonRetryFixedInterval(1*time.Second).
+		SetUserAgent("SyftBox/"+version.Version).
+		SetCommonHeader(HeaderSyftVersion, version.Version).
+		SetCommonHeader(HeaderSyftDeviceId, utils.HWID).
+		SetCommonHeader(HeaderSyftUser, config.Email).
+		SetCommonQueryParam("user", config.Email).
+		SetJsonMarshal(jsonMarshal).
+		SetJsonUnmarshal(jsonUmarshal)
 
 	datasiteAPI := newDatasiteAPI(client)
 	blobAPI := newBlobAPI(client)
@@ -70,7 +69,6 @@ func (s *SyftSDK) Close() {
 	if s.Events.IsConnected() {
 		s.Events.Close()
 	}
-	s.client.Close()
 }
 
 // Authenticate sets the user authentication for API calls and events
@@ -161,8 +159,7 @@ func (s *SyftSDK) setAccessToken(accessToken string) error {
 	}
 
 	// set access token
-	s.client.SetAuthScheme("Bearer")
-	s.client.SetAuthToken(accessToken)
+	s.client.SetCommonBearerAuthToken(accessToken)
 
 	slog.Debug("sdk update access token", "user", claims.Subject, "expiry", claims.ExpiresAt)
 	return nil

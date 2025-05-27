@@ -55,6 +55,12 @@ func (c *Config) Save() error {
 func (c *Config) Validate() error {
 	if c.Path == "" {
 		c.Path = DefaultConfigPath
+	} else {
+		cfgPath, err := utils.ResolvePath(c.Path)
+		if err != nil {
+			return fmt.Errorf("invalid config path: %w", err)
+		}
+		c.Path = cfgPath
 	}
 
 	var err error

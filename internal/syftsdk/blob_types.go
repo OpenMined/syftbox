@@ -12,16 +12,16 @@ type BlobInfo struct {
 	LastModified time.Time `json:"lastModified"`
 }
 
-// BlobUrl represents a presigned URL for a blob
-type BlobUrl struct {
+// BlobURL represents a presigned URL for a blob
+type BlobURL struct {
 	Key string `json:"key"`
 	URL string `json:"url"`
 }
 
 // BlobError represents an error for a specific blob operation
 type BlobError struct {
-	Key   string `json:"key"`
-	Error string `json:"error"`
+	SyftSDKError
+	Key string `json:"key"`
 }
 
 // ===================================================================================================
@@ -51,7 +51,7 @@ type PresignedParams struct {
 
 // PresignedResponse represents the response from a presigned URL request
 type PresignedResponse struct {
-	URLs   []*BlobUrl   `json:"urls"`
+	URLs   []*BlobURL   `json:"urls"`
 	Errors []*BlobError `json:"errors"`
 }
 

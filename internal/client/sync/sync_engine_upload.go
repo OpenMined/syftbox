@@ -52,10 +52,16 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			// todo ChecksumCRC64NVME: op.Local.ChecksumCRC64NVME
 		})
 		if err != nil {
-			if errors.Is(err, syftsdk.ErrNoPermissions) {
-				slog.Error("sync", "op", OpWriteRemote, "path", op.RelPath, "error", err)
-				markRejected(localAbsPath)
-				se.journal.Delete(op.RelPath)
+			var sdkErr *syftsdk.SyftSDKError
+			if errors.As(err, &sdkErr) {
+				switch sdkErr.Code {
+				case syftsdk.CodeAccessDenied:
+					slog.Error("sync", "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr)
+					markRejected(localAbsPath)
+					se.journal.Delete(op.RelPath)
+				default:
+					slog.Error("sync unknown sdk error", "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr)
+				}
 			} else {
 				slog.Error("sync unknown error", "op", OpWriteRemote, "path", op.RelPath, "error", err)
 			}

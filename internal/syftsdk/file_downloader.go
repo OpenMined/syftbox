@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
-	"resty.dev/v3"
+	"github.com/imroc/req/v3"
 )
 
 type Downloader struct {
-	client     *resty.Client
+	client     *req.Client
 	tempDir    string
 	numWorkers int
 }
@@ -27,9 +28,9 @@ func NewDownloader(numWorkers int) (*Downloader, error) {
 		numWorkers = runtime.NumCPU()
 	}
 
-	r := resty.New().
-		SetRetryCount(3).
-		SetRetryMaxWaitTime(1)
+	r := req.C().
+		SetCommonRetryCount(3).
+		SetCommonRetryFixedInterval(1 * time.Second)
 
 	return &Downloader{
 		client:     r,
@@ -55,16 +56,15 @@ func (d *Downloader) DownloadFile(ctx context.Context, url string, name string) 
 
 	// Use context for cancelation
 	resp, err := d.client.R().
-		SetDoNotParseResponse(true).
-		SetSaveResponse(true).
-		SetOutputFileName(destPath).
+		DisableAutoReadResponse().
 		SetContext(ctx).
+		SetOutputFile(destPath).
 		Get(url)
 
 	if err != nil {
 		return "", fmt.Errorf("failed to download file from %s: %w", url, err)
-	} else if resp.IsError() {
-		return "", fmt.Errorf("failed to download file from %s: %s", url, resp.Status())
+	} else if resp.IsErrorState() {
+		return "", fmt.Errorf("failed to download file from %s: %s", url, resp)
 	}
 
 	return destPath, nil

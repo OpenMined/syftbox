@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"resty.dev/v3"
+	"github.com/imroc/req/v3"
 )
 
 const (
@@ -12,10 +12,10 @@ const (
 )
 
 type DatasiteAPI struct {
-	client *resty.Client
+	client *req.Client
 }
 
-func newDatasiteAPI(client *resty.Client) *DatasiteAPI {
+func newDatasiteAPI(client *req.Client) *DatasiteAPI {
 	return &DatasiteAPI{
 		client: client,
 	}
@@ -26,8 +26,8 @@ func (d *DatasiteAPI) GetView(ctx context.Context, params *DatasiteViewParams) (
 	var sdkError SyftSDKError
 
 	res, err := d.client.R().
-		SetResult(&resp).
-		SetError(&sdkError).
+		SetSuccessResult(&resp).
+		SetErrorResult(&sdkError).
 		SetContext(ctx).
 		Get(v1View)
 
@@ -35,8 +35,8 @@ func (d *DatasiteAPI) GetView(ctx context.Context, params *DatasiteViewParams) (
 		return nil, fmt.Errorf("sdk: datasite view: %w", err)
 	}
 
-	if res.IsError() {
-		return nil, fmt.Errorf("sdk: datasite view: %s %s", res.Status(), sdkError.Error)
+	if res.IsErrorState() {
+		return nil, fmt.Errorf("sdk: datasite view: %s %s", res.StatusCode, sdkError.Error)
 	}
 
 	return &resp, nil

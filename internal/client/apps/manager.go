@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"resty.dev/v3"
+	"github.com/imroc/req/v3"
+	"github.com/openmined/syftbox/internal/version"
 )
 
 // AppManager handles app installation, uninstallation, and listing operations
@@ -190,7 +191,7 @@ func (a *AppManager) gitlabArchiveUrl(repoUrl *url.URL, opts *RepoOpts) (string,
 
 // downloadFile downloads a file from the given URL and returns the path to the downloaded file
 func downloadFile(url string) (string, error) {
-	client := resty.New()
+	client := req.C().SetUserAgent("SyftBox/" + version.Version)
 
 	// Create a temporary file
 	tmpFile, err := os.CreateTemp("", "app-*.zip")
@@ -201,14 +202,15 @@ func downloadFile(url string) (string, error) {
 
 	// Download the file
 	resp, err := client.R().
-		SetOutputFileName(tmpFile.Name()).
+		DisableAutoReadResponse().
+		SetOutput(tmpFile).
 		Get(url)
 	if err != nil {
 		return "", fmt.Errorf("failed to download file: %w", err)
 	}
 
-	if !resp.IsSuccess() {
-		return "", fmt.Errorf("failed to download file: status code %d", resp.StatusCode())
+	if !resp.IsSuccessState() {
+		return "", fmt.Errorf("failed to download file: status code %d", resp.StatusCode)
 	}
 
 	return tmpFile.Name(), nil

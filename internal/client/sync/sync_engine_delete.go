@@ -92,8 +92,9 @@ func (se *SyncEngine) handleRemoteDeletes(ctx context.Context, batch BatchRemote
 
 	for _, err := range result.Errors {
 		// set sync status
+		se.journal.Delete(err.Key)
 		se.syncStatus.SetCompleted(err.Key, "standard remote delete")
-		slog.Warn("sync", "op", OpDeleteRemote, "path", err.Key, "error", err.Error)
+		slog.Warn("sync", "op", OpDeleteRemote, "path", err.Key, "error", err)
 	}
 }
 
