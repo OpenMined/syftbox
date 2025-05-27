@@ -3,6 +3,7 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"resty.dev/v3"
 )
@@ -39,9 +40,14 @@ func (b *BlobAPI) Upload(ctx context.Context, params *UploadParams) (*UploadResp
 		Put(v1BlobUpload)
 
 	if err != nil {
-		return nil, err
-	} else if res.IsError() {
-		return nil, fmt.Errorf("error: %s", sdkError.Error)
+		return nil, fmt.Errorf("sdk: blob upload: %q", err)
+	}
+
+	if res.IsError() {
+		if res.StatusCode() == http.StatusForbidden {
+			return nil, fmt.Errorf("%w: %s", ErrNoPermissions, sdkError.Error)
+		}
+		return nil, fmt.Errorf("sdk: blob upload: %q %q", res.Status(), sdkError.Error)
 	}
 
 	return &resp, nil
@@ -60,9 +66,11 @@ func (b *BlobAPI) UploadPresigned(ctx context.Context, params *PresignedParams) 
 		Post(v1BlobUploadPresigned)
 
 	if err != nil {
-		return nil, err
-	} else if res.IsError() {
-		return nil, fmt.Errorf("error: %s", sdkError.Error)
+		return nil, fmt.Errorf("sdk: blob upload presigned: %q", err)
+	}
+
+	if res.IsError() {
+		return nil, fmt.Errorf("sdk: blob upload presigned: %q %q", res.Status(), sdkError.Error)
 	}
 
 	return &resp, nil
@@ -81,9 +89,11 @@ func (b *BlobAPI) DownloadPresigned(ctx context.Context, params *PresignedParams
 		Post(v1BlobDownload)
 
 	if err != nil {
-		return nil, err
-	} else if res.IsError() {
-		return nil, fmt.Errorf("error: %s", sdkError.Error)
+		return nil, fmt.Errorf("sdk: blob download presigned: %q", err)
+	}
+
+	if res.IsError() {
+		return nil, fmt.Errorf("sdk: blob download presigned: %q %q", res.Status(), sdkError.Error)
 	}
 
 	return &resp, nil
@@ -102,9 +112,11 @@ func (b *BlobAPI) Delete(ctx context.Context, params *DeleteParams) (*DeleteResp
 		Post(v1BlobDelete)
 
 	if err != nil {
-		return nil, err
-	} else if res.IsError() {
-		return nil, fmt.Errorf("error: %s", sdkError.Error)
+		return nil, fmt.Errorf("sdk: blob delete: %q", err)
+	}
+
+	if res.IsError() {
+		return nil, fmt.Errorf("sdk blob delete: %q %q", res.Status(), sdkError.Error)
 	}
 
 	return &resp, nil

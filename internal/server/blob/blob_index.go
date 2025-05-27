@@ -114,7 +114,7 @@ func (bi *BlobIndex) Remove(key string) error {
 
 // List returns all blobs in the index
 func (bi *BlobIndex) List() ([]*BlobInfo, error) {
-	var blobs []*BlobInfo
+	blobs := make([]*BlobInfo, 0)
 	err := bi.db.Select(&blobs, "SELECT key, etag, size, last_modified FROM blobs")
 	if err != nil {
 		slog.Error("sqlite error", "op", "List", "error", err)
@@ -186,7 +186,7 @@ func (bi *BlobIndex) Count() int {
 
 // FilterByKeyGlob returns blobs with keys matching the given SQL LIKE pattern
 func (bi *BlobIndex) FilterByKeyGlob(pattern string) ([]*BlobInfo, error) {
-	var blobs []*BlobInfo
+	blobs := make([]*BlobInfo, 0)
 	err := bi.db.Select(&blobs, "SELECT key, etag, size, last_modified FROM blobs WHERE key GLOB ?", pattern)
 	if err != nil {
 		slog.Error("sqlite error", "op", "FilterByKeyGlob", "pattern", pattern, "error", err)
@@ -215,7 +215,7 @@ func (bi *BlobIndex) FilterByTime(filter TimeFilter) ([]*BlobInfo, error) {
 		query += " AND last_modified > '" + filter.After.Format(time.RFC3339) + "'"
 	}
 
-	var blobs []*BlobInfo
+	blobs := make([]*BlobInfo, 0)
 	err := bi.db.Select(&blobs, query)
 	if err != nil {
 		slog.Error("sqlite error", "op", "FilterByTime", "error", err)

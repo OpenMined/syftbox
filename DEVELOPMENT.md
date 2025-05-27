@@ -10,6 +10,12 @@ Get your development environment ready:
 | Windows  | `winget install -e --id GoLang.Go --id Casey.Just`                                                                                                  |
 | Linux    | Go: [Official Downloads](https://go.dev/dl/) <br> just: [Installation Guide](https://github.com/casey/just?tab=readme-ov-file#linux) |
 
+Make sure to export `GOPATH` binaries correctly
+
+```
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
 #### 2. Setup Project Tools
 
 ``` sh

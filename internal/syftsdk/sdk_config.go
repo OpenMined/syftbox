@@ -1,20 +1,11 @@
 package syftsdk
 
 import (
-	"errors"
-
 	"github.com/openmined/syftbox/internal/utils"
 )
 
 const (
 	DefaultBaseURL = "https://syftboxdev.openmined.org"
-)
-
-var (
-	ErrNoRefreshToken = errors.New("refresh token is missing")
-	ErrNoServerURL    = errors.New("server URL is missing")
-	ErrInvalidOTP     = errors.New("invalid OTP")
-	ErrInvalidEmail   = errors.New("invalid email")
 )
 
 // SyftSDKConfig is the configuration for the SyftSDK
@@ -26,8 +17,12 @@ type SyftSDKConfig struct {
 }
 
 func (c *SyftSDKConfig) Validate() error {
+	if !utils.IsValidEmail(c.Email) {
+		return ErrInvalidEmail
+	}
+
 	if c.BaseURL == "" {
-		c.BaseURL = DefaultBaseURL
+		return ErrNoServerURL
 	}
 
 	if err := utils.ValidateEmail(c.Email); err != nil {

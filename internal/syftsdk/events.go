@@ -59,7 +59,7 @@ func (e *EventsAPI) Connect(ctx context.Context) error {
 
 	wsClient, err := e.connectLocked(ctx)
 	if err != nil {
-		return fmt.Errorf("socketmgr connect failed: %w", err)
+		return fmt.Errorf("sdk: events: connect failed: %w", err)
 	}
 
 	go e.manageConnection(wsClient)
@@ -127,7 +127,7 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 	// Build URL with auth query parameters
 	url, err := e.fullURL()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get full URL: %w", err)
+		return nil, fmt.Errorf("sdk: events: failed to get full url: %w", err)
 	}
 
 	// Connect with auth
@@ -136,7 +136,7 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 		HTTPHeader: headers, // this will include the auth token
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to %s: %w", url, err)
+		return nil, fmt.Errorf("sdk: events: failed to connect to %s: %w", url, err)
 	}
 	conn.SetReadLimit(wsClientMaxMessageSize)
 

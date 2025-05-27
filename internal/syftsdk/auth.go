@@ -24,7 +24,7 @@ var (
 func VerifyEmail(ctx context.Context, serverURL string, email string) error {
 	var sdkErr SyftSDKError
 
-	if serverURL == "" {
+	if !utils.IsValidURL(serverURL) {
 		return ErrNoServerURL
 	}
 
@@ -60,7 +60,7 @@ func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmail
 	var resp AuthTokenResponse
 	var sdkErr SyftSDKError
 
-	if serverURL == "" {
+	if !utils.IsValidURL(serverURL) {
 		return nil, ErrNoServerURL
 	}
 
@@ -78,14 +78,14 @@ func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmail
 		Post(authOtpVerify)
 
 	if err != nil {
-		return nil, fmt.Errorf("verify email code: %w", err)
+		return nil, fmt.Errorf("sdk: verify email code: %w", err)
 	}
 
 	if res.IsError() {
 		if sdkErr.Error != "" {
-			return nil, fmt.Errorf("verify email code: %s", sdkErr.Error)
+			return nil, fmt.Errorf("sdk: verify email code: %q %q", res.Status(), sdkErr.Error)
 		}
-		return nil, fmt.Errorf("verify email code: %s", res.String())
+		return nil, fmt.Errorf("sdk: verify email code: %q %q", res.Status(), res.String())
 	}
 
 	return &resp, nil
@@ -95,7 +95,7 @@ func RefreshAuthTokens(ctx context.Context, serverURL string, refreshToken strin
 	var resp AuthTokenResponse
 	var sdkErr SyftSDKError
 
-	if serverURL == "" {
+	if !utils.IsValidURL(serverURL) {
 		return nil, ErrNoServerURL
 	}
 
@@ -115,11 +115,11 @@ func RefreshAuthTokens(ctx context.Context, serverURL string, refreshToken strin
 		Post(authRefresh)
 
 	if err != nil {
-		return nil, fmt.Errorf("refresh auth tokens: %w", err)
+		return nil, fmt.Errorf("sdk: refresh auth tokens: %w", err)
 	}
 
 	if res.IsError() {
-		return nil, fmt.Errorf("refresh auth tokens: %s", res.String())
+		return nil, fmt.Errorf("sdk: refresh auth tokens: %s", res.String())
 	}
 
 	return &resp, nil
