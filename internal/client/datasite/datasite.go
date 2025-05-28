@@ -143,6 +143,11 @@ func (d *Datasite) handleClientAuth(ctx context.Context) error {
 }
 
 func (d *Datasite) updateRefreshToken(refreshToken string) {
+	// just in case we decide to not rotate refresh tokens
+	if refreshToken == "" {
+		return
+	}
+
 	d.config.RefreshToken = refreshToken
 	if err := d.config.Save(); err != nil {
 		slog.Error("save config", "error", err)

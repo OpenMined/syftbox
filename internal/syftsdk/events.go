@@ -132,6 +132,8 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 
 	// Connect with auth
 	headers := e.client.Header()
+	headers.Set("Authorization", fmt.Sprintf("%s %s", e.client.AuthScheme(), e.client.AuthToken()))
+
 	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
 		HTTPHeader: headers, // this will include the auth token
 	})

@@ -28,7 +28,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 			user := ctx.Query("user")
 			if !utils.IsValidEmail(user) {
 				ctx.Error(fmt.Errorf("invalid email"))
-				ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"error": "invalid email",
 				})
 				return
@@ -44,7 +44,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		authHeaderValue := ctx.GetHeader(authHeader)
 		if authHeaderValue == "" {
 			ctx.Error(fmt.Errorf("authorization header required"))
-			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "authorization header required",
 			})
 			return
@@ -53,7 +53,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		// Check if the header starts with "Bearer "
 		if !strings.HasPrefix(authHeaderValue, bearerPrefix) {
 			ctx.Error(fmt.Errorf("bearer token required"))
-			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "bearer token required",
 			})
 			return
@@ -63,7 +63,7 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		tokenString := strings.TrimPrefix(authHeaderValue, bearerPrefix)
 		if tokenString == "" {
 			ctx.Error(fmt.Errorf("token missing"))
-			ctx.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "token missing",
 			})
 			return
