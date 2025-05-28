@@ -14,12 +14,12 @@ Using the GUI, from https://github.com/OpenMined/SyftUI/releases
 
 On macOS and Linux.
 ```
-curl -fsSL https://syftboxdev.openmined.org/install.sh | sh
+curl -fsSL https://syftbox.net/install.sh | sh
 ```
 
 On Windows using Powershell
 ```
-powershell -ExecutionPolicy ByPass -c "irm https://syftboxdev.openmined.org/install.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://syftbox.net/install.ps1 | iex"
 ```
 
 ## Contributing
