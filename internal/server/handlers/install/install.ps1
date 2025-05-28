@@ -8,7 +8,7 @@ $AskRunClient = $true
 $RunClient = $false
 
 $AppName = "syftbox"
-$ArtifactBaseUrl = if ($env:ARTIFACT_BASE_URL) { $env:ARTIFACT_BASE_URL } else { "https://syftboxdev.openmined.org" }
+$ArtifactBaseUrl = if ($env:ARTIFACT_BASE_URL) { $env:ARTIFACT_BASE_URL } else { "https://syftbox.net" }
 $ArtifactDownloadUrl = "$ArtifactBaseUrl/releases"
 
 function Write-Error-Exit($message) {

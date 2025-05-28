@@ -13,7 +13,7 @@ RUN_CLIENT=0
 INSTALL_APPS=${INSTALL_APPS:-""}
 
 APP_NAME="syftbox"
-ARTIFACT_BASE_URL=${ARTIFACT_BASE_URL:-"https://syftboxdev.openmined.org"}
+ARTIFACT_BASE_URL=${ARTIFACT_BASE_URL:-"https://syftbox.net"}
 ARTIFACT_DOWNLOAD_URL="$ARTIFACT_BASE_URL/releases"
 SYFTBOX_BINARY_PATH="$HOME/.local/bin/syftbox"
 
