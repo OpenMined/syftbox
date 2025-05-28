@@ -5,6 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/openmined/syftbox/internal/server/handlers/acl"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
@@ -30,10 +32,11 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 	// --------------------------- handlers ---------------------------
 
-	blobH := blob.New(svc.Blob)
+	blobH := blob.New(svc.Blob, svc.ACL)
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
+	aclH := acl.NewACLHandler(svc.ACL)
 
 	// --------------------------- routes ---------------------------
 
@@ -59,6 +62,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		// blob
 		v1.GET("/blob/list", blobH.ListObjects)
 		v1.PUT("/blob/upload", blobH.Upload)
+		v1.PUT("/blob/upload/acl", blobH.UploadACL)
 		v1.POST("/blob/upload/presigned", blobH.UploadPresigned)
 		v1.POST("/blob/upload/multipart", blobH.UploadMultipart)
 		v1.POST("/blob/upload/complete", blobH.UploadComplete)
@@ -68,19 +72,24 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		// datasite
 		v1.GET("/datasite/view", dsH.GetView)
 
+		v1.PUT("/acl", blobH.UploadACL)
+		v1.GET("/acl/check", aclH.CheckAccess)
+
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
 	}
 
 	r.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "not found",
+		c.JSON(http.StatusNotFound, api.SyftAPIError{
+			Code:    api.CodeInvalidRequest,
+			Message: "not found",
 		})
 	})
 
 	r.NoMethod(func(c *gin.Context) {
-		c.JSON(http.StatusMethodNotAllowed, gin.H{
-			"error": "method not allowed",
+		c.JSON(http.StatusMethodNotAllowed, api.SyftAPIError{
+			Code:    api.CodeInvalidRequest,
+			Message: "method not allowed",
 		})
 	})
 

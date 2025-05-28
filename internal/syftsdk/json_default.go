@@ -8,6 +8,9 @@ import (
 	"github.com/goccy/go-json"
 )
 
+var jsonMarshal = json.Marshal
+var jsonUmarshal = json.Unmarshal
+
 func jsonEncoder(w io.Writer, v any) error {
 	return json.NewEncoder(w).Encode(v)
 }

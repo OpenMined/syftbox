@@ -1,25 +1,5 @@
-package syftsdk
+package api
 
-import (
-	"errors"
-	"fmt"
-)
-
-var (
-	// sdk common
-	ErrNoRefreshToken = errors.New("sdk: refresh token missing")
-	ErrNoServerURL    = errors.New("sdk: server url missing")
-	ErrInvalidEmail   = errors.New("sdk: invalid email")
-
-	// auth
-	ErrInvalidOTP = errors.New("sdk: invalid otp")
-
-	// blob
-	ErrNoPermissions = errors.New("sdk: no permissions")
-	ErrFileNotFound  = errors.New("sdk: file not found")
-)
-
-// maps to syft api error codes
 const (
 	// Generic request/server errors
 	CodeInvalidRequest = "E_INVALID_REQUEST" // bad or invalid request
@@ -42,6 +22,7 @@ const (
 	// Blob errors
 	CodeBlobNotFound             = "E_BLOB_NOT_FOUND"               // the specified blob could not be found.
 	CodeBlobInvalidKey           = "E_BLOB_INVALID_KEY"             // the provided key for a blob is invalid (e.g., format, characters, length).
+	CodeBlobAccessDenied         = "E_BLOB_ACCESS_DENIED"           // that access to the specified blob or blob operation is denied due to blob-specific permissions.
 	CodeBlobListFailed           = "E_BLOB_LIST_OPERATION_FAILED"   // a failure during the operation to list blobs.
 	CodeBlobPutFailed            = "E_BLOB_PUT_OPERATION_FAILED"    // a failure during the operation to upload/put a blob.
 	CodeBlobGetFailed            = "E_BLOB_GET_OPERATION_FAILED"    // a failure during the operation to download/get a blob.
@@ -52,13 +33,3 @@ const (
 	// ACL errors
 	CodeACLUpdateFailed = "E_ACL_UPDATE_FAILED" // a failure during the operation to update an ACL.
 )
-
-// maps to syft api error
-type SyftSDKError struct {
-	Code    string `json:"code"`
-	Message string `json:"error"`
-}
-
-func (e *SyftSDKError) Error() string {
-	return fmt.Sprintf("sdk: code=%s, message=%s", e.Code, e.Message)
-}

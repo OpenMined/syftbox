@@ -8,6 +8,9 @@ import (
 	"github.com/bytedance/sonic"
 )
 
+var jsonMarshal = sonic.Marshal
+var jsonUmarshal = sonic.Unmarshal
+
 func jsonEncoder(w io.Writer, v any) error {
 	return sonic.ConfigDefault.NewEncoder(w).Encode(v)
 }

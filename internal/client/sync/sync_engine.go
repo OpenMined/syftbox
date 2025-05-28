@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -240,7 +239,6 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 		journal, journalExists := journalState[path]
 
 		// check if it's already in conflict
-		isConflict := se.isConflict(path)
 		isSyncing := se.isSyncing(path)
 		isIgnored := se.ignoreList.ShouldIgnore(path)
 		isEmpty := false
@@ -248,17 +246,17 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 			isEmpty = true
 		}
 
-		if isConflict || isSyncing || isIgnored || isEmpty {
+		if isSyncing || isIgnored || isEmpty {
 			reconcileOps.Ignored[path] = struct{}{}
 			continue
 		}
 
 		localCreated := localExists && !journalExists && !remoteExists
-		remoteCreated := remoteExists && !journalExists && !localExists
+		remoteCreated := !localExists && !journalExists && remoteExists
 		localDeleted := !localExists && journalExists && remoteExists
-		remoteDeleted := !remoteExists && journalExists && localExists
+		remoteDeleted := localExists && journalExists && !remoteExists
 		localModified := localExists && se.hasModified(local, journal)
-		remoteModified := remoteExists && se.hasModified(remote, journal)
+		remoteModified := remoteExists && se.hasModified(journal, remote)
 
 		// early checks
 		if !localExists && !remoteExists && journalExists {
@@ -399,16 +397,16 @@ func (se *SyncEngine) isSyncing(path string) bool {
 	return se.syncStatus.IsSyncing(path)
 }
 
-func (se *SyncEngine) isConflict(path string) bool {
-	// if there's a dir basename.conflicted/
-	name := filepath.Base(path)
-	conflictedDir := filepath.Join(filepath.Dir(path), name+".conflicted")
-	info, err := os.Stat(conflictedDir)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
-}
+// func (se *SyncEngine) isConflict(path string) bool {
+// 	// if there's a dir basename.conflicted/
+// 	name := filepath.Base(path)
+// 	conflictedDir := filepath.Join(filepath.Dir(path), name+".conflicted")
+// 	info, err := os.Stat(conflictedDir)
+// 	if err != nil {
+// 		return false
+// 	}
+// 	return info.IsDir()
+// }
 
 func (se *SyncEngine) getRemoteState(ctx context.Context) (map[string]*FileMetadata, error) {
 	// tstart := time.Now()

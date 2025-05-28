@@ -3,11 +3,14 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/imroc/req/v3"
 	"github.com/openmined/syftbox/internal/utils"
-	"resty.dev/v3"
+	"github.com/openmined/syftbox/internal/version"
 )
 
 const (
@@ -17,7 +20,15 @@ const (
 )
 
 var (
-	regexOTP = regexp.MustCompile(`^[0-9A-Z]{8}$`)
+	regexOTP    = regexp.MustCompile(`^[0-9A-Z]{8}$`)
+	guestClient = req.C().
+			SetCommonRetryCount(3).
+			SetCommonRetryFixedInterval(1*time.Second).
+			SetUserAgent("SyftBox/"+version.Version).
+			SetCommonHeader(HeaderSyftVersion, version.Version).
+			SetCommonHeader(HeaderSyftDeviceId, utils.HWID).
+			SetJsonMarshal(jsonMarshal).
+			SetJsonUnmarshal(jsonUmarshal)
 )
 
 // VerifyEmail starts the Email verification flow by requesting a one-time password (OTP) from the server.
@@ -32,25 +43,25 @@ func VerifyEmail(ctx context.Context, serverURL string, email string) error {
 		return ErrInvalidEmail
 	}
 
-	client := resty.New().SetBaseURL(serverURL)
+	fullURL, err := url.JoinPath(serverURL, authOtpRequest)
+	if err != nil {
+		return fmt.Errorf("join path: %w", err)
+	}
 
-	res, err := client.R().
+	res, err := guestClient.R().
 		SetContext(ctx).
 		SetBody(&VerifyEmailRequest{
 			Email: email,
 		}).
-		SetError(&sdkErr).
-		Post(authOtpRequest)
+		SetErrorResult(&sdkErr).
+		Post(fullURL)
 
 	if err != nil {
 		return fmt.Errorf("request verification code: %w", err)
 	}
 
-	if res.IsError() {
-		if sdkErr.Error != "" {
-			return fmt.Errorf("request verification code: %s", sdkErr.Error)
-		}
-		return fmt.Errorf("request verification code: %s", res.String())
+	if res.IsErrorState() {
+		return &sdkErr
 	}
 
 	return nil
@@ -68,24 +79,24 @@ func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmail
 		return nil, ErrInvalidOTP
 	}
 
-	client := resty.New().SetBaseURL(serverURL)
+	fullURL, err := url.JoinPath(serverURL, authOtpVerify)
+	if err != nil {
+		return nil, fmt.Errorf("join path: %w", err)
+	}
 
-	res, err := client.R().
+	res, err := guestClient.R().
 		SetContext(ctx).
 		SetBody(codeReq).
-		SetResult(&resp).
-		SetError(&sdkErr).
-		Post(authOtpVerify)
+		SetSuccessResult(&resp).
+		SetErrorResult(&sdkErr).
+		Post(fullURL)
 
 	if err != nil {
 		return nil, fmt.Errorf("sdk: verify email code: %w", err)
 	}
 
-	if res.IsError() {
-		if sdkErr.Error != "" {
-			return nil, fmt.Errorf("sdk: verify email code: %q %q", res.Status(), sdkErr.Error)
-		}
-		return nil, fmt.Errorf("sdk: verify email code: %q %q", res.Status(), res.String())
+	if res.IsErrorState() {
+		return nil, &sdkErr
 	}
 
 	return &resp, nil
@@ -103,23 +114,26 @@ func RefreshAuthTokens(ctx context.Context, serverURL string, refreshToken strin
 		return nil, ErrNoRefreshToken
 	}
 
-	client := resty.New().SetBaseURL(serverURL)
+	fullURL, err := url.JoinPath(serverURL, authRefresh)
+	if err != nil {
+		return nil, fmt.Errorf("join path: %w", err)
+	}
 
-	res, err := client.R().
+	res, err := guestClient.R().
 		SetContext(ctx).
 		SetBody(&RefreshTokenRequest{
 			RefreshToken: refreshToken,
 		}).
-		SetResult(&resp).
-		SetError(&sdkErr).
-		Post(authRefresh)
+		SetSuccessResult(&resp).
+		SetErrorResult(&sdkErr).
+		Post(fullURL)
 
 	if err != nil {
 		return nil, fmt.Errorf("sdk: refresh auth tokens: %w", err)
 	}
 
-	if res.IsError() {
-		return nil, fmt.Errorf("sdk: refresh auth tokens: %s", res.String())
+	if res.IsErrorState() {
+		return nil, &sdkErr
 	}
 
 	return &resp, nil

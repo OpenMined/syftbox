@@ -22,6 +22,6 @@ type DownloadFileParams struct {
 
 // DownloadFileResponse represents the response from a file download request
 type DownloadFileResponse struct {
-	URLs   []*BlobUrl   `json:"urls"`
+	URLs   []*BlobURL   `json:"urls"`
 	Errors []*BlobError `json:"errors"`
 }

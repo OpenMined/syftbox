@@ -1,12 +1,14 @@
 package acl
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"strings"
+)
 
-var pathSep = string(filepath.Separator)
+const PathSep = "/"
 
 type User struct {
-	ID      string
-	IsOwner bool
+	ID string
 }
 
 type File struct {
@@ -14,4 +16,8 @@ type File struct {
 	IsDir     bool
 	IsSymlink bool
 	Size      int64
+}
+
+func CleanACLPath(path string) string {
+	return strings.TrimLeft(filepath.Clean(path), PathSep)
 }
