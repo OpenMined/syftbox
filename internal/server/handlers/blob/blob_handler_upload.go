@@ -6,55 +6,55 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/aclspec"
+	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 )
 
 func (h *BlobHandler) Upload(ctx *gin.Context) {
+	user := ctx.GetString("user")
+
+	if key := ctx.Query("key"); aclspec.IsACLFile(key) {
+		h.UploadACL(ctx)
+		return
+	}
+
 	var req UploadRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
-		ctx.Error(fmt.Errorf("failed to bind query: %w", err))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("failed to bind query: %w", err))
 		return
 	}
 
 	// todo check if new change using etag
 
 	if !datasite.IsValidPath(req.Key) {
-		ctx.Error(fmt.Errorf("invalid datasite path: %s", req.Key))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid key: %s", req.Key),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeDatasiteInvalidPath, fmt.Errorf("invalid key: %s", req.Key))
+		return
+	}
+
+	if err := h.checkPermissions(req.Key, user, acl.AccessWrite); err != nil {
+		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
 		return
 	}
 
 	// get form file
 	file, err := ctx.FormFile("file")
 	if err != nil {
-		ctx.Error(fmt.Errorf("failed to get form file: %w", err))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid file: %s", err),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("invalid file: %w", err))
 		return
 	}
 
 	// check file size
 	if file.Size <= 0 {
-		ctx.Error(fmt.Errorf("invalid file: size is 0"))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "invalid file: size is 0",
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("invalid file: size is 0"))
 		return
 	}
 
 	fd, err := file.Open()
 	if err != nil {
-		ctx.Error(fmt.Errorf("failed to open file: %w", err))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid file: %s", err),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("invalid file file: %w", err))
 		return
 	}
 	defer fd.Close()
@@ -65,10 +65,7 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		Body: fd,
 	})
 	if err != nil {
-		ctx.Error(fmt.Errorf("failed to put object: %w", err))
-		ctx.PureJSON(http.StatusInternalServerError, gin.H{
-			"error": fmt.Sprintf("failed to put object: %s", err),
-		})
+		api.AbortWithError(ctx, http.StatusInternalServerError, api.CodeBlobPutFailed, fmt.Errorf("failed to put object: %w", err))
 		return
 	}
 

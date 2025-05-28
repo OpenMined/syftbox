@@ -19,6 +19,7 @@ import (
 	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 )
 
 //go:embed index.html.tmpl
@@ -149,8 +150,7 @@ func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *direct
 	// Generate an HTML response
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	if err := e.tplIndex.Execute(c.Writer, data); err != nil {
-		c.Error(fmt.Errorf("failed to execute template: %w", err))
-		c.String(http.StatusInternalServerError, "internal server error")
+		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to execute template: %w", err))
 	}
 }
 
@@ -180,8 +180,7 @@ func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	// Stream response body directly
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
-		c.Error(fmt.Errorf("failed to stream file: %w", err))
-		c.String(http.StatusInternalServerError, "internal server error")
+		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to stream file: %w", err))
 		return
 	}
 }
@@ -198,8 +197,7 @@ func (e *ExplorerHandler) detectContentType(key string) string {
 func (e *ExplorerHandler) serve404(c *gin.Context, key string) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	if err := e.tpl404.Execute(c.Writer, map[string]any{"Key": key}); err != nil {
-		c.Error(fmt.Errorf("failed to execute template: %w", err))
-		c.String(http.StatusInternalServerError, "internal server error")
+		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to execute template: %w", err))
 	}
 }
 
