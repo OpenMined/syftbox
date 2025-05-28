@@ -7,17 +7,30 @@ const (
 	PollStatusComplete PollStatus = "complete"
 )
 
-// SendAcknowledgment represents the response for a successful message send request
-type SendAcknowledgment struct {
+// Error constants
+const (
+	ErrorTimeout        = "timeout"
+	ErrorInvalidRequest = "invalid_request"
+	ErrorInternal       = "internal_error"
+	ErrorNotFound       = "not_found"
+)
+
+// APIError represents a standardized error response
+type APIError struct {
+	Error     string `json:"error"`
 	Message   string `json:"message"`
-	RequestID string `json:"request_id"`
-	PollURL   string `json:"poll_url"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
-// SendError represents the error response for a failed message send request
-type SendError struct {
-	Error     string `json:"error"`
-	RequestID string `json:"request_id"`
+// APIResponse represents a standardized success response
+type APIResponse struct {
+	RequestID string      `json:"request_id"`
+	Data      interface{} `json:"data,omitempty"`
+	Message   string      `json:"message,omitempty"`
+}
+
+type PollInfo struct {
+	PollURL string `json:"poll_url"`
 }
 
 // MessageRequest represents the request for sending a message
@@ -31,23 +44,13 @@ type MessageRequest struct {
 	Timeout int               `form:"timeout" header:"x-syft-timeout" binding:"gte=0"`
 }
 
+// PollObjectRequest represents the request for polling
 type PollObjectRequest struct {
 	RequestID string `form:"request_id" binding:"required"`
 	AppName   string `form:"app_name" binding:"required"`
 	AppEp     string `form:"app_endpoint" binding:"required"`
 	User      string `form:"user" binding:"required"`
 	Timeout   int    `form:"timeout,omitempty" binding:"gte=0"`
-}
-
-type PollResponse struct {
-	Message    map[string]interface{} `json:"message"`
-	RequestID  string                 `json:"request_id"`
-	PollStatus PollStatus             `json:"poll_status"`
-}
-
-type PollError struct {
-	Error     string `json:"error"`
-	RequestID string `json:"request_id"`
 }
 
 // SendResult represents the result of a send operation

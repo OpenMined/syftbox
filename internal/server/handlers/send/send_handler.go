@@ -27,40 +27,48 @@ func New(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
 func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	var req MessageRequest
 	if err := ctx.ShouldBindHeader(&req); err != nil {
-		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:   ErrorInvalidRequest,
+			Message: err.Error(),
+		})
 		return
 	}
 
 	// Read request body with size limit
 	bodyBytes, err := readRequestBody(ctx, h.service.cfg.MaxBodySize)
 	if err != nil {
-		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:   ErrorInvalidRequest,
+			Message: err.Error(),
+		})
 		return
 	}
 
 	result, err := h.service.SendMessage(ctx.Request.Context(), &req, bodyBytes)
 	if err != nil {
 		slog.Error("failed to send message", "error", err)
-		ctx.PureJSON(http.StatusInternalServerError, SendError{
-			Error:     err.Error(),
+		ctx.PureJSON(http.StatusInternalServerError, APIError{
+			Error:     ErrorInternal,
+			Message:   err.Error(),
 			RequestID: result.RequestID,
 		})
 		return
 	}
 
 	if result.Response != nil {
-		ctx.PureJSON(result.Status, PollResponse{
-			Message:    result.Response,
-			RequestID:  result.RequestID,
-			PollStatus: PollStatusComplete,
+		ctx.PureJSON(result.Status, APIResponse{
+			RequestID: result.RequestID,
+			Data:      result.Response,
 		})
 		return
 	}
 
-	ctx.PureJSON(result.Status, SendAcknowledgment{
-		Message:   "Request has been accepted. Please check back later.",
+	ctx.PureJSON(result.Status, APIResponse{
 		RequestID: result.RequestID,
-		PollURL:   result.PollURL,
+		Data: PollInfo{
+			PollURL: result.PollURL,
+		},
+		Message: "Request has been accepted. Please check back later.",
 	})
 }
 
@@ -69,33 +77,37 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	var req PollObjectRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		slog.Error("failed to bind query parameters", "error", err)
-		ctx.PureJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:     ErrorInvalidRequest,
+			Message:   err.Error(),
+			RequestID: req.RequestID,
+		})
 		return
 	}
 
 	result, err := h.service.PollForResponse(ctx.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
-			ctx.PureJSON(http.StatusOK, PollResponse{
-				Message:    nil,
-				RequestID:  req.RequestID,
-				PollStatus: PollStatusPending,
+			ctx.PureJSON(http.StatusOK, APIError{
+				Error:     ErrorTimeout,
+				Message:   "Polling timeout reached. The request may still be processing.",
+				RequestID: req.RequestID,
 			})
 			return
 		}
 
 		slog.Error("failed to poll for response", "error", err)
-		ctx.PureJSON(http.StatusInternalServerError, PollError{
-			Error:     err.Error(),
+		ctx.PureJSON(http.StatusInternalServerError, APIError{
+			Error:     ErrorInternal,
+			Message:   err.Error(),
 			RequestID: req.RequestID,
 		})
 		return
 	}
 
-	ctx.PureJSON(result.Status, PollResponse{
-		Message:    result.Response,
-		RequestID:  result.RequestID,
-		PollStatus: PollStatusComplete,
+	ctx.PureJSON(result.Status, APIResponse{
+		RequestID: result.RequestID,
+		Data:      result.Response,
 	})
 }
 
@@ -112,7 +124,11 @@ func readRequestBody(ctx *gin.Context, maxSize int64) ([]byte, error) {
 
 	// Check if body size exceeds maximum allowed size
 	if maxSize > 0 && int64(len(bodyBytes)) > maxSize {
-		return nil, fmt.Errorf("request body too large: %d bytes (max: %d bytes)", len(bodyBytes), maxSize)
+		return nil, fmt.Errorf(
+			"request body too large: %d bytes (max: %d bytes)",
+			len(bodyBytes),
+			maxSize,
+		)
 	}
 
 	return bodyBytes, nil
