@@ -9,7 +9,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/version"
 )
 
 const (
@@ -90,31 +92,27 @@ func (h *WebsocketHub) Shutdown(ctx context.Context) {
 // WebsocketHandler is the handler for the websocket connection
 // it upgrades the http connection to a websocket and registers the client with the hub
 func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
-	if ctx.GetString("user") == "" {
-		ctx.Status(http.StatusUnauthorized)
-		slog.Warn("wshub unauthorized", "ip", ctx.ClientIP(), "headers", ctx.Request.Header, "path", ctx.Request.URL)
+	user := ctx.GetString("user")
+	if user == "" {
+		api.AbortWithError(ctx, http.StatusUnauthorized, api.CodeInvalidRequest, fmt.Errorf("user missing"))
 		return
 	}
 
 	// Upgrade HTTP connection to WebSocket
 	conn, err := websocket.Accept(ctx.Writer, ctx.Request, nil)
 	if err != nil {
-		e := fmt.Errorf("websocket accept failed: %w", err)
-		ctx.Error(e)
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": e.Error(),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("websocket accept failed: %w", err))
 		return
 	}
 	conn.SetReadLimit(maxMessageSize)
 
 	client := NewWebsocketClient(conn, &ClientInfo{
-		User:    ctx.GetString("user"),
+		User:    user,
 		IPAddr:  ctx.ClientIP(),
 		Headers: ctx.Request.Header.Clone(),
 	})
 
-	client.MsgTx <- syftmsg.NewSystemMessage("0.5.0", "ok")
+	client.MsgTx <- syftmsg.NewSystemMessage(version.Version, "ok")
 
 	h.register <- client
 }
