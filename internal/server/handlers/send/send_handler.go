@@ -88,7 +88,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	result, err := h.service.PollForResponse(ctx.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
-			ctx.PureJSON(http.StatusOK, APIError{
+			ctx.PureJSON(http.StatusAccepted, APIError{
 				Error:     ErrorTimeout,
 				Message:   "Polling timeout reached. The request may still be processing.",
 				RequestID: req.RequestID,
