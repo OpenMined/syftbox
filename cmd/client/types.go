@@ -6,6 +6,7 @@ var (
 	// https://github.com/muesli/termenv/blob/master/ansicolors.go
 	// https://github.com/fidian/ansi
 	red       = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	yellow    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
 	green     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	cyan      = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	gray      = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
