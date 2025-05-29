@@ -119,7 +119,7 @@ func (s *SyftBoxURL) Validate() error {
 	return nil
 }
 
-// UnmarshalText implements encoding.TextUnmarshaler for automatic binding
+// UnmarshalParam implements gin.UnmarshalParam for automatic query param binding
 func (s *SyftBoxURL) UnmarshalParam(param string) error {
 	slog.Debug("Unmarshalling syft url", "url", param)
 	parsed, err := FromSyftURL(param)
@@ -185,17 +185,19 @@ func FromSyftURL(rawURL string) (*SyftBoxURL, error) {
 		return nil, fmt.Errorf("invalid scheme: expected 'syft', got '%s'", parsedURL.Scheme)
 	}
 
-	// Use Host for datasite
+	// datasite is the host of the URL + @ + username
 	datasite := parsedURL.Host
-	if parsedURL.User != nil {
-		username := parsedURL.User.Username()
-		if username != "" {
-			datasite = username + "@" + datasite
-		}
-	}
+
 	if datasite == "" {
 		return nil, fmt.Errorf("invalid syft url: missing datasite (host)")
 	}
+
+	if parsedURL.User == nil || parsedURL.User.Username() == "" {
+		return nil, fmt.Errorf("invalid syft url: invalid datasite name")
+	}
+
+	username := parsedURL.User.Username()
+	datasite = username + "@" + datasite
 
 	// Split path into components and remove empty strings
 	path := strings.Trim(parsedURL.Path, pathSeparator)
