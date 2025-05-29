@@ -107,12 +107,20 @@ func (s *SendService) handleOfflineMessage(ctx context.Context, req *MessageRequ
 	return &SendResult{
 		Status:    http.StatusAccepted,
 		RequestID: httpMsg.Id,
-		PollURL:   s.constructPollURL(httpMsg.Id, req.To, req.AppName, req.AppEp),
+
+		PollURL: s.constructPollURL(
+			httpMsg.Id, req.SyftURL.Datasite,
+			req.SyftURL.AppName, req.SyftURL.Endpoint,
+		),
 	}, nil
 }
 
 // handleOnlineMessage handles sending a message when the user is online
-func (s *SendService) handleOnlineMessage(ctx context.Context, req *MessageRequest, httpMsg *syftmsg.HttpMsg) (*SendResult, error) {
+func (s *SendService) handleOnlineMessage(
+	ctx context.Context,
+	req *MessageRequest,
+	httpMsg *syftmsg.HttpMsg,
+) (*SendResult, error) {
 	blobPath := path.Join(
 		req.SyftURL.Datasite,
 		"app_data",
@@ -133,7 +141,12 @@ func (s *SendService) handleOnlineMessage(ctx context.Context, req *MessageReque
 			return &SendResult{
 				Status:    http.StatusAccepted,
 				RequestID: httpMsg.Id,
-				PollURL:   s.constructPollURL(httpMsg.Id, req.To, req.AppName, req.AppEp),
+				PollURL: s.constructPollURL(
+					httpMsg.Id,
+					req.SyftURL.Datasite,
+					req.SyftURL.AppName,
+					req.SyftURL.Endpoint,
+				),
 			}, nil
 		}
 		return nil, err
@@ -150,7 +163,12 @@ func (s *SendService) handleOnlineMessage(ctx context.Context, req *MessageReque
 	}
 
 	// Clean up in background
-	go s.cleanReqResponse(req.To, req.AppName, req.AppEp, httpMsg.Id)
+	go s.cleanReqResponse(
+		req.SyftURL.Datasite,
+		req.SyftURL.AppName,
+		req.SyftURL.Endpoint,
+		httpMsg.Id,
+	)
 
 	return &SendResult{
 		Status:    http.StatusOK,
@@ -185,7 +203,12 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	}
 
 	// Clean up in background
-	go s.cleanReqResponse(req.User, req.AppName, req.AppEp, req.RequestID)
+	go s.cleanReqResponse(
+		req.User,
+		req.AppName,
+		req.AppEp,
+		req.RequestID,
+	)
 
 	return &PollResult{
 		Status:    http.StatusOK,

@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"log/slog"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -119,9 +120,11 @@ func (s *SyftBoxURL) Validate() error {
 }
 
 // UnmarshalText implements encoding.TextUnmarshaler for automatic binding
-func (s *SyftBoxURL) UnmarshalText(text []byte) error {
-	parsed, err := FromSyftURL(string(text))
+func (s *SyftBoxURL) UnmarshalParam(param string) error {
+	slog.Debug("Unmarshalling syft url", "url", param)
+	parsed, err := FromSyftURL(param)
 	if err != nil {
+		slog.Error("Failed to parse syft url", "error", err, "url", param)
 		return err
 	}
 	*s = *parsed
@@ -184,6 +187,12 @@ func FromSyftURL(rawURL string) (*SyftBoxURL, error) {
 
 	// Use Host for datasite
 	datasite := parsedURL.Host
+	if parsedURL.User != nil {
+		username := parsedURL.User.Username()
+		if username != "" {
+			datasite = username + "@" + datasite
+		}
+	}
 	if datasite == "" {
 		return nil, fmt.Errorf("invalid syft url: missing datasite (host)")
 	}

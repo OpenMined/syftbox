@@ -128,21 +128,15 @@ func NewSyftRPCMessage(httpMsg HttpMsg) (*SyftRPCMessage, error) {
 		headers = make(map[string]string)
 	}
 
-	url, err := utils.FromSyftURL(httpMsg.SyftURL.String())
-	if err != nil {
-		return nil, err
-	}
-
 	msg := &SyftRPCMessage{
-		ID:         uuid.MustParse(httpMsg.Id),
-		Sender:     httpMsg.From,
-		URL:        *url,
-		Body:       httpMsg.Body,
-		Headers:    headers,
-		Created:    now,
-		Expires:    now.Add(time.Duration(DefaultMessageExpiry)),
-		Method:     SyftMethod(httpMsg.Method),
-		StatusCode: SyftStatus(httpMsg.Status),
+		ID:      uuid.MustParse(httpMsg.Id),
+		Sender:  httpMsg.From,
+		URL:     httpMsg.SyftURL,
+		Body:    httpMsg.Body,
+		Headers: headers,
+		Created: now,
+		Expires: now.Add(time.Duration(DefaultMessageExpiry)),
+		Method:  SyftMethod(httpMsg.Method),
 	}
 
 	if err := msg.Validate(); err != nil {

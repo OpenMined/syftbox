@@ -57,7 +57,7 @@ type MessageRequest struct {
 	From    string           `form:"x-syft-from" binding:"required"`
 	Headers JSONHeaders      `header:"x-syft-headers"`
 	Timeout int              `form:"timeout" binding:"gte=0"`
-	Method  string           `form:"method" binding:"required"`
+	Method  string           `form:"method"`
 }
 
 // PollObjectRequest represents the request for polling
