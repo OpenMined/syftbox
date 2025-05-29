@@ -3,13 +3,12 @@ package syftmsg
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"encoding/base64"
 
 	"github.com/google/uuid"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 // ValidationError represents a validation error
@@ -90,84 +89,6 @@ const (
 	StatusOK SyftStatus = 200
 )
 
-type SyftBoxURL struct {
-	Datasite string `json:"datasite"`
-	AppName  string `json:"app_name"`
-	Endpoint string `json:"endpoint"`
-}
-
-func (u *SyftBoxURL) String() string {
-	// Clean the endpoint to remove any leading/trailing slashes
-	endpoint := strings.Trim(u.Endpoint, "/")
-	// format: "syft://{datasite}/app_data/{app_name}/rpc/{endpoint}"
-	return fmt.Sprintf("syft://%s/app_data/%s/rpc/%s", u.Datasite, u.AppName, endpoint)
-}
-
-func NewSyftBoxURL(datasite, appName, endpoint string) (*SyftBoxURL, error) {
-	url := &SyftBoxURL{
-		Datasite: datasite,
-		AppName:  appName,
-		Endpoint: endpoint,
-	}
-	if err := url.Validate(); err != nil {
-		return nil, err
-	}
-	return url, nil
-}
-
-func FromSyftURL(url string) (*SyftBoxURL, error) {
-
-	if !strings.HasPrefix(url, "syft://") {
-		return nil, fmt.Errorf("invalid syft url: %s", url)
-	}
-
-	// remove the syft:// prefix
-	url = strings.TrimPrefix(url, "syft://")
-
-	// split the url into parts
-	parts := strings.Split(url, "/")
-
-	if len(parts) < 4 {
-		return nil, fmt.Errorf("invalid syft url: %s", url)
-	}
-
-	// Extract components
-	datasite := parts[0]
-	appName := parts[2]
-	endpoint := strings.Join(parts[4:], "/")
-
-	return NewSyftBoxURL(datasite, appName, endpoint)
-}
-
-func (u *SyftBoxURL) ToLocalPath() string {
-	// Clean the endpoint to remove any leading/trailing slashes
-	endpoint := strings.Trim(u.Endpoint, "/")
-	return filepath.Join(u.Datasite, "app_data", u.AppName, "rpc", endpoint)
-}
-
-// Validate validates the URL
-func (u *SyftBoxURL) Validate() error {
-	if u.Datasite == "" {
-		return &ValidationError{
-			Field:   "datasite",
-			Message: "datasite cannot be empty",
-		}
-	}
-	if u.AppName == "" {
-		return &ValidationError{
-			Field:   "app_name",
-			Message: "app_name cannot be empty",
-		}
-	}
-	if u.Endpoint == "" {
-		return &ValidationError{
-			Field:   "endpoint",
-			Message: "endpoint cannot be empty",
-		}
-	}
-	return nil
-}
-
 // SyftMessage represents a base message for Syft protocol communication
 type SyftRPCMessage struct {
 	// ID is the unique identifier of the message
@@ -177,7 +98,7 @@ type SyftRPCMessage struct {
 	Sender string `json:"sender"`
 
 	// URL is the URL of the message
-	URL SyftBoxURL `json:"url"`
+	URL utils.SyftBoxURL `json:"url"`
 
 	// Body is the body of the message in bytes
 	Body []byte `json:"body,omitempty"`
@@ -207,7 +128,7 @@ func NewSyftRPCMessage(httpMsg HttpMsg) (*SyftRPCMessage, error) {
 		headers = make(map[string]string)
 	}
 
-	url, err := NewSyftBoxURL(httpMsg.To, httpMsg.AppName, httpMsg.AppEp)
+	url, err := utils.FromSyftURL(httpMsg.SyftURL.String())
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +186,7 @@ func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
 	}
 
 	// Parse URL
-	url, err := FromSyftURL(aux.URL)
+	url, err := utils.FromSyftURL(aux.URL)
 	if err != nil {
 		return fmt.Errorf("failed to parse URL: %w", err)
 	}
