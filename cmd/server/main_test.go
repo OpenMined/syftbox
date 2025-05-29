@@ -22,6 +22,7 @@ func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_BLOB_ENDPOINT", "http://test-endpoint")
 	t.Setenv("SYFTBOX_BLOB_ACCESS_KEY", "test-access-key")
 	t.Setenv("SYFTBOX_BLOB_SECRET_KEY", "test-secret-key")
+	t.Setenv("SYFTBOX_BLOB_USE_ACCELERATE", "1")
 	// auth
 	t.Setenv("SYFTBOX_AUTH_ENABLED", "true")
 	t.Setenv("SYFTBOX_AUTH_TOKEN_ISSUER", "http://0.0.0.0:8080")
@@ -50,6 +51,7 @@ func TestLoadConfigEnv(t *testing.T) {
 	assert.Equal(t, cfg.Blob.Endpoint, "http://test-endpoint")
 	assert.Equal(t, cfg.Blob.AccessKey, "test-access-key")
 	assert.Equal(t, cfg.Blob.SecretKey, "test-secret-key")
+	assert.Equal(t, cfg.Blob.UseAccelerate, true)
 	assert.Equal(t, cfg.Auth.Enabled, true)
 	assert.Equal(t, cfg.Auth.TokenIssuer, "http://0.0.0.0:8080")
 	assert.Equal(t, cfg.Auth.EmailAddr, "test@example.com")
@@ -75,6 +77,7 @@ blob:
   endpoint: http://test-endpoint
   access_key: test-access-key
   secret_key: test-secret-key
+  use_accelerate: true
 
 auth:
   enabled: true
@@ -114,6 +117,7 @@ email:
 	assert.Equal(t, cfg.Blob.Endpoint, "http://test-endpoint")
 	assert.Equal(t, cfg.Blob.AccessKey, "test-access-key")
 	assert.Equal(t, cfg.Blob.SecretKey, "test-secret-key")
+	assert.Equal(t, cfg.Blob.UseAccelerate, true)
 	assert.Equal(t, cfg.Auth.Enabled, true)
 	assert.Equal(t, cfg.Auth.TokenIssuer, "http://0.0.0.0:8080")
 	assert.Equal(t, cfg.Auth.EmailAddr, "test@example.com")
@@ -181,6 +185,7 @@ func TestLoadConfigJSON(t *testing.T) {
 	assert.Equal(t, cfg.Blob.Endpoint, "") // no endpoint in json
 	assert.Equal(t, cfg.Blob.AccessKey, "test-another-access-key")
 	assert.Equal(t, cfg.Blob.SecretKey, "test-another-secret-key")
+	assert.Equal(t, cfg.Blob.UseAccelerate, false)
 	assert.Equal(t, cfg.Auth.Enabled, true)
 	assert.Equal(t, cfg.Auth.TokenIssuer, "http://0.0.0.0:8080")
 	assert.Equal(t, cfg.Auth.EmailAddr, "test@example.com")
