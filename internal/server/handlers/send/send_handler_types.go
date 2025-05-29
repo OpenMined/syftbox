@@ -42,9 +42,10 @@ type PollInfo struct {
 
 type JSONHeaders map[string]string
 
-func (h *JSONHeaders) UnmarshalText(text []byte) error {
+// UnmarshalParam implements gin.ParamUnmarshaler for automatic header binding
+func (h *JSONHeaders) UnmarshalParam(param string) error {
 	var headers map[string]string
-	if err := json.Unmarshal(text, &headers); err != nil {
+	if err := json.Unmarshal([]byte(param), &headers); err != nil {
 		return fmt.Errorf("invalid JSON in headers: %v", err)
 	}
 	*h = JSONHeaders(headers)
@@ -53,7 +54,7 @@ func (h *JSONHeaders) UnmarshalText(text []byte) error {
 
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
-	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
+	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"` // Binds to the syft url using UnmarshalParam
 	From    string           `form:"x-syft-from" binding:"required"`
 	Headers JSONHeaders      `header:"x-syft-headers"`
 	Timeout int              `form:"timeout" binding:"gte=0"`
