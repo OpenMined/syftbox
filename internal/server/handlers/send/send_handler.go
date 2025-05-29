@@ -26,6 +26,17 @@ func New(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
 // SendMsg handles sending a message
 func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	var req MessageRequest
+
+	// Bind query parameters
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:   ErrorInvalidRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Bind headers
 	if err := ctx.ShouldBindHeader(&req); err != nil {
 		ctx.PureJSON(http.StatusBadRequest, APIError{
 			Error:   ErrorInvalidRequest,

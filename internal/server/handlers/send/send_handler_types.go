@@ -1,5 +1,12 @@
 package send
 
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/openmined/syftbox/internal/utils"
+)
+
 type PollStatus string
 
 const (
@@ -33,15 +40,24 @@ type PollInfo struct {
 	PollURL string `json:"poll_url"`
 }
 
+type JSONHeaders map[string]string
+
+func (h *JSONHeaders) UnmarshalText(text []byte) error {
+	var headers map[string]string
+	if err := json.Unmarshal(text, &headers); err != nil {
+		return fmt.Errorf("invalid JSON in headers: %v", err)
+	}
+	*h = JSONHeaders(headers)
+	return nil
+}
+
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
-	From    string            `header:"x-syft-from" binding:"required"`
-	To      string            `header:"x-syft-to" binding:"required"`
-	AppName string            `header:"x-syft-app" binding:"required"`
-	AppEp   string            `header:"x-syft-appep" binding:"required"`
-	Headers map[string]string `header:"x-syft-headers"`
-	Status  int               `header:"x-syft-status"`
-	Timeout int               `form:"timeout" header:"x-syft-timeout" binding:"gte=0"`
+	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
+	From    string           `form:"x-syft-from" binding:"required"`
+	Headers JSONHeaders      `header:"x-syft-headers"`
+	Timeout int              `form:"timeout" binding:"gte=0"`
+	Method  string           `form:"method" binding:"required"`
 }
 
 // PollObjectRequest represents the request for polling

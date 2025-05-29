@@ -53,13 +53,10 @@ func NewSendService(hub *ws.WebsocketHub, blob *blob.BlobService, cfg *Config) *
 func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error) {
 	msg := syftmsg.NewHttpMsg(
 		req.From,
-		req.To,
-		req.AppName,
-		req.AppEp,
-		"POST", // TODO: Make this configurable
+		req.SyftURL,
+		req.Method,
 		bodyBytes,
 		req.Headers,
-		req.Status,
 		syftmsg.HttpMsgTypeRequest,
 	)
 
@@ -68,7 +65,7 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 	// TODO: Check if user has permission to send message to this application
 
 	// Try sending via websocket first
-	if ok := s.hub.SendMessageUser(req.To, msg); !ok {
+	if ok := s.hub.SendMessageUser(req.SyftURL.Datasite, msg); !ok {
 		return s.handleOfflineMessage(ctx, req, httpMsg)
 	}
 
@@ -78,11 +75,11 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 // handleOfflineMessage handles sending a message when the user is offline
 func (s *SendService) handleOfflineMessage(ctx context.Context, req *MessageRequest, httpMsg *syftmsg.HttpMsg) (*SendResult, error) {
 	blobPath := path.Join(
-		req.To,
+		req.SyftURL.Datasite,
 		"app_data",
-		req.AppName,
+		req.SyftURL.AppName,
 		"rpc",
-		req.AppEp,
+		req.SyftURL.Endpoint,
 		fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
 	)
 
@@ -117,11 +114,11 @@ func (s *SendService) handleOfflineMessage(ctx context.Context, req *MessageRequ
 // handleOnlineMessage handles sending a message when the user is online
 func (s *SendService) handleOnlineMessage(ctx context.Context, req *MessageRequest, httpMsg *syftmsg.HttpMsg) (*SendResult, error) {
 	blobPath := path.Join(
-		req.To,
+		req.SyftURL.Datasite,
 		"app_data",
-		req.AppName,
+		req.SyftURL.AppName,
 		"rpc",
-		req.AppEp,
+		req.SyftURL.Endpoint,
 		fmt.Sprintf("%s.response", httpMsg.Id),
 	)
 
