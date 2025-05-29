@@ -76,6 +76,8 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 		{
 			v1App.GET("/", appH.List)
 			v1App.GET("/:appName", appH.Get)
+			v1App.POST("/:appName/start", appH.Start)
+			v1App.POST("/:appName/stop", appH.Stop)
 			v1App.POST("/", appH.Install)
 			v1App.DELETE("/:appName", appH.Uninstall)
 		}

@@ -1,20 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/openmined/syftbox/internal/client/apps"
-	"github.com/openmined/syftbox/internal/client/datasite"
+	"github.com/openmined/syftbox/internal/client/appsv2"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
-	psnet "github.com/shirou/gopsutil/v4/net"
-	"github.com/shirou/gopsutil/v4/process"
 )
 
 const (
@@ -22,6 +16,10 @@ const (
 	ErrCodeGetFailed       = "ERR_GET_FAILED"
 	ErrCodeInstallFailed   = "ERR_INSTALL_FAILED"
 	ErrCodeUninstallFailed = "ERR_UNINSTALL_FAILED"
+	ErrCodeStartFailed     = "ERR_START_FAILED"
+	ErrCodeStopFailed      = "ERR_STOP_FAILED"
+	ErrAlreadyStopped      = "ERR_ALREADY_STOPPED"
+	ErrAlreadyRunning      = "ERR_ALREADY_RUNNING"
 )
 
 type AppHandler struct {
@@ -52,26 +50,25 @@ func NewAppHandler(mgr *datasitemgr.DatasiteManager) *AppHandler {
 func (h *AppHandler) List(c *gin.Context) {
 	ds, err := h.mgr.Get()
 	if err != nil {
-		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
-			ErrorCode: ErrCodeDatasiteNotReady,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, err)
 		return
 	}
 
-	appNames, err := ds.GetAppManager().ListApps()
-	if err != nil {
-		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
-			ErrorCode: ErrCodeListFailed,
-			Error:     err.Error(),
-		})
-		return
-	}
+	runningApps := ds.GetAppScheduler().ListRunningApps()
 
-	apps := enrichApps(ds, appNames)
+	appResponses := make([]*AppResponse, 0)
+	for _, app := range runningApps {
+		appResponse, err := NewAppResponse(app, false)
+		if err != nil {
+			// just record this error for logging
+			c.Error(fmt.Errorf("failed to get app response: %s %w", app.ID, err))
+			continue
+		}
+		appResponses = append(appResponses, appResponse)
+	}
 
 	c.PureJSON(http.StatusOK, &AppListResponse{
-		Apps: apps,
+		Apps: appResponses,
 	})
 }
 
@@ -98,23 +95,22 @@ func (h *AppHandler) Get(c *gin.Context) {
 
 	ds, err := h.mgr.Get()
 	if err != nil {
-		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
-			ErrorCode: ErrCodeDatasiteNotReady,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, err)
 		return
 	}
 
-	app, err := enrichApp(ds, appName, processStats)
+	app, err := ds.GetAppScheduler().GetApp(appName)
 	if err != nil {
-		c.PureJSON(http.StatusNotFound, &ControlPlaneError{
-			ErrorCode: ErrCodeGetFailed,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusNotFound, ErrCodeGetFailed, err)
 		return
 	}
 
-	c.PureJSON(http.StatusOK, &app)
+	appResponse, err := NewAppResponse(app, processStats)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeGetFailed, err)
+		return
+	}
+	c.PureJSON(http.StatusOK, &appResponse)
 }
 
 // Install an app
@@ -137,45 +133,35 @@ func (h *AppHandler) Get(c *gin.Context) {
 func (h *AppHandler) Install(c *gin.Context) {
 	var req AppInstallRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
-			ErrorCode: ErrCodeBadRequest,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusBadRequest, ErrCodeBadRequest, err)
 		return
 	}
 
 	ds, err := h.mgr.Get()
 	if err != nil {
-		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
-			ErrorCode: ErrCodeDatasiteNotReady,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, err)
 		return
 	}
 
-	repoOpts := apps.RepoOpts{
+	app, err := ds.GetAppManager().InstallApp(c.Request.Context(), appsv2.AppInstallOpts{
+		URI:    req.RepoURL,
 		Branch: req.Branch,
 		Tag:    req.Tag,
 		Commit: req.Commit,
-	}
-	app, err := ds.GetAppManager().InstallRepo(req.RepoURL, &repoOpts, req.Force)
+		Force:  req.Force,
+	})
 	if err != nil {
-		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
-			ErrorCode: ErrCodeInstallFailed,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeInstallFailed, err)
 		return
 	}
 
-	result, err := enrichApp(ds, app.Name, false)
-	if err != nil {
-		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
-			ErrorCode: ErrCodeInstallFailed,
-			Error:     err.Error(),
-		})
-		return
-	}
-	c.PureJSON(http.StatusOK, &result)
+	c.PureJSON(http.StatusOK, &AppResponse{
+		Name:   app.ID,
+		Path:   app.Path,
+		Status: appsv2.StatusNew,
+		PID:    -1,
+		Ports:  []uint32{},
+	})
 }
 
 // Uninstall an app
@@ -199,262 +185,117 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 
 	ds, err := h.mgr.Get()
 	if err != nil {
-		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
-			ErrorCode: ErrCodeDatasiteNotReady,
-			Error:     err.Error(),
-		})
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, err)
 		return
 	}
 
-	if err := ds.GetAppManager().UninstallApp(appName); err != nil {
-		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
-			ErrorCode: ErrCodeUninstallFailed,
-			Error:     err.Error(),
-		})
+	if _, err := ds.GetAppManager().UninstallApp(appName); err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUninstallFailed, err)
 		return
 	}
 
 	c.PureJSON(http.StatusNoContent, nil)
 }
 
-// TODO everything below is a temporary hack/workaround
-// Ideally we would get these data directly from the app manager / app.go
+// Start an app
+//
+//	@Summary		Start app
+//	@Description	Start an app
+//	@Tags			Apps
+//	@Produce		json
+//	@Param			appName	path		string	true	"App name"
+//	@Success		200		{object}	AppResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/apps/{appName}/start [post]
+func (h *AppHandler) Start(c *gin.Context) {
+	appName := c.Param("appName")
 
-func enrichApps(ds *datasite.Datasite, apps []string) []AppResponse {
-	result := make([]AppResponse, len(apps))
-	for i, app := range apps {
-		app, err := enrichApp(ds, app, false)
-		if err != nil {
-			continue
-		}
-		result[i] = app
+	ds, err := h.mgr.Get()
+	if err != nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, err)
+		return
 	}
-	return result
+
+	scheduler := ds.GetAppScheduler()
+
+	app, err := scheduler.StartApp(appName)
+	if err != nil {
+		var status int
+		switch {
+		case errors.Is(err, appsv2.ErrAlreadyRunning):
+			status = http.StatusConflict
+		case errors.Is(err, appsv2.ErrAppNotFound):
+			status = http.StatusNotFound
+		default:
+			status = http.StatusInternalServerError
+		}
+		AbortWithError(c, status, ErrCodeStartFailed, err)
+		return
+	}
+
+	// give the app a chance to start
+	time.Sleep(1 * time.Second)
+
+	// turn into app response
+	appResponse, err := NewAppResponse(app, false)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeStartFailed, err)
+		return
+	}
+
+	c.PureJSON(http.StatusCreated, &appResponse)
 }
 
-func enrichApp(ds *datasite.Datasite, appName string, processStats bool) (AppResponse, error) {
-	absPathFromFsRoot := filepath.Join(ds.GetAppManager().AppsDir, appName)
-	relPathFromWorkspaceRoot, _ := filepath.Rel(ds.GetWorkspace().Root, absPathFromFsRoot)
-	absPath := filepath.Join("/", filepath.ToSlash(relPathFromWorkspaceRoot))
+// Stop an app
+//
+//	@Summary		Stop app
+//	@Description	Stop an app
+//	@Tags			Apps
+//	@Produce		json
+//	@Param			appName	path		string	true	"App name"
+//	@Success		200		{object}	AppResponse
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		409		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/apps/{appName}/stop [post]
+func (h *AppHandler) Stop(c *gin.Context) {
+	appName := c.Param("appName")
 
-	process, err := findProcess(ds, appName)
+	ds, err := h.mgr.Get()
 	if err != nil {
-		return AppResponse{}, err
-	}
-	if process == nil {
-		return AppResponse{
-			Name:   appName,
-			Path:   absPath,
-			Status: AppStatusStopped,
-		}, nil
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, err)
+		return
 	}
 
-	app := AppResponse{
-		Name:   appName,
-		Path:   absPath,
-		Status: AppStatusRunning,
-		PID:    process.Pid,
-		Ports:  getListenPorts(process),
-	}
+	scheduler := ds.GetAppScheduler()
 
-	if processStats {
-		stats, err := getProcessStats(process)
-		if err != nil {
-			return app, nil
+	app, err := scheduler.StopApp(appName)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, appsv2.ErrNotRunning) {
+			status = http.StatusConflict
 		}
-		app.ProcessStats = &stats
+		AbortWithError(c, status, ErrCodeStopFailed, err)
+		return
 	}
 
-	return app, nil
-}
+	info := app.Info()
 
-func findProcess(ds *datasite.Datasite, appName string) (*process.Process, error) {
-	appPath := filepath.Join(ds.GetAppManager().AppsDir, appName)
-	runScriptPath, err := apps.GetRunScript(appPath)
-	if err != nil {
-		return nil, fmt.Errorf("app not found")
-	}
-	currentPid := os.Getpid()
-	processes, err := process.Processes()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get processes: %w", err)
-	}
-	// recursively print all child processes of currentPid
-	for _, p := range processes {
-		ppid, err := p.Ppid()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get ppid: %w", err)
-		}
-		if ppid != int32(currentPid) {
-			continue
-		}
-		cmdline, err := p.Cmdline()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get cmdline: %w", err)
-		}
-		if strings.Contains(cmdline, runScriptPath) {
-			return p, nil
-		}
-	}
-	return nil, nil
-}
-
-func getListenPorts(process *process.Process) []uint32 {
-	ports := make([]uint32, 0)
-
-	// Recursively travel down the process tree and return the port of all connections that is not 0
-	connections, _ := process.Connections()
-	for _, connection := range connections {
-		if connection.Laddr.Port != 0 && connection.Status == "LISTEN" {
-			ports = append(ports, connection.Laddr.Port)
-		}
-	}
-	children, _ := process.Children()
-	for _, child := range children {
-		childPorts := getListenPorts(child)
-		ports = append(ports, childPorts...)
-	}
-
-	slices.Sort(ports)
-	ports = slices.Compact(ports)
-	return ports
-}
-
-func getProcessStats(p *process.Process) (ProcessStats, error) {
-	// Get process name
-	processName, err := p.Name()
-	if err != nil {
-		return ProcessStats{}, fmt.Errorf("failed to get process name: %w", err)
-	}
-
-	status, err := p.Status()
-	if err != nil {
-		status = []string{}
-	}
-
-	// Get command line
-	cmdline, err := p.CmdlineSlice()
-	if err != nil {
-		cmdline = []string{} // Empty slice if we can't get cmdline
-	}
-
-	// Get working directory
-	cwd, err := p.Cwd()
-	if err != nil {
-		cwd = "" // Empty string if we can't get cwd
-	}
-
-	// Get environment variables
-	environ, err := p.Environ()
-	if err != nil {
-		environ = []string{} // Empty slice if we can't get environ
-	}
-
-	// Get executable path
-	exe, err := p.Exe()
-	if err != nil {
-		exe = "" // Empty string if we can't get exe
-	}
-
-	// Get group IDs
-	gids, err := p.Gids()
-	if err != nil {
-		gids = []uint32{} // Empty slice if we can't get gids
-	}
-
-	// Get user IDs
-	uids, err := p.Uids()
-	if err != nil {
-		uids = []uint32{} // Empty slice if we can't get uids
-	}
-
-	// Get nice value
-	nice, err := p.Nice()
-	if err != nil {
-		nice = 0 // Default nice value if we can't get it
-	}
-
-	// Get username
-	username, err := p.Username()
-	if err != nil {
-		username = "" // Empty string if we can't get username
-	}
-
-	// Get connections
-	connections, err := p.Connections()
-	if err != nil || len(connections) == 0 {
-		connections = []psnet.ConnectionStat{}
-	}
-
-	cpuPercent, err := p.CPUPercent()
-	if err != nil {
-		cpuPercent = 0
-	}
-
-	// Get CPU times
-	cpuTimes, err := p.Times()
-	if err != nil {
-		cpuTimes = nil // Nil if we can't get CPU times
-	}
-
-	// Get number of threads
-	numThreads, err := p.NumThreads()
-	if err != nil {
-		numThreads = 0 // Default to 0 if we can't get num threads
-	}
-
-	memoryPercent, err := p.MemoryPercent()
-	if err != nil {
-		memoryPercent = 0
-	}
-
-	// Get memory info
-	memoryInfo, err := p.MemoryInfo()
-	if err != nil {
-		memoryInfo = nil // Nil if we can't get memory info
-	}
-
-	createTime, err := p.CreateTime()
-	var uptime int64
-	if err != nil {
-		uptime = 0
-	} else {
-		now := time.Now().UnixMilli()
-		uptime = now - createTime
-	}
-
-	childProcesses, err := p.Children()
-	if err != nil {
-		childProcesses = []*process.Process{}
-	}
-	children := make([]ProcessStats, len(childProcesses))
-	for i, child := range childProcesses {
-		childStats, err := getProcessStats(child)
-		if err != nil {
-			continue
-		}
-		children[i] = childStats
-	}
-
-	return ProcessStats{
-		ProcessName:   processName,
-		PID:           p.Pid,
-		Status:        status,
-		Cmdline:       cmdline,
-		CWD:           cwd,
-		Environ:       environ,
-		Exe:           exe,
-		Gids:          gids,
-		Uids:          uids,
-		Nice:          nice,
-		Username:      username,
-		Connections:   connections,
-		CPUPercent:    cpuPercent,
-		CPUTimes:      cpuTimes,
-		NumThreads:    numThreads,
-		MemoryPercent: memoryPercent,
-		MemoryInfo:    memoryInfo,
-		Uptime:        uptime,
-		Children:      children,
-	}, nil
+	c.PureJSON(http.StatusOK, &AppResponse{
+		ID:     info.ID,
+		Name:   info.Name,
+		Path:   info.Path,
+		Info:   info,
+		Status: app.GetStatus(),
+	})
 }

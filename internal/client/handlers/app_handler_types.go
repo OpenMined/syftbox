@@ -2,11 +2,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
-	"github.com/shirou/gopsutil/v4/cpu"
-	psnet "github.com/shirou/gopsutil/v4/net"
-	"github.com/shirou/gopsutil/v4/process"
+	"github.com/openmined/syftbox/internal/client/appsv2"
 )
 
 // AppInstallRequest represents the request to install an app.
@@ -18,26 +17,62 @@ type AppInstallRequest struct {
 	Force   bool   `json:"force"`                      // force install
 }
 
-type AppStatus string
-
-const (
-	AppStatusRunning AppStatus = "running"
-	AppStatusStopped AppStatus = "stopped"
-)
-
 type AppResponse struct {
-	// Unique name of the app
+	// Unique ID of the app [deprecated]
+	ID string `json:"id"`
+	// name of the app [deprecated]
 	Name string `json:"name"`
-	// Absolute path to the app from the workspace root
+	// Absolute path to the app from the workspace root [deprecated]
 	Path string `json:"path"`
+	// Info about the app
+	Info *appsv2.AppInfo `json:"info"`
 	// Status of the app
-	Status AppStatus `json:"status"`
+	Status appsv2.AppProcessStatus `json:"status"`
 	// Process ID of the app's run.sh
-	PID int32 `json:"pid"`
+	PID int32 `json:"pid,omitempty"`
 	// List of ports this app is listening on
-	Ports []uint32 `json:"ports"`
+	Ports []uint32 `json:"ports,omitempty"`
 	// Extended process statistics (optional)
-	ProcessStats *ProcessStats `json:"processStats,omitempty"`
+	ProcessStats *appsv2.ProcessStats `json:"processStats,omitempty"`
+}
+
+func NewAppResponse(app *appsv2.App, processStats bool) (*AppResponse, error) {
+	appInfo := app.Info()
+	appState := app.GetStatus()
+	appProc := app.Process()
+
+	// if not running, return a basic response
+	if appState != appsv2.StatusRunning {
+		return &AppResponse{
+			Info:   appInfo,
+			ID:     appInfo.ID,
+			Name:   appInfo.ID,
+			Path:   appInfo.Path,
+			Status: appState,
+		}, nil
+	}
+
+	// if running, return a full response
+	appResp := &AppResponse{
+		Info:   appInfo,
+		ID:     appInfo.ID,
+		Name:   appInfo.ID,
+		Path:   appInfo.Path,
+		Status: appState,
+		PID:    appProc.Pid,
+		Ports:  appsv2.ProcessListenPorts(appProc),
+	}
+
+	if processStats {
+		stats, err := appsv2.NewProcessStats(appProc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get process stats: %w", err)
+		} else {
+			appResp.ProcessStats = stats
+		}
+	}
+
+	return appResp, nil
 }
 
 // MarshalJSON implements json.Marshaler interface for AppResponse
@@ -70,46 +105,5 @@ func (a *AppResponse) UnmarshalJSON(data []byte) error {
 
 // AppListResponse represents the response to list all installed apps.
 type AppListResponse struct {
-	Apps []AppResponse `json:"apps"` // list of installed apps
-}
-
-type ProcessStats struct {
-	// Process Name
-	ProcessName string `json:"processName"`
-	// Process ID
-	PID int32 `json:"pid"`
-	// Status of the process
-	Status []string `json:"status"`
-	// Command line arguments for this app's process
-	Cmdline []string `json:"cmdline"`
-	// Current working directory of this app's process
-	CWD string `json:"cwd"`
-	// Environment variables for this app's process
-	Environ []string `json:"environ"`
-	// Executable path of this app's process
-	Exe string `json:"exe"`
-	// List of groups this app is a member of
-	Gids []uint32 `json:"gids"`
-	// List of user IDs this app is a member of
-	Uids []uint32 `json:"uids"`
-	// Nice value of this app's process
-	Nice int32 `json:"nice"`
-	// Username of the user this app is running as
-	Username string `json:"username"`
-	// All connections this app is listening on
-	Connections []psnet.ConnectionStat `json:"connections"`
-	// Percentage of total CPU this app is using
-	CPUPercent float64 `json:"cpuPercent"`
-	// CPU times breakdown
-	CPUTimes *cpu.TimesStat `json:"cpuTimes"`
-	// Number of threads this app is using
-	NumThreads int32 `json:"numThreads"`
-	// Percentage of total RAM this app is using
-	MemoryPercent float32 `json:"memoryPercent"`
-	// Memory info
-	MemoryInfo *process.MemoryInfoStat `json:"memoryInfo"`
-	// How long the app has been running in milliseconds
-	Uptime int64 `json:"uptime"`
-	// Children processes
-	Children []ProcessStats `json:"children"`
+	Apps []*AppResponse `json:"apps"` // list of installed apps
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/appsv2"
 	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/client/sync"
 	"github.com/openmined/syftbox/internal/client/workspace"
@@ -19,8 +19,8 @@ type Datasite struct {
 	config       *config.Config
 	sdk          *syftsdk.SyftSDK
 	workspace    *workspace.Workspace
-	appScheduler *apps.AppScheduler
-	appManager   *apps.AppManager
+	appScheduler *appsv2.AppScheduler
+	appManager   *appsv2.AppManager
 	sync         *sync.SyncManager
 }
 
@@ -44,8 +44,8 @@ func New(config *config.Config) (*Datasite, error) {
 		return nil, fmt.Errorf("sdk: %w", err)
 	}
 
-	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
-	appMgr := apps.NewManager(ws.AppsDir)
+	appMgr := appsv2.NewManager(ws.AppsDir, ws.MetadataDir)
+	appSched := appsv2.NewAppScheduler(appMgr, config.Path)
 
 	sync, err := sync.NewManager(ws, sdk)
 	if err != nil {
@@ -95,6 +95,7 @@ func (d *Datasite) Start(ctx context.Context) error {
 }
 
 func (d *Datasite) Stop() {
+	d.appScheduler.Stop()
 	d.sync.Stop()
 	d.sdk.Close()
 	d.workspace.Unlock()
@@ -113,11 +114,11 @@ func (d *Datasite) GetWorkspace() *workspace.Workspace {
 	return d.workspace
 }
 
-func (d *Datasite) GetAppScheduler() *apps.AppScheduler {
+func (d *Datasite) GetAppScheduler() *appsv2.AppScheduler {
 	return d.appScheduler
 }
 
-func (d *Datasite) GetAppManager() *apps.AppManager {
+func (d *Datasite) GetAppManager() *appsv2.AppManager {
 	return d.appManager
 }
 
