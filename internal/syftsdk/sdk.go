@@ -76,7 +76,7 @@ func (s *SyftSDK) Close() {
 // Authenticate sets the user authentication for API calls and events
 func (s *SyftSDK) Authenticate(ctx context.Context) error {
 	if isDevMode(s.config.BaseURL) {
-		slog.Debug("sdk dev mode, skipping auth")
+		slog.Warn("sdk is in DEV mode, skipping auth")
 		return nil
 	}
 
@@ -161,7 +161,8 @@ func (s *SyftSDK) setAccessToken(accessToken string) error {
 	}
 
 	// set access token
-	s.client.SetAuthToken("Bearer " + accessToken)
+	s.client.SetAuthScheme("Bearer")
+	s.client.SetAuthToken(accessToken)
 
 	slog.Debug("sdk update access token", "user", claims.Subject, "expiry", claims.ExpiresAt)
 	return nil

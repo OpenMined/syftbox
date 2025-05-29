@@ -27,21 +27,31 @@ func newLoginCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			var authToken *syftsdk.AuthTokenResponse
 			var email string
+			var note string
 
 			// fetched from main/rootCmd/persistentFlags
 			configPath := cmd.Flag("config").Value.String()
 
-			if cfg, err := readValidConfig(configPath, true); err == nil {
-				if !quiet {
-					fmt.Println(green.Render("**Already logged in**"))
-					logConfig(cfg)
-				}
-				os.Exit(0)
-			}
-
 			if err := utils.ValidateURL(serverURL); err != nil {
 				fmt.Printf("%s: %s\n", red.Render("ERROR"), err)
 				os.Exit(1)
+			}
+
+			if cfg, err := readValidConfig(configPath, true); err == nil {
+				// is valid configuration
+				loggedIn := true
+
+				// but check if requested server url is different
+				if cfg.ServerURL != serverURL {
+					loggedIn = false
+					note = fmt.Sprintf("[RELOGIN] Current config's server changed from '%s' to '%s'", cfg.ServerURL, serverURL)
+				}
+
+				if loggedIn && !quiet {
+					fmt.Println(green.Render("**Already logged in**"))
+					logConfig(cfg)
+					os.Exit(0)
+				}
 			}
 
 			onEmailSubmit := func(emailInput string) error {
@@ -80,6 +90,7 @@ func newLoginCmd() *cobra.Command {
 				ServerURL:          serverURL,
 				DataDir:            resolvedDataDir,
 				ConfigPath:         resolvedConfigPath,
+				Note:               note,
 				EmailSubmitHandler: onEmailSubmit,
 				OTPSubmitHandler:   onOTPSubmit,
 				EmailValidator:     utils.IsValidEmail,

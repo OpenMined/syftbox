@@ -49,6 +49,7 @@ type LoginTUIOpts struct {
 	ServerURL          string
 	DataDir            string
 	ConfigPath         string
+	Note               string // optional note to display to the user
 	EmailSubmitHandler func(email string) error
 	OTPSubmitHandler   func(email, otp string) error
 	EmailValidator     func(email string) bool
@@ -79,9 +80,7 @@ type emailProcessedMsg struct{ err error }
 type otpProcessedMsg struct{ err error }
 
 // newLoginModel creates the initial state of the application
-func newLoginModel(
-	opts *LoginTUIOpts,
-) loginModel {
+func newLoginModel(opts *LoginTUIOpts) loginModel {
 	email := textinput.New()
 	email.Placeholder = txtEmailPlaceholder
 	email.Focus()
@@ -292,7 +291,10 @@ func (m loginModel) View() string {
 	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Server  "), green.Render(m.opts.ServerURL)))
 	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Data    "), green.Render(m.opts.DataDir)))
 	b.WriteString(fmt.Sprintf("%s%s\n", gray.Render("Config  "), green.Render(m.opts.ConfigPath)))
-	b.WriteString("\n\n")
+	if m.opts.Note != "" {
+		b.WriteString(fmt.Sprintf("\n%s\n", yellow.Render(m.opts.Note)))
+	}
+	b.WriteString("\n")
 
 	// Render content based on current view
 	switch m.currentView {

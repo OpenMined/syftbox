@@ -5,6 +5,12 @@ BUILD_LD_FLAGS := "-s -w" + " -X github.com/openmined/syftbox/internal/version.V
 CLIENT_BUILD_TAGS := "go_json nomsgpack"
 SERVER_BUILD_TAGS := "sonic avx nomsgpack"
 
+_red := '\033[1;31m'
+_cyan := '\033[1;36m'
+_green := '\033[1;32m'
+_yellow := '\033[1;33m'
+_nc := '\033[0m'
+
 default:
     just --list
 
@@ -116,21 +122,24 @@ build-all:
     goreleaser release --snapshot --clean
 
 [group('deploy')]
-deploy-client:
+deploy-client remote="syftbox-yash": build-all
+    echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
     rm -rf releases && mkdir releases
     cp -r .out/syftbox_client_*.{tar.gz,zip} releases
-    ssh syftbox-yash "rm -rfv /home/azureuser/releases"
-    scp -r ./releases syftbox-yash:/home/azureuser/releases
+    ssh {{ remote }} "mkdir -p releases.new"
+    scp -r ./releases {{ remote }}:/home/azureuser/releases.new
+    ssh {{ remote }} "rm -rfv /home/azureuser/releases && mv -fv /home/azureuser/releases.new /home/azureuser/releases"
 
 [group('deploy')]
-deploy-server: build-server
-    ssh syftbox-yash "rm -fv /home/azureuser/syftbox_server"
-    scp .out/syftbox_server_linux_amd64_v1/syftbox_server syftbox-yash:/home/azureuser/syftbox_server
-    ssh syftbox-yash "sudo systemctl restart syftgo"
+deploy-server remote="syftbox-yash": build-server
+    echo "Deploying syftbox server to {{ _cyan }}{{ remote }}{{ _nc }}"
+    scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
+    ssh {{ remote }} "rm -fv /home/azureuser/syftbox_server && mv -fv /home/azureuser/syftbox_server_new /home/azureuser/syftbox_server"
+    ssh {{ remote }} "sudo systemctl restart syftbox"
 
 [group('deploy')]
-deploy: deploy-client deploy-server
-    echo "Done!"
+deploy remote="syftbox-yash": (deploy-client remote) (deploy-server remote)
+    echo "Deployed syftbox client & server to {{ _cyan }}{{ remote }}{{ _nc }}"
 
 [group('utils')]
 setup-toolchain:
