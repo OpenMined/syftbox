@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/openmined/syftbox/internal/client/apps"
+	"github.com/openmined/syftbox/internal/client/appsv2"
 	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
 )
@@ -45,7 +45,7 @@ func (h *LogsHandler) getLogFilePath(appName string) string {
 		return ""
 	}
 	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appName)
-	if !apps.IsValidApp(appPath) {
+	if !appsv2.IsValidApp(appPath) {
 		return ""
 	}
 	return filepath.Join(appPath, "logs", "stdout.log")

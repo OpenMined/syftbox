@@ -208,7 +208,6 @@ func (p *AppProcess) monitor() {
 
 	p.setStatusStopped()
 
-	slog.Debug("process monitor: exited", "id", p.ID, "pid", p.proc.Process.Pid, "err", err, "exitCode", exitCode)
 	if err != nil {
 		var sysErr *exec.ExitError
 		if errors.As(err, &sysErr) {
