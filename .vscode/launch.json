@@ -21,18 +21,6 @@
             "program": "${workspaceFolder}/cmd/client",
         },
         {
-            "name": "Launch Client - app ls",
-            "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "cwd": "${workspaceFolder}",
-            "program": "${workspaceFolder}/cmd/client",
-            "args": [
-                "app",
-                "ls"
-            ]
-        },
-        {
             "name": "Launch Client Daemon",
             "type": "go",
             "request": "launch",
@@ -41,6 +29,8 @@
             "program": "${workspaceFolder}/cmd/client",
             "args": [
                 "daemon",
+                "-t",
+                "token",
             ]
         },
         {
