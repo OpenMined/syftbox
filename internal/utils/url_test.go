@@ -13,9 +13,9 @@ func TestFromSyftURL(t *testing.T) {
 	}{
 		{
 			name: "valid basic url",
-			url:  "syft://datasite1/app_data/app1/rpc/endpoint1",
+			url:  "syft://user@example.com/app_data/app1/rpc/endpoint1",
 			want: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
 			},
@@ -23,12 +23,12 @@ func TestFromSyftURL(t *testing.T) {
 		},
 		{
 			name: "valid url with query params",
-			url:  "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value1&param2=value2",
+			url:  "syft://user@example.com/app_data/app1/rpc/endpoint1?param1=value1&param2=value2",
 			want: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
+				QueryParams: map[string]string{
 					"param1": "value1",
 					"param2": "value2",
 				},
@@ -37,19 +37,19 @@ func TestFromSyftURL(t *testing.T) {
 		},
 		{
 			name:    "invalid scheme",
-			url:     "http://datasite1/app_data/app1/rpc/endpoint1",
+			url:     "http://user@example.com/app_data/app1/rpc/endpoint1",
 			want:    nil,
 			wantErr: true,
 		},
 		{
 			name:    "missing app_data",
-			url:     "syft://datasite1/wrong/app1/rpc/endpoint1",
+			url:     "syft://user@example.com/wrong/app1/rpc/endpoint1",
 			want:    nil,
 			wantErr: true,
 		},
 		{
 			name:    "missing rpc",
-			url:     "syft://datasite1/app_data/app1/wrong/endpoint1",
+			url:     "syft://user@example.com/app_data/app1/wrong/endpoint1",
 			want:    nil,
 			wantErr: true,
 		},
@@ -62,6 +62,12 @@ func TestFromSyftURL(t *testing.T) {
 		{
 			name:    "malformed url",
 			url:     "syft:///invalid",
+			want:    nil,
+			wantErr: true,
+		},
+		{
+			name:    "invalid datasite format",
+			url:     "syft://notanemail/app_data/app1/rpc/endpoint1",
 			want:    nil,
 			wantErr: true,
 		},
@@ -84,10 +90,13 @@ func TestFromSyftURL(t *testing.T) {
 				if got.Endpoint != tt.want.Endpoint {
 					t.Errorf("FromSyftURL() Endpoint = %v, want %v", got.Endpoint, tt.want.Endpoint)
 				}
-				if tt.want.queryParams != nil {
-					for k, v := range tt.want.queryParams {
-						if gotVal, exists := got.queryParams[k]; !exists || gotVal != v {
-							t.Errorf("FromSyftURL() queryParams[%s] = %v, want %v", k, gotVal, v)
+				if len(tt.want.QueryParams) > 0 {
+					if len(got.QueryParams) != len(tt.want.QueryParams) {
+						t.Errorf("FromSyftURL() QueryParams length = %v, want %v", len(got.QueryParams), len(tt.want.QueryParams))
+					}
+					for k, v := range tt.want.QueryParams {
+						if gotVal, exists := got.QueryParams[k]; !exists || gotVal != v {
+							t.Errorf("FromSyftURL() QueryParams[%s] = %v, want %v", k, gotVal, v)
 						}
 					}
 				}
@@ -105,12 +114,12 @@ func TestFromSyftURL_QueryParamEncoding(t *testing.T) {
 	}{
 		{
 			name: "url with encoded spaces in query param values",
-			url:  "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value%20with%20spaces&param2=value2",
+			url:  "syft://test@example.com/app_data/app1/rpc/endpoint1?param1=value%20with%20spaces&param2=value2",
 			want: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "test@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
+				QueryParams: map[string]string{
 					"param1": "value with spaces",
 					"param2": "value2",
 				},
@@ -119,12 +128,12 @@ func TestFromSyftURL_QueryParamEncoding(t *testing.T) {
 		},
 		{
 			name: "url with encoded special chars in query param values",
-			url:  "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value%26with%26chars",
+			url:  "syft://test@example.com/app_data/app1/rpc/endpoint1?param1=value%26with%26chars",
 			want: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "test@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
+				QueryParams: map[string]string{
 					"param1": "value&with&chars",
 				},
 			},
@@ -132,25 +141,25 @@ func TestFromSyftURL_QueryParamEncoding(t *testing.T) {
 		},
 		{
 			name:    "url with spaces in query param keys",
-			url:     "syft://datasite1/app_data/app1/rpc/endpoint1?param with spaces=value1",
+			url:     "syft://test@example.com/app_data/app1/rpc/endpoint1?param with spaces=value1",
 			want:    nil,
 			wantErr: true,
 		},
 		{
 			name:    "url with special chars in query param keys",
-			url:     "syft://datasite1/app_data/app1/rpc/endpoint1?param%26with%26chars=value1",
+			url:     "syft://test@example.com/app_data/app1/rpc/endpoint1?param%26with%26chars=value1",
 			want:    nil,
 			wantErr: true,
 		},
 		{
 			name: "url with multiple values for same key",
-			url:  "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value1&param1=value2",
+			url:  "syft://test@example.com/app_data/app1/rpc/endpoint1?param1=value1&param1=value2",
 			want: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "test@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
-					"param1": "value1", // First value should be used
+				QueryParams: map[string]string{
+					"param1": "value1",
 				},
 			},
 			wantErr: false,
@@ -174,10 +183,13 @@ func TestFromSyftURL_QueryParamEncoding(t *testing.T) {
 				if got.Endpoint != tt.want.Endpoint {
 					t.Errorf("FromSyftURL() Endpoint = %v, want %v", got.Endpoint, tt.want.Endpoint)
 				}
-				if tt.want.queryParams != nil {
-					for k, v := range tt.want.queryParams {
-						if gotVal, exists := got.queryParams[k]; !exists || gotVal != v {
-							t.Errorf("FromSyftURL() queryParams[%s] = %v, want %v", k, gotVal, v)
+				if len(tt.want.QueryParams) > 0 {
+					if len(got.QueryParams) != len(tt.want.QueryParams) {
+						t.Errorf("FromSyftURL() QueryParams length = %v, want %v", len(got.QueryParams), len(tt.want.QueryParams))
+					}
+					for k, v := range tt.want.QueryParams {
+						if gotVal, exists := got.QueryParams[k]; !exists || gotVal != v {
+							t.Errorf("FromSyftURL() QueryParams[%s] = %v, want %v", k, gotVal, v)
 						}
 					}
 				}
@@ -195,48 +207,48 @@ func TestSyftBoxURL_String(t *testing.T) {
 		{
 			name: "basic url",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
 			},
-			want: "syft://datasite1/app_data/app1/rpc/endpoint1",
+			want: "syft://user@example.com/app_data/app1/rpc/endpoint1",
 		},
 		{
 			name: "url with query params",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
+				QueryParams: map[string]string{
 					"param1": "value1",
 					"param2": "value2",
 				},
 			},
-			want: "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value1&param2=value2",
+			want: "syft://user@example.com/app_data/app1/rpc/endpoint1?param1=value1&param2=value2",
 		},
 		{
 			name: "url with spaces in query param values",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
+				QueryParams: map[string]string{
 					"param1": "value with spaces",
 				},
 			},
-			want: "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value+with+spaces",
+			want: "syft://user@example.com/app_data/app1/rpc/endpoint1?param1=value+with+spaces",
 		},
 		{
 			name: "url with special chars in query param values",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
+				QueryParams: map[string]string{
 					"param1": "value&with&chars",
 				},
 			},
-			want: "syft://datasite1/app_data/app1/rpc/endpoint1?param1=value%26with%26chars",
+			want: "syft://user@example.com/app_data/app1/rpc/endpoint1?param1=value%26with%26chars",
 		},
 	}
 
@@ -258,20 +270,20 @@ func TestSyftBoxURL_ToLocalPath(t *testing.T) {
 		{
 			name: "basic path",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
 			},
-			want: "datasite1/app_data/app1/rpc/endpoint1",
+			want: "user@example.com/app_data/app1/rpc/endpoint1",
 		},
 		{
 			name: "path with nested endpoint",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1/sub/path",
 			},
-			want: "datasite1/app_data/app1/rpc/endpoint1/sub/path",
+			want: "user@example.com/app_data/app1/rpc/endpoint1/sub/path",
 		},
 	}
 
@@ -293,7 +305,7 @@ func TestSyftBoxURL_Validate(t *testing.T) {
 		{
 			name: "valid url",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
 			},
@@ -311,7 +323,7 @@ func TestSyftBoxURL_Validate(t *testing.T) {
 		{
 			name: "empty app name",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "",
 				Endpoint: "endpoint1",
 			},
@@ -320,7 +332,7 @@ func TestSyftBoxURL_Validate(t *testing.T) {
 		{
 			name: "empty endpoint",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "",
 			},
@@ -329,7 +341,7 @@ func TestSyftBoxURL_Validate(t *testing.T) {
 		{
 			name: "endpoint with spaces",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint with spaces",
 			},
@@ -338,9 +350,18 @@ func TestSyftBoxURL_Validate(t *testing.T) {
 		{
 			name: "endpoint with special chars",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint?with=chars",
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid datasite format",
+			url: &SyftBoxURL{
+				Datasite: "notanemail",
+				AppName:  "app1",
+				Endpoint: "endpoint1",
 			},
 			wantErr: true,
 		},
@@ -365,22 +386,23 @@ func TestSyftBoxURL_Validate(t *testing.T) {
 	}
 }
 
-func TestSyftBoxURL_QueryParams(t *testing.T) {
+func TestSyftBoxURL_SetQueryParams(t *testing.T) {
 	tests := []struct {
-		name string
-		url  *SyftBoxURL
-		want map[string]string
+		name        string
+		url         *SyftBoxURL
+		queryParams map[string]string
+		want        map[string]string
 	}{
 		{
-			name: "with query params",
+			name: "set query params",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
-				queryParams: map[string]string{
-					"param1": "value1",
-					"param2": "value2",
-				},
+			},
+			queryParams: map[string]string{
+				"param1": "value1",
+				"param2": "value2",
 			},
 			want: map[string]string{
 				"param1": "value1",
@@ -388,26 +410,27 @@ func TestSyftBoxURL_QueryParams(t *testing.T) {
 			},
 		},
 		{
-			name: "nil query params",
+			name: "set empty query params",
 			url: &SyftBoxURL{
-				Datasite: "datasite1",
+				Datasite: "user@example.com",
 				AppName:  "app1",
 				Endpoint: "endpoint1",
 			},
-			want: map[string]string{},
+			queryParams: map[string]string{},
+			want:        map[string]string{},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.url.QueryParams()
-			if len(got) != len(tt.want) {
-				t.Errorf("SyftBoxURL.QueryParams() length = %v, want %v", len(got), len(tt.want))
+			tt.url.SetQueryParams(tt.queryParams)
+			if len(tt.url.QueryParams) != len(tt.want) {
+				t.Errorf("SyftBoxURL.SetQueryParams() length = %v, want %v", len(tt.url.QueryParams), len(tt.want))
 				return
 			}
 			for k, v := range tt.want {
-				if gotVal, exists := got[k]; !exists || gotVal != v {
-					t.Errorf("SyftBoxURL.QueryParams()[%s] = %v, want %v", k, gotVal, v)
+				if gotVal, exists := tt.url.QueryParams[k]; !exists || gotVal != v {
+					t.Errorf("SyftBoxURL.SetQueryParams()[%s] = %v, want %v", k, gotVal, v)
 				}
 			}
 		})

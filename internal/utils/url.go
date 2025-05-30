@@ -21,7 +21,7 @@ type SyftBoxURL struct {
 	Datasite    string            `json:"datasite"`
 	AppName     string            `json:"app_name"`
 	Endpoint    string            `json:"endpoint"`
-	queryParams map[string]string // private field to store query params
+	QueryParams map[string]string `json:"query_params"`
 }
 
 // ValidationError represents a validation error with field context
@@ -34,34 +34,6 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error in field '%s': %s", e.Field, e.Message)
 }
 
-// QueryParams returns a copy of the query parameters
-func (s *SyftBoxURL) QueryParams() map[string]string {
-	if s.queryParams == nil {
-		return make(map[string]string)
-	}
-
-	// Return a copy to prevent external modification
-	result := make(map[string]string, len(s.queryParams))
-	for k, v := range s.queryParams {
-		result[k] = v
-	}
-	return result
-}
-
-// SetQueryParams sets the query parameters
-func (s *SyftBoxURL) SetQueryParams(params map[string]string) {
-	if params == nil {
-		s.queryParams = nil
-		return
-	}
-
-	// Create a copy to prevent external modification
-	s.queryParams = make(map[string]string, len(params))
-	for k, v := range params {
-		s.queryParams[k] = v
-	}
-}
-
 // String returns the string representation of the SyftBoxURL
 func (s *SyftBoxURL) String() string {
 	endpoint := strings.Trim(s.Endpoint, pathSeparator)
@@ -69,13 +41,12 @@ func (s *SyftBoxURL) String() string {
 		syftScheme, s.Datasite, appDataPath, s.AppName, rpcPath, endpoint)
 
 	// Add query parameters if they exist
-	if len(s.queryParams) > 0 {
-		params := make([]string, 0, len(s.queryParams))
-		for key, value := range s.queryParams {
-			params = append(params, fmt.Sprintf("%s=%s",
-				url.QueryEscape(key), url.QueryEscape(value)))
+	if len(s.QueryParams) > 0 {
+		queryParams := make([]string, 0, len(s.QueryParams))
+		for key, value := range s.QueryParams {
+			queryParams = append(queryParams, fmt.Sprintf("%s=%s", key, url.QueryEscape(value)))
 		}
-		baseURL += "?" + strings.Join(params, "&")
+		baseURL += "?" + strings.Join(queryParams, "&")
 	}
 
 	return baseURL
@@ -95,6 +66,15 @@ func (s *SyftBoxURL) Validate() error {
 			Message: "datasite cannot be empty",
 		}
 	}
+
+	// Validate datasite follows email pattern
+	if !IsValidEmail(s.Datasite) {
+		return &ValidationError{
+			Field:   "datasite",
+			Message: "datasite must be a valid email address",
+		}
+	}
+
 	if s.AppName == "" {
 		return &ValidationError{
 			Field:   "app_name",
@@ -144,6 +124,11 @@ func NewSyftBoxURL(datasite, appName, endpoint string) (*SyftBoxURL, error) {
 	}
 
 	return syftURL, nil
+}
+
+// SetQueryParams sets the query parameters
+func (s *SyftBoxURL) SetQueryParams(queryParams map[string]string) {
+	s.QueryParams = queryParams
 }
 
 // parseQueryParams parses and validates query parameters from a URL
@@ -231,14 +216,18 @@ func FromSyftURL(rawURL string) (*SyftBoxURL, error) {
 		return nil, fmt.Errorf("failed to create syft url from components: %w", err)
 	}
 
-	// Parse query parameters
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse query parameters: %w", err)
+	}
+
+	// Validate query params
 	queryParams, err := parseQueryParams(parsedURL.RawQuery)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse query parameters: %w", err)
 	}
-	if queryParams != nil {
-		syftURL.SetQueryParams(queryParams)
-	}
+
+	// Set query params
+	syftURL.SetQueryParams(queryParams)
 
 	return syftURL, nil
 }
