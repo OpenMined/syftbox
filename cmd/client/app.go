@@ -68,7 +68,7 @@ func newAppCmdInstall() *cobra.Command {
 	appCmdInstall.Flags().StringVarP(&tag, "tag", "", "", "Tag of the repo to install from")
 	appCmdInstall.Flags().StringVarP(&commit, "commit", "", "", "Commit hash of the repo to install from")
 	appCmdInstall.Flags().BoolVarP(&force, "force", "f", false, "Force install")
-	appCmdInstall.Flags().BoolVarP(&useGit, "use-git", "g", false, "Use git to install")
+	appCmdInstall.Flags().BoolVarP(&useGit, "use-git", "g", true, "Use git to install")
 
 	return appCmdInstall
 }

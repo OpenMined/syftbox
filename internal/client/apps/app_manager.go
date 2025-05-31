@@ -160,7 +160,7 @@ func (a *AppManager) installFromURL(ctx context.Context, opts AppInstallOpts) (*
 		return nil, err
 	}
 
-	if opts.UseGit {
+	if opts.UseGit && systemGitAvailable() {
 		if err := installFromGit(ctx, opts.URI, appDir, opts.Branch, opts.Tag, opts.Commit); err != nil {
 			return nil, fmt.Errorf("failed to install from git: %w", err)
 		}
