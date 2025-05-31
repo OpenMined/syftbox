@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openmined/syftbox/internal/client/appsv2"
+	"github.com/openmined/syftbox/internal/client/apps"
 )
 
 // AppInstallRequest represents the request to install an app.
@@ -25,24 +25,24 @@ type AppResponse struct {
 	// Absolute path to the app from the workspace root [deprecated]
 	Path string `json:"path"`
 	// Info about the app
-	Info *appsv2.AppInfo `json:"info"`
+	Info *apps.AppInfo `json:"info"`
 	// Status of the app
-	Status appsv2.AppProcessStatus `json:"status"`
+	Status apps.AppProcessStatus `json:"status"`
 	// Process ID of the app's run.sh
 	PID int32 `json:"pid,omitempty"`
 	// List of ports this app is listening on
 	Ports []uint32 `json:"ports,omitempty"`
 	// Extended process statistics (optional)
-	ProcessStats *appsv2.ProcessStats `json:"processStats,omitempty"`
+	ProcessStats *apps.ProcessStats `json:"processStats,omitempty"`
 }
 
-func NewAppResponse(app *appsv2.App, processStats bool) (*AppResponse, error) {
+func NewAppResponse(app *apps.App, processStats bool) (*AppResponse, error) {
 	appInfo := app.Info()
 	appState := app.GetStatus()
 	appProc := app.Process()
 
 	// if not running, return a basic response
-	if appState != appsv2.StatusRunning {
+	if appState != apps.StatusRunning {
 		return &AppResponse{
 			Info:   appInfo,
 			ID:     appInfo.ID,
@@ -60,11 +60,11 @@ func NewAppResponse(app *appsv2.App, processStats bool) (*AppResponse, error) {
 		Path:   appInfo.Path,
 		Status: appState,
 		PID:    appProc.Pid,
-		Ports:  appsv2.ProcessListenPorts(appProc),
+		Ports:  apps.ProcessListenPorts(appProc),
 	}
 
 	if processStats {
-		stats, err := appsv2.NewProcessStats(appProc)
+		stats, err := apps.NewProcessStats(appProc)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get process stats: %w", err)
 		} else {

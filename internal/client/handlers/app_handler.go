@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/openmined/syftbox/internal/client/appsv2"
+	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
 )
 
@@ -143,7 +143,7 @@ func (h *AppHandler) Install(c *gin.Context) {
 		return
 	}
 
-	app, err := ds.GetAppManager().InstallApp(c.Request.Context(), appsv2.AppInstallOpts{
+	app, err := ds.GetAppManager().InstallApp(c.Request.Context(), apps.AppInstallOpts{
 		URI:    req.RepoURL,
 		Branch: req.Branch,
 		Tag:    req.Tag,
@@ -158,7 +158,7 @@ func (h *AppHandler) Install(c *gin.Context) {
 	c.PureJSON(http.StatusOK, &AppResponse{
 		Name:   app.ID,
 		Path:   app.Path,
-		Status: appsv2.StatusNew,
+		Status: apps.StatusNew,
 		PID:    -1,
 		Ports:  []uint32{},
 	})
@@ -228,9 +228,9 @@ func (h *AppHandler) Start(c *gin.Context) {
 	if err != nil {
 		var status int
 		switch {
-		case errors.Is(err, appsv2.ErrAlreadyRunning):
+		case errors.Is(err, apps.ErrAlreadyRunning):
 			status = http.StatusConflict
-		case errors.Is(err, appsv2.ErrAppNotFound):
+		case errors.Is(err, apps.ErrAppNotFound):
 			status = http.StatusNotFound
 		default:
 			status = http.StatusInternalServerError
@@ -282,7 +282,7 @@ func (h *AppHandler) Stop(c *gin.Context) {
 	app, err := scheduler.StopApp(appName)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, appsv2.ErrNotRunning) {
+		if errors.Is(err, apps.ErrNotRunning) {
 			status = http.StatusConflict
 		}
 		AbortWithError(c, status, ErrCodeStopFailed, err)

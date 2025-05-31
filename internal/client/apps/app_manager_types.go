@@ -1,4 +1,4 @@
-package appsv2
+package apps
 
 // AppInstallOpts contains options for repository installation
 type AppInstallOpts struct {
