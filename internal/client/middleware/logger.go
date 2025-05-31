@@ -16,6 +16,7 @@ func Logger() gin.HandlerFunc {
 				"status", c.Writer.Status(),
 				"path", c.Request.URL.Path,
 				"query", c.Request.URL.RawQuery,
+				"errors", c.Errors.String(),
 			)
 		}
 	}
