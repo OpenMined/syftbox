@@ -19,8 +19,20 @@ type ProcessStats struct {
 	Status []string `json:"status"`
 	// Command line arguments for this app's process
 	Cmdline []string `json:"cmdline"`
+	// Current working directory of this app's process
+	CWD string `json:"cwd"`
 	// Environment variables for this app's process
 	Environ []string `json:"environ"`
+	// Executable path of this app's process
+	Exe string `json:"exe"`
+	// List of groups this app is a member of
+	Gids []uint32 `json:"gids"`
+	// List of user IDs this app is a member of
+	Uids []uint32 `json:"uids"`
+	// Nice value of this app's process
+	Nice int32 `json:"nice"`
+	// Username of the user this app is running as
+	Username string `json:"username"`
 	// All connections this app is listening on
 	Connections []net.ConnectionStat `json:"connections"`
 	// Percentage of total CPU this app is using
@@ -57,10 +69,46 @@ func NewProcessStats(p *process.Process) (*ProcessStats, error) {
 		cmdline = []string{} // Empty slice if we can't get cmdline
 	}
 
+	// Get working directory
+	cwd, err := p.Cwd()
+	if err != nil {
+		cwd = "" // Empty string if we can't get cwd
+	}
+
 	// Get environment variables
 	environ, err := p.Environ()
 	if err != nil {
 		environ = []string{} // Empty slice if we can't get environ
+	}
+
+	// Get executable path
+	exe, err := p.Exe()
+	if err != nil {
+		exe = "" // Empty string if we can't get exe
+	}
+
+	// Get group IDs
+	gids, err := p.Gids()
+	if err != nil {
+		gids = []uint32{} // Empty slice if we can't get gids
+	}
+
+	// Get user IDs
+	uids, err := p.Uids()
+	if err != nil {
+		uids = []uint32{} // Empty slice if we can't get uids
+	}
+
+	// Get nice value
+	nice, err := p.Nice()
+	if err != nil {
+		nice = 0 // Default nice value if we can't get it
+	}
+
+	// Get username
+	username, err := p.Username()
+	if err != nil {
+		username = "" // Empty string if we can't get username
 	}
 
 	// Get connections
@@ -97,8 +145,8 @@ func NewProcessStats(p *process.Process) (*ProcessStats, error) {
 		memoryInfo = nil // Nil if we can't get memory info
 	}
 
-	var uptime int64
 	createTime, err := p.CreateTime()
+	var uptime int64
 	if err != nil {
 		uptime = 0
 	} else {
@@ -124,7 +172,13 @@ func NewProcessStats(p *process.Process) (*ProcessStats, error) {
 		PID:           p.Pid,
 		Status:        status,
 		Cmdline:       cmdline,
+		CWD:           cwd,
 		Environ:       environ,
+		Exe:           exe,
+		Gids:          gids,
+		Uids:          uids,
+		Nice:          nice,
+		Username:      username,
 		Connections:   connections,
 		CPUPercent:    cpuPercent,
 		CPUTimes:      cpuTimes,
