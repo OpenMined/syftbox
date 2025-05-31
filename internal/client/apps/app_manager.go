@@ -18,6 +18,10 @@ const (
 	appInfoFileName = ".syftboxapp.json"
 )
 
+var (
+	ErrInvalidApp = errors.New("not a valid syftbox app")
+)
+
 // AppManager handles app installation, uninstallation, and listing operations
 type AppManager struct {
 	AppsDir string // Directory where apps are stored
@@ -171,6 +175,14 @@ func (a *AppManager) installFromURL(ctx context.Context, opts AppInstallOpts) (*
 		}
 	}
 
+	// if not a valid app, return an error
+	if !IsValidApp(appDir) {
+		if err := os.RemoveAll(appDir); err != nil {
+			return nil, fmt.Errorf("failed to remove app: %w", err)
+		}
+		return nil, ErrInvalidApp
+	}
+
 	appInfo := &AppInfo{
 		ID:          appID,
 		Name:        appName,
@@ -198,7 +210,7 @@ func (a *AppManager) installFromPath(_ context.Context, opts AppInstallOpts) (*A
 	}
 
 	if !IsValidApp(fullPath) {
-		return nil, fmt.Errorf("invalid app: %s. missing run.sh", fullPath)
+		return nil, ErrInvalidApp
 	}
 
 	// create a symlink from opts.Path to the apps directory
