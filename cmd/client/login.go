@@ -47,9 +47,11 @@ func newLoginCmd() *cobra.Command {
 					note = fmt.Sprintf("[RELOGIN] Current config's server changed from '%s' to '%s'", cfg.ServerURL, serverURL)
 				}
 
-				if loggedIn && !quiet {
-					fmt.Println(green.Render("**Already logged in**"))
-					logConfig(cfg)
+				if loggedIn {
+					if !quiet {
+						fmt.Println(green.Render("**Already logged in**"))
+						logConfig(cfg)
+					}
 					os.Exit(0)
 				}
 			}
