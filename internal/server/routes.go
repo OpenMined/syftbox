@@ -1,7 +1,9 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 
@@ -37,7 +39,11 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 	// --------------------------- routes ---------------------------
 
-	r.GET("/", IndexHandler)
+	if os.Getenv("SYFTBOX_REDIRECT_WWW") == "1" {
+		r.GET("/", IndexRedirectHandler)
+	} else {
+		r.GET("/", IndexHandler)
+	}
 	r.GET("/healthz", HealthHandler)
 	r.GET("/install.sh", install.ServeSH)
 	r.GET("/install.ps1", install.ServePS1)
@@ -90,6 +96,12 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 func IndexHandler(ctx *gin.Context) {
 	// return a plaintext
 	ctx.String(http.StatusOK, version.DetailedWithApp())
+}
+
+func IndexRedirectHandler(ctx *gin.Context) {
+	host := ctx.Request.Host
+	redirect := fmt.Sprintf("https://www.%s", host)
+	ctx.Redirect(http.StatusTemporaryRedirect, redirect)
 }
 
 func HealthHandler(ctx *gin.Context) {
