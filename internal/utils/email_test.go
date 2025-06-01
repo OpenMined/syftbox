@@ -26,7 +26,7 @@ func TestValidateEmail(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		t.Run(test.email, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			err := ValidateEmail(test.email)
 			if test.error {
 				assert.Error(t, err, test.name)
