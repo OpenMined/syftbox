@@ -46,7 +46,6 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	})
 
 	// syncH := handlers.NewSyncHandler(datasiteMgr)
-	// fsH := handlers.NewFsHandler(datasiteMgr)
 	appH := handlers.NewAppHandler(datasiteMgr)
 	initH := handlers.NewInitHandler(datasiteMgr, routeConfig.ControlPlaneURL)
 	statusH := handlers.NewStatusHandler(datasiteMgr)
@@ -57,6 +56,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	r.Use(middleware.CORS())
 	r.Use(middleware.Gzip())
 	r.Use(mgin.NewMiddleware(rateLimiter))
+	r.Use(middleware.Logger())
 
 	r.GET("/", IndexHandler)
 
@@ -76,6 +76,8 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 		{
 			v1App.GET("/", appH.List)
 			v1App.GET("/:appName", appH.Get)
+			v1App.POST("/:appName/start", appH.Start)
+			v1App.POST("/:appName/stop", appH.Stop)
 			v1App.POST("/", appH.Install)
 			v1App.DELETE("/:appName", appH.Uninstall)
 		}
@@ -92,14 +94,6 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 
 		// Logs endpoint
 		v1.GET("/logs", logsH.GetLogs)
-
-		// v1Fs := v1.Group("/datasite")
-		// {
-		// 	v1Fs.GET("/ls", fsH.List)
-		// 	v1Fs.POST("/rm", fsH.Remove)
-		// 	v1Fs.POST("/cp", fsH.Copy)
-		// 	v1Fs.POST("/mv", fsH.Move)
-		// }
 
 		// v1Sync := v1.Group("/sync")
 		// {

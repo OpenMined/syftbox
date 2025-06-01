@@ -1,170 +1,173 @@
 package apps
 
 import (
-	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"time"
+	"strconv"
+	"strings"
 
 	"github.com/openmined/syftbox/internal/utils"
 )
 
-// App represents a runnable application
 type App struct {
-	Name    string
-	Path    string
-	Env     []string
-	Port    string
-	Process *exec.Cmd
-	Cancel  context.CancelFunc
-	stdout  *os.File
-	stderr  *os.File
+	*AppProcess
+	info   *AppInfo
+	port   int
+	appLog io.WriteCloser
 }
 
-// NewApp creates a new App instance
-func NewApp(appPath string, env []string, port string) *App {
+func NewApp(info *AppInfo, configPath string) (*App, error) {
+	port, err := utils.GetFreePort()
+	if err != nil {
+		slog.Error("failed to get free port", "error", err)
+		return nil, err
+	}
+
+	if !IsValidApp(info.Path) {
+		return nil, fmt.Errorf("invalid app: %s", info.ID)
+	}
+
+	runScript := GetRunScript(info.Path)
+
+	// chmod +x the scripts
+	// get perms of the script
+	perms, err := os.Stat(runScript)
+	if err != nil {
+		slog.Error("failed to get perms of script", "error", err)
+		return nil, err
+	}
+
+	// set +x
+	if err := os.Chmod(runScript, perms.Mode()|0111); err != nil {
+		slog.Error("failed to make script executable", "error", err)
+		return nil, err
+	}
+
+	// create the run script
+	runScript, args := buildRunnerArgs(runScript)
+
+	// custom path env
+	customPathEnv := createCustomPathEnv(
+		systemPathWithoutVenv(),
+		os.Getenv("SYFTBOX_DESKTOP_BINARIES_PATH"),
+		os.Getenv("SYFTBOX_EXTRA_PATH"),
+	)
+
+	// create the app process
+	proc := NewAppProcess(runScript, args...).
+		SetID(info.ID).
+		SetWorkingDir(info.Path).
+		SetEnvs(map[string]string{
+			"SYFTBOX_APP_ID":             info.ID,
+			"SYFTBOX_APP_DIR":            info.Path,
+			"SYFTBOX_APP_PORT":           strconv.Itoa(port),
+			"SYFTBOX_ASSIGNED_PORT":      strconv.Itoa(port),
+			"SYFTBOX_CLIENT_CONFIG_PATH": configPath,
+			"PATH":                       customPathEnv,
+		})
+
 	return &App{
-		Name: filepath.Base(appPath),
-		Path: appPath,
-		Env:  env,
-		Port: port,
-	}
+		AppProcess: proc,
+		info:       info,
+		port:       port,
+	}, nil
 }
 
-// Start launches the app's run.sh script
-func (a *App) Start(ctx context.Context) error {
-	// Get run script path and validate it
-	runScript, err := GetRunScript(a.Path)
-	if err != nil {
-		return err
-	}
+func (a *App) Info() *AppInfo {
+	a.AppProcess.procMu.RLock()
+	defer a.AppProcess.procMu.RUnlock()
 
-	// Create a cancellable context for this app
-	appCtx, cancel := context.WithCancel(ctx)
-	a.Cancel = cancel
-
-	// Prepare the command to run the app
-	a.Process = a.buildCommand(appCtx, runScript)
-	a.Process.Dir = a.Path
-
-	// Set environment variables
-	a.Process.Env = a.Env
-
-	// Create a logs directory within the app directory
-	logsDir := filepath.Join(a.Path, "logs")
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		a.Cancel()
-		return fmt.Errorf("failed to create logs directory for app %s: %w", a.Name, err)
-	}
-
-	// Create log files for stdout and stderr
-	stdoutLogPath := filepath.Join(logsDir, "stdout.log")
-	stderrLogPath := filepath.Join(logsDir, "stderr.log")
-
-	stdoutFile, err := os.OpenFile(stdoutLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		a.Cancel()
-		return fmt.Errorf("failed to create stdout log file for app %s: %w", a.Name, err)
-	}
-
-	stderrFile, err := os.OpenFile(stderrLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		a.Cancel()
-		stdoutFile.Close()
-		return fmt.Errorf("failed to create stderr log file for app %s: %w", a.Name, err)
-	}
-
-	a.stdout = stdoutFile
-	a.stderr = stderrFile
-
-	// Redirect app output to log files
-	a.Process.Stdout = utils.NewLogInterceptor(stdoutFile)
-	a.Process.Stderr = utils.NewLogInterceptor(stderrFile)
-
-	// Start the process
-	if err := a.Process.Start(); err != nil {
-		a.Cancel()
-		a.closeLogFiles()
-		return fmt.Errorf("failed to start app %s: %w", a.Name, err)
-	}
-
-	if a.Port != "" {
-		slog.Info("app started", "app", a.Name, "url", fmt.Sprintf("http://localhost:%s", a.Port))
-	} else {
-		slog.Info("app started", "app", a.Name)
-	}
-	return nil
+	return a.info
 }
 
-// Stop terminates the running app
+func (a *App) Start() error {
+	// in the app directory
+	logsDir := filepath.Join(a.info.Path, "logs")
+
+	// clean up old logs
+	if err := os.RemoveAll(logsDir); err != nil {
+		slog.Debug("failed to remove logs directory for app", "app", a.info.ID, "error", err)
+	}
+
+	if err := utils.EnsureDir(logsDir); err != nil {
+		return fmt.Errorf("failed to create logs directory for app %s: %w", a.info.ID, err)
+	}
+
+	appLog, err := os.OpenFile(filepath.Join(logsDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to create stdout log file for app %s: %w", a.info.ID, err)
+	}
+
+	a.appLog = utils.NewLogInterceptor(appLog)
+	a.AppProcess.SetStdout(a.appLog)
+	a.AppProcess.SetStderr(a.appLog)
+
+	return a.AppProcess.Start()
+}
+
 func (a *App) Stop() error {
-	// Cancel the app's context to signal termination
-	a.Cancel()
+	if a.appLog != nil {
+		a.appLog.Close()
+		a.appLog = nil
+	}
+	return a.AppProcess.Stop()
+}
 
-	// Give the app some time to gracefully shut down
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
+func createCustomPathEnv(customPaths ...string) string {
+	final := make([]string, 0)
 
-	// Create a channel to signal when the app has exited
-	done := make(chan struct{})
-	go func() {
-		a.Process.Wait()
-		close(done)
-	}()
-
-	// Wait for either the app to exit or the timeout
-	select {
-	case <-done:
-		a.closeLogFiles()
-		return nil
-	case <-timer.C:
-		// Force kill if graceful shutdown fails
-		if err := a.Process.Process.Kill(); err != nil {
-			return fmt.Errorf("failed to kill app %s: %w", a.Name, err)
+	for _, path := range customPaths {
+		if path != "" {
+			final = append(final, path)
 		}
-		slog.Info("app stop", "app", a.Name)
-		a.closeLogFiles()
-		return nil
 	}
+
+	return strings.Join(final, string(os.PathListSeparator))
 }
 
-// Wait monitors the process until it exits
-func (a *App) Wait() error {
-	err := a.Process.Wait()
-	a.closeLogFiles()
-	return err
-}
+func systemPathWithoutVenv() string {
+	envPath := os.Getenv("PATH")
+	if envPath == "" {
+		return envPath
+	}
 
-// closeLogFiles closes the stdout and stderr log files
-func (a *App) closeLogFiles() {
-	if a.stdout != nil {
-		a.stdout.Close()
-		a.stdout = nil
+	// list for directories commonly associated with Python virtual environments.
+	excludeList := []string{
+		filepath.Join("env", "bin"),
+		filepath.Join("env", "Scripts"),
+		"conda",
+		".virtualenvs",
+		"pyenv",
 	}
-	if a.stderr != nil {
-		a.stderr.Close()
-		a.stderr = nil
-	}
-}
 
-// GetRunScript returns the path to the run.sh script for an app and validates it
-func GetRunScript(appPath string) (string, error) {
-	runScript := filepath.Join(appPath, "run.sh")
-	info, err := os.Stat(runScript)
-	if err != nil {
-		return "", fmt.Errorf("run script not found at %s: %w", runScript, err)
+	// activated venv will have VIRTUAL_ENV and VIRTUAL_ENV/bin in PATH
+	// so we add it to the hints
+	if envVenv := os.Getenv("VIRTUAL_ENV"); envVenv != "" {
+		excludeList = append(excludeList, envVenv)
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("run script at %s is a directory", runScript)
-	}
-	return runScript, nil
-}
 
-// IsValidApp checks if a directory contains a valid app (has run.sh)
-func IsValidApp(path string) bool {
-	_, err := GetRunScript(path)
-	return err == nil
+	// Split the PATH and filter out entries that match our hints.
+	pathSegments := strings.Split(envPath, string(os.PathListSeparator))
+	cleanedSegments := make([]string, 0, len(pathSegments))
+
+	for _, segment := range pathSegments {
+		lowerSegment := strings.ToLower(segment)
+		exclude := false
+
+		for _, hint := range excludeList {
+			if strings.Contains(lowerSegment, strings.ToLower(hint)) {
+				exclude = true
+				break
+			}
+		}
+		if !exclude {
+			cleanedSegments = append(cleanedSegments, segment)
+		}
+	}
+
+	// Rejoin the filtered segments into a single PATH string.
+	return strings.Join(cleanedSegments, string(os.PathListSeparator))
 }
