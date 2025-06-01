@@ -11,7 +11,6 @@ import (
 
 func buildRunnerArgs(scriptPath string) (string, []string) {
 	var command strings.Builder
-
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "sh"
@@ -31,12 +30,22 @@ func buildRunnerArgs(scriptPath string) (string, []string) {
 		command.WriteString("test -f ~/.profile && source ~/.profile; ")
 	}
 
-	command.WriteString("echo \"[syftbox] Script PID: $$\"; ")
-	command.WriteString("echo \"[syftbox] Start time: $(date)\"; ")
-	command.WriteString("echo \"[syftbox] App ID: $SYFTBOX_APP_ID\"; ")
-	command.WriteString("echo \"[syftbox] App Dir: $SYFTBOX_APP_DIR\"; ")
-	command.WriteString("echo \"[syftbox] App Port: $SYFTBOX_APP_PORT\"; ")
-	command.WriteString("echo \"[syftbox] Client Config Path: $SYFTBOX_CLIENT_CONFIG_PATH\"; ")
+	// Log environment info
+	logVars := []string{
+		"Script PID: $$",
+		"Start time: $(date)",
+		"App ID: $SYFTBOX_APP_ID",
+		"App Dir: $SYFTBOX_APP_DIR",
+		"App Port: $SYFTBOX_APP_PORT",
+		"Client Config Path: $SYFTBOX_CLIENT_CONFIG_PATH",
+		"PATH: $PATH",
+	}
+
+	for _, msg := range logVars {
+		command.WriteString(fmt.Sprintf("echo \"[syftbox] %s\"; ", msg))
+	}
+	command.WriteString("echo \"==========STARTING APP==========\"; ")
+
 	command.WriteString(fmt.Sprintf("exec \"%s\"; ", scriptPath))
 
 	return shell, []string{"-lc", command.String()}

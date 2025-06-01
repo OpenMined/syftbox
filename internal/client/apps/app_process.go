@@ -19,6 +19,10 @@ var (
 	ErrNotRunning     = errors.New("process not running")
 )
 
+var (
+	appExitTimeout = 3 * time.Second
+)
+
 type AppProcessStatus string
 
 const (
@@ -102,7 +106,13 @@ func (p *AppProcess) Start() error {
 	p.procMu.Lock()
 	defer p.procMu.Unlock()
 
+	// reset
+	p.proc = nil
+	p.procInfo = nil
+
+	// create the process
 	p.proc = exec.Command(p.procName, p.procArgs...)
+
 	// set working directory
 	if p.procDir != "" {
 		p.proc.Dir = p.procDir
@@ -117,22 +127,26 @@ func (p *AppProcess) Start() error {
 	p.proc.Stdout = p.procStdout
 	p.proc.Stderr = p.procStderr
 
+	// create the channels
+	p.exit = make(chan AppExit)
+	p.done = make(chan struct{})
+
 	// Start the process
 	if err := p.proc.Start(); err != nil {
 		p.setStatusStopped()
 		return fmt.Errorf("failed to start process: %w", err)
 	}
 
-	p.setStatusRunning()
-	p.exit = make(chan AppExit)
-	p.done = make(chan struct{})
-
+	// get the process info
 	procInfo, err := process.NewProcess(int32(p.proc.Process.Pid))
 	if err != nil {
 		p.setStatusStopped()
 		return fmt.Errorf("failed to get process info: %w", err)
 	}
 	p.procInfo = procInfo
+
+	// set the process to running
+	p.setStatusRunning()
 
 	// Monitor process completion
 	go p.monitor()
@@ -152,14 +166,6 @@ func (p *AppProcess) Stop() error {
 	if err := p.killProcessGroup(); err != nil {
 		return fmt.Errorf("failed to kill process: %w", err)
 	}
-
-	// set the process to stopped
-	p.setStatusStopped()
-
-	p.procMu.Lock()
-	p.proc = nil
-	p.procInfo = nil
-	p.procMu.Unlock()
 
 	return nil
 }
@@ -206,8 +212,6 @@ func (p *AppProcess) monitor() {
 	err := p.proc.Wait()
 	exitCode := p.proc.ProcessState.ExitCode()
 
-	p.setStatusStopped()
-
 	if err != nil {
 		var sysErr *exec.ExitError
 		if errors.As(err, &sysErr) {
@@ -224,6 +228,9 @@ func (p *AppProcess) monitor() {
 	// close the done and exit channels
 	close(p.done)
 	close(p.exit)
+
+	// set the process to stopped
+	p.setStatusStopped()
 }
 
 // killProcessGroup kills the process and all its children
@@ -234,14 +241,6 @@ func (p *AppProcess) killProcessGroup() error {
 	procInfo := p.procInfo
 
 	p.procMu.RUnlock()
-
-	if proc == nil || proc.Process == nil {
-		return fmt.Errorf("process is nil")
-	}
-
-	if procInfo == nil {
-		return fmt.Errorf("process info is nil")
-	}
 
 	// get the process ID
 	pid := proc.Process.Pid
@@ -259,27 +258,23 @@ func (p *AppProcess) killProcessGroup() error {
 	}
 
 	// send SIGTERM to all descendants
-	slog.Debug("kill process group: SIGTERM", "id", p.ID, "pid", pid, "subprocs", len(descendants))
 	for _, child := range descendants {
 		if err := child.Terminate(); err != nil {
-			slog.Debug("kill process group: SIGTERM", "id", p.ID, "pid", child.Pid, "ppid", pid, "err", err)
+			slog.Debug("process kill: SIGTERM", "id", p.ID, "pid", child.Pid, "ppid", pid, "err", err)
 		}
 	}
 
 	// give some time for cleanup
-	timeout := time.NewTimer(3 * time.Second)
-	defer timeout.Stop()
-
+	slog.Debug("process kill: waiting for process to exit", "id", p.ID, "pid", pid)
 	select {
 	case <-p.done:
-		slog.Debug("kill process group: process completed", "id", p.ID, "pid", pid)
 		return nil
-	case <-timeout.C:
-		slog.Debug("kill process group: timed out", "id", p.ID, "pid", pid)
+	case <-time.After(appExitTimeout):
+		slog.Debug("process kill: timed out", "id", p.ID, "pid", pid)
 	}
 
 	// nuke the process group with SIGKILL
-	slog.Debug("kill process group: SIGKILL", "id", p.ID, "pid", pid, "subprocs", len(descendants))
+	slog.Debug("process kill: SIGKILL", "id", p.ID, "pid", pid, "subprocs", len(descendants))
 	for _, child := range descendants {
 		// skip if the process doesn't exist
 		exists, err := process.PidExists(child.Pid)
@@ -288,7 +283,7 @@ func (p *AppProcess) killProcessGroup() error {
 		}
 		// kill the process
 		if err := child.Kill(); err != nil {
-			slog.Warn("kill process group: SIGKILL", "id", p.ID, "pid", child.Pid, "ppid", pid, "err", err)
+			slog.Warn("process kill: SIGKILL", "id", p.ID, "pid", child.Pid, "ppid", pid, "err", err)
 		}
 	}
 
@@ -302,7 +297,7 @@ func getProcessTreeBottomUp(proc *process.Process) ([]*process.Process, error) {
 	children, err := proc.Children()
 	if err != nil {
 		// If we can't list children, we can't go deeper.
-		return nil, fmt.Errorf("failed to list children for pid %d: %w", proc.Pid, err)
+		return nil, fmt.Errorf("failed to get child processes for pid %d: %w", proc.Pid, err)
 	}
 
 	// Recursively call for each child.

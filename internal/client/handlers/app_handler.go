@@ -14,6 +14,7 @@ import (
 const (
 	ErrCodeListFailed      = "ERR_LIST_FAILED"
 	ErrCodeGetFailed       = "ERR_GET_FAILED"
+	ErrAppNotRunning       = "ERR_APP_NOT_RUNNING"
 	ErrCodeInstallFailed   = "ERR_INSTALL_FAILED"
 	ErrCodeUninstallFailed = "ERR_UNINSTALL_FAILED"
 	ErrCodeStartFailed     = "ERR_START_FAILED"
@@ -54,7 +55,7 @@ func (h *AppHandler) List(c *gin.Context) {
 		return
 	}
 
-	runningApps := ds.GetAppScheduler().ListRunningApps()
+	runningApps := ds.GetAppScheduler().GetApps()
 
 	appResponses := make([]*AppResponse, 0)
 	for _, app := range runningApps {
@@ -99,9 +100,9 @@ func (h *AppHandler) Get(c *gin.Context) {
 		return
 	}
 
-	app, err := ds.GetAppScheduler().GetApp(appName)
-	if err != nil {
-		AbortWithError(c, http.StatusNotFound, ErrCodeGetFailed, err)
+	app, ok := ds.GetAppScheduler().GetApp(appName)
+	if !ok {
+		AbortWithError(c, http.StatusNotFound, ErrAppNotRunning, fmt.Errorf("app %s is not running", appName))
 		return
 	}
 

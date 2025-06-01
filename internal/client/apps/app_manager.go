@@ -52,31 +52,11 @@ func (a *AppManager) ListApps() ([]*AppInfo, error) {
 
 	for _, dir := range appDirs {
 		if dir.IsDir() || dir.Type()&os.ModeSymlink != 0 {
-			appID := dir.Name()
-			appDir := a.getAppDir(appID)
+			fullPath := filepath.Join(a.AppsDir, dir.Name())
 
-			if !IsValidApp(appDir) {
-				continue
-			}
-
-			appInfo, err := a.loadAppInfo(appID)
-			if err != nil && errors.Is(err, os.ErrNotExist) { // if the app info doesn't exist, create a new one
-				appName := appNameFromPath(appDir)
-				appDirInfo, err := os.Stat(appDir)
-				if err != nil {
-					slog.Warn("failed to stat app dir", "error", err)
-					continue
-				}
-				appInfo = &AppInfo{
-					ID:          appID,
-					Name:        appName,
-					Path:        appDir,
-					Source:      AppSourceLocalDir,
-					SourceURI:   appDir,
-					InstalledOn: appDirInfo.ModTime(),
-				}
-			} else if err != nil {
-				slog.Warn("failed to load app info", "error", err)
+			appInfo, err := a.loadAppInfoFromPath(fullPath)
+			if err != nil {
+				slog.Warn("failed to load app info", "path", fullPath, "error", err)
 				continue
 			}
 			apps = append(apps, appInfo)
@@ -89,36 +69,54 @@ func (a *AppManager) ListApps() ([]*AppInfo, error) {
 // UninstallApp uninstalls an app from a given uri.
 // The uri can be a local path or a remote url or app id
 func (a *AppManager) UninstallApp(uri string) (string, error) {
-	var targetDir string
-	var appID string
-
 	if err := a.flock.Lock(); err != nil {
 		return "", fmt.Errorf("failed to acquire lock for uninstall: %w", err)
 	}
 	defer a.flock.Unlock()
 
-	if utils.DirExists(uri) {
+	var targetDir string
+	var appID string
+
+	switch {
+	case utils.DirExists(uri):
+		// URI points directly to an app directory on disk
 		targetDir = uri
-	} else if utils.DirExists(a.getAppDir(uri)) {
+		info, err := a.loadAppInfoFromPath(targetDir)
+		if err != nil {
+			return "", fmt.Errorf("failed to load app info: %w", err)
+		}
+		appID = info.ID
+
+	case utils.DirExists(a.getAppDir(uri)):
+		// URI is an app ID already installed under AppsDir
 		targetDir = a.getAppDir(uri)
 		appID = uri
-	} else if utils.IsValidURL(uri) {
-		parsedURL, err := parseRepoURL(uri)
+
+	case utils.IsValidURL(uri):
+		// URI is a repository URL; derive the app ID and installation directory
+		parsed, err := parseRepoURL(uri)
 		if err != nil {
 			return "", err
 		}
-		appID = appIDFromURL(parsedURL)
+		appID = appIDFromURL(parsed)
 		targetDir = a.getAppDir(appID)
-	} else {
+
+	default:
 		return "", fmt.Errorf("no app found for %q", uri)
 	}
 
-	if err := os.RemoveAll(targetDir); err != nil {
-		return "", fmt.Errorf("failed to remove app: %w", err)
+	// 1) The directory must correspond to a valid syftbox app
+	if !IsValidApp(targetDir) {
+		return "", fmt.Errorf("no app found for %q", uri)
 	}
 
-	if err := a.deleteAppInfo(appID); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("failed to delete app info: %w", err)
+	if !utils.DirExists(targetDir) {
+		return "", fmt.Errorf("no app found for %q", uri)
+	}
+
+	// Remove the application directory
+	if err := os.RemoveAll(targetDir); err != nil {
+		return "", fmt.Errorf("failed to remove app: %w", err)
 	}
 
 	return appID, nil
@@ -261,7 +259,7 @@ func (a *AppManager) prepareInstallLocation(installDir string, force bool) error
 
 // saves the app metadata to the data directory
 func (a *AppManager) saveAppInfo(app *AppInfo) error {
-	metadataPath := a.getAppInfoPath(app.ID)
+	metadataPath := filepath.Join(app.Path, appInfoFileName)
 	metadata, err := json.Marshal(app)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -271,26 +269,38 @@ func (a *AppManager) saveAppInfo(app *AppInfo) error {
 }
 
 // loads the app metadata from the data directory
-func (a *AppManager) loadAppInfo(appID string) (*AppInfo, error) {
-	metadataPath := a.getAppInfoPath(appID)
+func (a *AppManager) loadAppInfoFromID(appID string) (*AppInfo, error) {
+	appPath := a.getAppDir(appID)
+	return a.loadAppInfoFromPath(appPath)
+}
+
+func (a *AppManager) loadAppInfoFromPath(appPath string) (*AppInfo, error) {
+	if !IsValidApp(appPath) {
+		return nil, ErrInvalidApp
+	}
+
+	metadataPath := filepath.Join(appPath, appInfoFileName)
 	metadata, err := os.ReadFile(metadataPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read metadata: %w", err)
+		if errors.Is(err, os.ErrNotExist) {
+			// metadata doesn't exist, consider it local app
+			return &AppInfo{
+				ID:        appIDFromPath(appPath),
+				Name:      appNameFromPath(appPath),
+				Path:      appPath,
+				Source:    AppSourceLocalDir,
+				SourceURI: appPath,
+			}, nil
+		}
+		return nil, fmt.Errorf("failed to read app info from %q: %w", metadataPath, err)
 	}
 
 	var app AppInfo
 	if err := json.Unmarshal(metadata, &app); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal app info: %w", err)
 	}
 	return &app, nil
-}
 
-func (a *AppManager) deleteAppInfo(appID string) error {
-	metadataPath := a.getAppInfoPath(appID)
-	if err := os.Remove(metadataPath); err != nil {
-		return fmt.Errorf("failed to remove metadata: %w", err)
-	}
-	return nil
 }
 
 func (a *AppManager) getAppInfoPath(appID string) string {

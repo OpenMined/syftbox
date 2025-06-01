@@ -7,19 +7,19 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/openmined/syftbox/internal/utils"
 )
 
 type App struct {
 	*AppProcess
-	info       *AppInfo
-	port       int
-	stdoutFile io.WriteCloser
-	stderrFile io.WriteCloser
+	info   *AppInfo
+	port   int
+	appLog io.WriteCloser
 }
 
-func NewApp(info *AppInfo, sbConfig string) (*App, error) {
+func NewApp(info *AppInfo, configPath string) (*App, error) {
 	port, err := utils.GetFreePort()
 	if err != nil {
 		slog.Error("failed to get free port", "error", err)
@@ -46,9 +46,17 @@ func NewApp(info *AppInfo, sbConfig string) (*App, error) {
 		return nil, err
 	}
 
-	// Create a logs directory with
-
+	// create the run script
 	runScript, args := buildRunnerArgs(runScript)
+
+	// custom path env
+	customPathEnv := createCustomPathEnv(
+		systemPathWithoutVenv(),
+		os.Getenv("SYFTBOX_DESKTOP_BINARIES_PATH"),
+		os.Getenv("SYFTBOX_EXTRA_PATH"),
+	)
+
+	// create the app process
 	proc := NewAppProcess(runScript, args...).
 		SetID(info.ID).
 		SetWorkingDir(info.Path).
@@ -57,7 +65,8 @@ func NewApp(info *AppInfo, sbConfig string) (*App, error) {
 			"SYFTBOX_APP_DIR":            info.Path,
 			"SYFTBOX_APP_PORT":           strconv.Itoa(port),
 			"SYFTBOX_ASSIGNED_PORT":      strconv.Itoa(port),
-			"SYFTBOX_CLIENT_CONFIG_PATH": sbConfig,
+			"SYFTBOX_CLIENT_CONFIG_PATH": configPath,
+			"PATH":                       customPathEnv,
 		})
 
 	return &App{
@@ -77,37 +86,88 @@ func (a *App) Info() *AppInfo {
 func (a *App) Start() error {
 	// in the app directory
 	logsDir := filepath.Join(a.info.Path, "logs")
+
+	// clean up old logs
+	if err := os.RemoveAll(logsDir); err != nil {
+		slog.Debug("failed to remove logs directory for app", "app", a.info.ID, "error", err)
+	}
+
 	if err := utils.EnsureDir(logsDir); err != nil {
 		return fmt.Errorf("failed to create logs directory for app %s: %w", a.info.ID, err)
 	}
 
-	stdoutFile, err := os.OpenFile(filepath.Join(logsDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	appLog, err := os.OpenFile(filepath.Join(logsDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("failed to create stdout log file for app %s: %w", a.info.ID, err)
 	}
 
-	stderrFile, err := os.OpenFile(filepath.Join(logsDir, "stderr.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("failed to create stderr log file for app %s: %w", a.info.ID, err)
-	}
-
-	a.stdoutFile = stdoutFile
-	a.stderrFile = stderrFile
-
-	a.AppProcess.SetStdout(a.stdoutFile)
-	a.AppProcess.SetStderr(a.stdoutFile)
+	a.appLog = utils.NewLogInterceptor(appLog)
+	a.AppProcess.SetStdout(a.appLog)
+	a.AppProcess.SetStderr(a.appLog)
 
 	return a.AppProcess.Start()
 }
 
 func (a *App) Stop() error {
-	if a.stdoutFile != nil {
-		a.stdoutFile.Close()
-		a.stdoutFile = nil
-	}
-	if a.stderrFile != nil {
-		a.stderrFile.Close()
-		a.stderrFile = nil
+	if a.appLog != nil {
+		a.appLog.Close()
+		a.appLog = nil
 	}
 	return a.AppProcess.Stop()
+}
+
+func createCustomPathEnv(customPaths ...string) string {
+	final := make([]string, 0)
+
+	for _, path := range customPaths {
+		if path != "" {
+			final = append(final, path)
+		}
+	}
+
+	return strings.Join(final, string(os.PathListSeparator))
+}
+
+func systemPathWithoutVenv() string {
+	envPath := os.Getenv("PATH")
+	if envPath == "" {
+		return envPath
+	}
+
+	// list for directories commonly associated with Python virtual environments.
+	excludeList := []string{
+		filepath.Join("env", "bin"),
+		filepath.Join("env", "Scripts"),
+		"conda",
+		".virtualenvs",
+		"pyenv",
+	}
+
+	// activated venv will have VIRTUAL_ENV and VIRTUAL_ENV/bin in PATH
+	// so we add it to the hints
+	if envVenv := os.Getenv("VIRTUAL_ENV"); envVenv != "" {
+		excludeList = append(excludeList, envVenv)
+	}
+
+	// Split the PATH and filter out entries that match our hints.
+	pathSegments := strings.Split(envPath, string(os.PathListSeparator))
+	cleanedSegments := make([]string, 0, len(pathSegments))
+
+	for _, segment := range pathSegments {
+		lowerSegment := strings.ToLower(segment)
+		exclude := false
+
+		for _, hint := range excludeList {
+			if strings.Contains(lowerSegment, strings.ToLower(hint)) {
+				exclude = true
+				break
+			}
+		}
+		if !exclude {
+			cleanedSegments = append(cleanedSegments, segment)
+		}
+	}
+
+	// Rejoin the filtered segments into a single PATH string.
+	return strings.Join(cleanedSegments, string(os.PathListSeparator))
 }
