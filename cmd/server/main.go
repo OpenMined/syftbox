@@ -190,6 +190,7 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.SetDefault("blob.endpoint", "")
 	v.SetDefault("blob.access_key", "")
 	v.SetDefault("blob.secret_key", "")
+	v.SetDefault("blob.use_accelerate", false)
 	// Auth section (config file/env vars only)
 	v.SetDefault("auth.enabled", DefaultAuthEnabled)
 	v.SetDefault("auth.token_issuer", "")

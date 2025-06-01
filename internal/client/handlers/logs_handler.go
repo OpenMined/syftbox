@@ -48,7 +48,7 @@ func (h *LogsHandler) getLogFilePath(appName string) string {
 	if !apps.IsValidApp(appPath) {
 		return ""
 	}
-	return filepath.Join(appPath, "logs", "stdout.log")
+	return filepath.Join(appPath, "logs", "app.log")
 }
 
 // GetLogs handles GET requests to retrieve logs

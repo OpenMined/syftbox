@@ -70,7 +70,10 @@ func (h *WorkspaceHandler) GetItems(c *gin.Context) {
 	ws := ds.GetWorkspace()
 
 	// Resolve the path
-	absPath := filepath.Join(ws.Root, req.Path)
+	absPath := req.Path
+	if !strings.HasPrefix(absPath, ws.Root) {
+		absPath = filepath.Join(ws.Root, absPath)
+	}
 
 	// List items at the path
 	items, err := h.listItems(absPath, ws.Root, req.Depth)
