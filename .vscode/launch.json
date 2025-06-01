@@ -29,6 +29,8 @@
             "program": "${workspaceFolder}/cmd/client",
             "args": [
                 "daemon",
+                "-t",
+                "token",
             ]
         },
         {

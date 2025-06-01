@@ -1,10 +1,12 @@
 package handlers
 
+import "github.com/gin-gonic/gin"
+
 const (
-	CodeOk                  = "OK"
-	ErrCodeBadRequest       = "ERR_BAD_REQUEST"
-	ErrCodeUnknownError     = "ERR_UNKNOWN_ERROR"
-	ErrCodeDatasiteNotReady = "ERR_DATASITE_NOT_READY"
+	CodeOk                  string = "OK"
+	ErrCodeBadRequest       string = "ERR_BAD_REQUEST"
+	ErrCodeUnknownError     string = "ERR_UNKNOWN_ERROR"
+	ErrCodeDatasiteNotReady string = "ERR_DATASITE_NOT_READY"
 )
 
 type ControlPlaneResponse struct {
@@ -14,4 +16,13 @@ type ControlPlaneResponse struct {
 type ControlPlaneError struct {
 	ErrorCode string `json:"code"`
 	Error     string `json:"error"`
+}
+
+func AbortWithError(c *gin.Context, status int, code string, err error) {
+	c.Abort()
+	c.Error(err)
+	c.PureJSON(status, ControlPlaneError{
+		ErrorCode: code,
+		Error:     err.Error(),
+	})
 }

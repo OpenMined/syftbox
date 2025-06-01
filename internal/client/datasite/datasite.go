@@ -44,8 +44,8 @@ func New(config *config.Config) (*Datasite, error) {
 		return nil, fmt.Errorf("sdk: %w", err)
 	}
 
-	appSched := apps.NewScheduler(ws.AppsDir, config.Path)
-	appMgr := apps.NewManager(ws.AppsDir)
+	appMgr := apps.NewManager(ws.AppsDir, ws.MetadataDir)
+	appSched := apps.NewAppScheduler(appMgr, config.Path)
 
 	sync, err := sync.NewManager(ws, sdk)
 	if err != nil {
@@ -95,6 +95,7 @@ func (d *Datasite) Start(ctx context.Context) error {
 }
 
 func (d *Datasite) Stop() {
+	d.appScheduler.Stop()
 	d.sync.Stop()
 	d.sdk.Close()
 	d.workspace.Unlock()

@@ -120,7 +120,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	// Setup root context with signal handling
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	defer stop()
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
