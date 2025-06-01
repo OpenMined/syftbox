@@ -1,6 +1,6 @@
 //go:build windows
 
-package appsv2
+package apps
 
 import (
 	"syscall"
