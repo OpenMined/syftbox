@@ -35,16 +35,16 @@ func NewLogsHandler(mgr *datasitemgr.DatasiteManager) *LogsHandler {
 	}
 }
 
-func (h *LogsHandler) getLogFilePath(appName string) string {
-	appName = strings.ToLower(appName)
-	if appName == "" || appName == "system" {
+func (h *LogsHandler) getLogFilePath(appId string) string {
+	appId = strings.ToLower(appId)
+	if appId == "" || appId == "system" {
 		return config.DefaultLogFilePath
 	}
 	datasite, err := h.mgr.Get()
 	if err != nil {
 		return ""
 	}
-	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appName)
+	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appId)
 	if !apps.IsValidApp(appPath) {
 		return ""
 	}
@@ -57,7 +57,7 @@ func (h *LogsHandler) getLogFilePath(appName string) string {
 //	@Description	Get system logs with pagination support
 //	@Tags			Logs
 //	@Produce		json
-//	@Param			appName			query		string	false	"The name of the app to retrieve logs for"										default(system)
+//	@Param			appId			query		string	false	"The ID of the app to retrieve logs for"										default(system)
 //	@Param			startingToken	query		int		false	"Pagination token from a previous request to retrieve the next page of results"	default(1)		minimum(1)
 //	@Param			maxResults		query		int		false	"Maximum number of lines to read"												default(100)	minimum(1)	maximum(1000)
 //	@Success		200				{object}	LogsResponse
@@ -85,7 +85,7 @@ func (h *LogsHandler) GetLogs(c *gin.Context) {
 	}
 
 	// Read logs from file with pagination
-	logs, nextToken, hasMore, err := h.readLogsFromFile(params.AppName, params.StartingToken, params.MaxResults)
+	logs, nextToken, hasMore, err := h.readLogsFromFile(params.AppId, params.StartingToken, params.MaxResults)
 	if err != nil {
 		if err.Error() == "app not found" {
 			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
@@ -256,9 +256,9 @@ func (h *LogsHandler) findLinePosition(file *os.File, targetLine int64) (int64, 
 }
 
 // readLogsFromFile reads logs from the log file with token-based pagination
-func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
+func (h *LogsHandler) readLogsFromFile(appId string, startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
 	// Open log file
-	logFilePath := h.getLogFilePath(appName)
+	logFilePath := h.getLogFilePath(appId)
 	if logFilePath == "" {
 		return []LogEntry{}, 1, false, fmt.Errorf("app not found")
 	}

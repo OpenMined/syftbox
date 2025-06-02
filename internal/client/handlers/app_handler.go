@@ -79,7 +79,7 @@ func (h *AppHandler) List(c *gin.Context) {
 //	@Description	Get an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName			path		string	true	"App name"
+//	@Param			appId			path		string	true	"App ID"
 //	@Param			processStats	query		bool	false	"Whether to include process statistics"
 //	@Success		200				{object}	AppResponse
 //	@Failure		400				{object}	ControlPlaneError
@@ -89,9 +89,9 @@ func (h *AppHandler) List(c *gin.Context) {
 //	@Failure		429				{object}	ControlPlaneError
 //	@Failure		500				{object}	ControlPlaneError
 //	@Failure		503				{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName} [get]
+//	@Router			/v1/apps/{appId} [get]
 func (h *AppHandler) Get(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 	processStats := c.Query("processStats") == "true"
 
 	ds, err := h.mgr.Get()
@@ -100,9 +100,9 @@ func (h *AppHandler) Get(c *gin.Context) {
 		return
 	}
 
-	app, ok := ds.GetAppScheduler().GetApp(appName)
+	app, ok := ds.GetAppScheduler().GetApp(appId)
 	if !ok {
-		AbortWithError(c, http.StatusNotFound, ErrAppNotRunning, fmt.Errorf("app %s is not running", appName))
+		AbortWithError(c, http.StatusNotFound, ErrAppNotRunning, fmt.Errorf("app %s is not running", appId))
 		return
 	}
 
@@ -171,7 +171,7 @@ func (h *AppHandler) Install(c *gin.Context) {
 //	@Description	Uninstall an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path	string	true	"App name"
+//	@Param			appId	path	string	true	"App ID"
 //	@Success		204
 //	@Failure		400	{object}	ControlPlaneError
 //	@Failure		401	{object}	ControlPlaneError
@@ -180,9 +180,9 @@ func (h *AppHandler) Install(c *gin.Context) {
 //	@Failure		429	{object}	ControlPlaneError
 //	@Failure		500	{object}	ControlPlaneError
 //	@Failure		503	{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName} [delete]
+//	@Router			/v1/apps/{appId} [delete]
 func (h *AppHandler) Uninstall(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -190,7 +190,7 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 		return
 	}
 
-	if _, err := ds.GetAppManager().UninstallApp(appName); err != nil {
+	if _, err := ds.GetAppManager().UninstallApp(appId); err != nil {
 		AbortWithError(c, http.StatusInternalServerError, ErrCodeUninstallFailed, err)
 		return
 	}
@@ -204,7 +204,7 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 //	@Description	Start an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path		string	true	"App name"
+//	@Param			appId	path		string	true	"App ID"
 //	@Success		200		{object}	AppResponse
 //	@Failure		400		{object}	ControlPlaneError
 //	@Failure		401		{object}	ControlPlaneError
@@ -213,9 +213,9 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 //	@Failure		429		{object}	ControlPlaneError
 //	@Failure		500		{object}	ControlPlaneError
 //	@Failure		503		{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName}/start [post]
+//	@Router			/v1/apps/{appId}/start [post]
 func (h *AppHandler) Start(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -225,7 +225,7 @@ func (h *AppHandler) Start(c *gin.Context) {
 
 	scheduler := ds.GetAppScheduler()
 
-	app, err := scheduler.StartApp(appName)
+	app, err := scheduler.StartApp(appId)
 	if err != nil {
 		var status int
 		switch {
@@ -259,7 +259,7 @@ func (h *AppHandler) Start(c *gin.Context) {
 //	@Description	Stop an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path		string	true	"App name"
+//	@Param			appId	path		string	true	"App ID"
 //	@Success		200		{object}	AppResponse
 //	@Failure		400		{object}	ControlPlaneError
 //	@Failure		401		{object}	ControlPlaneError
@@ -268,9 +268,9 @@ func (h *AppHandler) Start(c *gin.Context) {
 //	@Failure		429		{object}	ControlPlaneError
 //	@Failure		500		{object}	ControlPlaneError
 //	@Failure		503		{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName}/stop [post]
+//	@Router			/v1/apps/{appId}/stop [post]
 func (h *AppHandler) Stop(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -280,7 +280,7 @@ func (h *AppHandler) Stop(c *gin.Context) {
 
 	scheduler := ds.GetAppScheduler()
 
-	app, err := scheduler.StopApp(appName)
+	app, err := scheduler.StopApp(appId)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, apps.ErrNotRunning) {
