@@ -15,3 +15,7 @@ type directoryContents struct {
 	Files   []*blob.BlobInfo
 	Folders []string
 }
+
+func (d *directoryContents) IsEmpty() bool {
+	return len(d.Files) == 0 && len(d.Folders) == 0
+}
