@@ -202,22 +202,28 @@ func FromSyftURL(rawURL string) (*SyftBoxURL, error) {
 	if parts[0] != appDataPath {
 		return nil, fmt.Errorf("invalid path: expected '%s' at position 1", appDataPath)
 	}
-	if parts[2] != rpcPath {
-		return nil, fmt.Errorf("invalid path: expected '%s' at position 3", rpcPath)
+
+	// Find the index of rpc in the path
+	rpcIndex := -1
+	for i, part := range parts {
+		if part == rpcPath {
+			rpcIndex = i
+			break
+		}
+	}
+
+	if rpcIndex == -1 {
+		return nil, fmt.Errorf("invalid path: expected '%s' in path", rpcPath)
 	}
 
 	// Extract components
-	appName := parts[1]
-	endpoint := strings.Join(parts[3:], pathSeparator)
+	appName := strings.Join(parts[1:rpcIndex], pathSeparator)
+	endpoint := strings.Join(parts[rpcIndex+1:], pathSeparator)
 
 	// Create SyftBoxURL
 	syftURL, err := NewSyftBoxURL(datasite, appName, endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create syft url from components: %w", err)
-	}
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse query parameters: %w", err)
 	}
 
 	// Validate query params
