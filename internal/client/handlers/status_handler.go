@@ -30,10 +30,10 @@ func NewStatusHandler(mgr *datasitemgr.DatasiteManager) *StatusHandler {
 //	@Success		200	{object}	StatusResponse
 //	@Failure		503	{object}	ControlPlaneError
 //	@Router			/v1/status [get]
-func (h *StatusHandler) Status(ctx *gin.Context) {
+func (h *StatusHandler) Status(c *gin.Context) {
 	// this is unlikely to happen, but just in case
 	if h.mgr == nil {
-		ctx.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
 			ErrorCode: ErrCodeUnknownError,
 			Error:     "datasite manager not initialized",
 		})
@@ -56,7 +56,7 @@ func (h *StatusHandler) Status(ctx *gin.Context) {
 		errorMessage = status.DatasiteError.Error()
 	}
 
-	ctx.PureJSON(http.StatusOK, &StatusResponse{
+	c.PureJSON(http.StatusOK, &StatusResponse{
 		Status:    "ok",
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Version:   version.Version,

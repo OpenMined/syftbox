@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -55,17 +56,36 @@ func (h *AppHandler) List(c *gin.Context) {
 		return
 	}
 
-	runningApps := ds.GetAppScheduler().GetApps()
+	allApps, err := ds.GetAppManager().ListApps()
+	if err != nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeListFailed, err)
+		return
+	}
 
+	scheduler := ds.GetAppScheduler()
 	appResponses := make([]*AppResponse, 0)
-	for _, app := range runningApps {
-		appResponse, err := NewAppResponse(app, false)
-		if err != nil {
-			// just record this error for logging
-			c.Error(fmt.Errorf("failed to get app response: %s %w", app.ID, err))
-			continue
+	for _, appInfo := range allApps {
+		var appResp *AppResponse
+		var err error
+
+		// does the app is running in the scheduler
+		app, ok := scheduler.GetApp(appInfo.ID)
+		if ok {
+			appResp, err = NewAppResponse(app, false)
+			if err != nil {
+				c.Error(fmt.Errorf("failed to get app response: %s %w", app.ID, err))
+				continue
+			}
+		} else {
+			appResp = &AppResponse{
+				Info:   appInfo,
+				ID:     appInfo.ID,
+				Name:   appInfo.ID,
+				Path:   appInfo.Path,
+				Status: apps.StatusStopped,
+			}
 		}
-		appResponses = append(appResponses, appResponse)
+		appResponses = append(appResponses, appResp)
 	}
 
 	c.PureJSON(http.StatusOK, &AppListResponse{
@@ -156,6 +176,10 @@ func (h *AppHandler) Install(c *gin.Context) {
 		return
 	}
 
+	if err := ds.GetAppScheduler().Refresh(); err != nil {
+		slog.Warn("failed to refresh scheduler after installation", "error", err)
+	}
+
 	c.PureJSON(http.StatusOK, &AppResponse{
 		Name:   app.ID,
 		Path:   app.Path,
@@ -193,6 +217,10 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 	if _, err := ds.GetAppManager().UninstallApp(appId); err != nil {
 		AbortWithError(c, http.StatusInternalServerError, ErrCodeUninstallFailed, err)
 		return
+	}
+
+	if err := ds.GetAppScheduler().Refresh(); err != nil {
+		slog.Warn("failed to refresh scheduler after uninstallation", "error", err)
 	}
 
 	c.PureJSON(http.StatusNoContent, nil)
