@@ -95,6 +95,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 
 		// Logs endpoint
 		v1.GET("/logs", logsH.GetLogs)
+		v1.GET("/logs/download", logsH.DownloadLogs)
 
 		// v1Sync := v1.Group("/sync")
 		// {

@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"archive/zip"
 	"bufio"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/client/apps"
@@ -357,4 +360,122 @@ func (h *LogsHandler) readLogsFromFile(appId string, startingToken int64, maxRes
 	}
 
 	return logs, nextToken, hasMore, nil
+}
+
+// DownloadLogs handles GET requests to download all logs as a zip file
+//
+//	@Summary		Download logs
+//	@Description	Download all logs as a zip file
+//	@Tags			Logs
+//	@Produce		application/zip
+//	@Success		200	{file}		file	"Zip file containing all logs"
+//	@Failure		400	{object}	ControlPlaneError
+//	@Failure		401	{object}	ControlPlaneError
+//	@Failure		403	{object}	ControlPlaneError
+//	@Failure		429	{object}	ControlPlaneError
+//	@Failure		500	{object}	ControlPlaneError
+//	@Failure		503	{object}	ControlPlaneError
+//	@Router			/v1/logs/download [get]
+func (h *LogsHandler) DownloadLogs(c *gin.Context) {
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get all app IDs
+	appManager := ds.GetAppManager()
+	apps, err := appManager.ListApps()
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to list apps: %v", err),
+		})
+		return
+	}
+
+	// Create a temporary file for the zip
+	tmpFile, err := os.CreateTemp("", "syftbox-logs-*.zip")
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to create temporary file: %v", err),
+		})
+		return
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Create a new zip writer
+	zipWriter := zip.NewWriter(tmpFile)
+	defer zipWriter.Close()
+
+	// Add system logs
+	systemLogPath := config.DefaultLogFilePath
+	if err := h.addFileToZip(zipWriter, systemLogPath, "system.log"); err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to add system logs: %v", err),
+		})
+		return
+	}
+
+	// Add app logs
+	for _, app := range apps {
+		appLogPath := filepath.Join(app.Path, "logs", "app.log")
+		if err := h.addFileToZip(zipWriter, appLogPath, fmt.Sprintf("%s.log", app.ID)); err != nil {
+			// Log the error but continue with other apps
+			slog.Default().Warn("failed to add app logs to zip", "app", app.ID, "error", err)
+			continue
+		}
+	}
+
+	// Close the zip writer to ensure all data is written
+	if err := zipWriter.Close(); err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to finalize zip file: %v", err),
+		})
+		return
+	}
+
+	// Set response headers
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=syftbox-logs-%s.zip", time.Now().Format("2006-01-02-15-04-05")))
+	c.Header("Content-Transfer-Encoding", "binary")
+
+	// Send the file
+	c.File(tmpFile.Name())
+}
+
+// addFileToZip adds a file to the zip archive if it exists
+func (h *LogsHandler) addFileToZip(zipWriter *zip.Writer, filePath string, zipName string) error {
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil // Skip if file doesn't exist
+	}
+
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	// Create a new file in the zip
+	zipFile, err := zipWriter.Create(zipName)
+	if err != nil {
+		return fmt.Errorf("failed to create zip entry %s: %w", zipName, err)
+	}
+
+	// Copy the file contents to the zip
+	if _, err := io.Copy(zipFile, file); err != nil {
+		return fmt.Errorf("failed to copy file contents to zip: %w", err)
+	}
+
+	return nil
 }
