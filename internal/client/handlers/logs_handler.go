@@ -414,14 +414,21 @@ func (h *LogsHandler) DownloadLogs(c *gin.Context) {
 	zipWriter := zip.NewWriter(tmpFile)
 	defer zipWriter.Close()
 
-	// Add system logs
-	systemLogPath := config.DefaultLogFilePath
-	if err := h.addFileToZip(zipWriter, systemLogPath, "system.log"); err != nil {
-		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
-			ErrorCode: ErrCodeLogsRetrievalFailed,
-			Error:     fmt.Sprintf("failed to add system logs: %v", err),
-		})
-		return
+	// Add all logs from the system logs directory
+	systemLogDir := filepath.Dir(config.DefaultLogFilePath)
+	entries, err := os.ReadDir(systemLogDir)
+	if err != nil {
+		slog.Default().Warn("failed to read system logs directory", "error", err)
+	} else {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".log") {
+				logPath := filepath.Join(systemLogDir, entry.Name())
+				if err := h.addFileToZip(zipWriter, logPath, entry.Name()); err != nil {
+					slog.Default().Warn("failed to add log file to zip", "file", entry.Name(), "error", err)
+					continue
+				}
+			}
+		}
 	}
 
 	// Add app logs
