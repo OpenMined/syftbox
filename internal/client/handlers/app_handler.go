@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -55,17 +56,36 @@ func (h *AppHandler) List(c *gin.Context) {
 		return
 	}
 
-	runningApps := ds.GetAppScheduler().GetApps()
+	allApps, err := ds.GetAppManager().ListApps()
+	if err != nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeListFailed, err)
+		return
+	}
 
+	scheduler := ds.GetAppScheduler()
 	appResponses := make([]*AppResponse, 0)
-	for _, app := range runningApps {
-		appResponse, err := NewAppResponse(app, false)
-		if err != nil {
-			// just record this error for logging
-			c.Error(fmt.Errorf("failed to get app response: %s %w", app.ID, err))
-			continue
+	for _, appInfo := range allApps {
+		var appResp *AppResponse
+		var err error
+
+		// does the app is running in the scheduler
+		app, ok := scheduler.GetApp(appInfo.ID)
+		if ok {
+			appResp, err = NewAppResponse(app, false)
+			if err != nil {
+				c.Error(fmt.Errorf("failed to get app response: %s %w", app.ID, err))
+				continue
+			}
+		} else {
+			appResp = &AppResponse{
+				Info:   appInfo,
+				ID:     appInfo.ID,
+				Name:   appInfo.ID,
+				Path:   appInfo.Path,
+				Status: apps.StatusStopped,
+			}
 		}
-		appResponses = append(appResponses, appResponse)
+		appResponses = append(appResponses, appResp)
 	}
 
 	c.PureJSON(http.StatusOK, &AppListResponse{
@@ -79,7 +99,7 @@ func (h *AppHandler) List(c *gin.Context) {
 //	@Description	Get an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName			path		string	true	"App name"
+//	@Param			appId			path		string	true	"App ID"
 //	@Param			processStats	query		bool	false	"Whether to include process statistics"
 //	@Success		200				{object}	AppResponse
 //	@Failure		400				{object}	ControlPlaneError
@@ -89,9 +109,9 @@ func (h *AppHandler) List(c *gin.Context) {
 //	@Failure		429				{object}	ControlPlaneError
 //	@Failure		500				{object}	ControlPlaneError
 //	@Failure		503				{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName} [get]
+//	@Router			/v1/apps/{appId} [get]
 func (h *AppHandler) Get(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 	processStats := c.Query("processStats") == "true"
 
 	ds, err := h.mgr.Get()
@@ -100,9 +120,9 @@ func (h *AppHandler) Get(c *gin.Context) {
 		return
 	}
 
-	app, ok := ds.GetAppScheduler().GetApp(appName)
+	app, ok := ds.GetAppScheduler().GetApp(appId)
 	if !ok {
-		AbortWithError(c, http.StatusNotFound, ErrAppNotRunning, fmt.Errorf("app %s is not running", appName))
+		AbortWithError(c, http.StatusNotFound, ErrAppNotRunning, fmt.Errorf("app %s is not running", appId))
 		return
 	}
 
@@ -156,6 +176,10 @@ func (h *AppHandler) Install(c *gin.Context) {
 		return
 	}
 
+	if err := ds.GetAppScheduler().Refresh(); err != nil {
+		slog.Warn("failed to refresh scheduler after installation", "error", err)
+	}
+
 	c.PureJSON(http.StatusOK, &AppResponse{
 		Name:   app.ID,
 		Path:   app.Path,
@@ -171,7 +195,7 @@ func (h *AppHandler) Install(c *gin.Context) {
 //	@Description	Uninstall an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path	string	true	"App name"
+//	@Param			appId	path	string	true	"App ID"
 //	@Success		204
 //	@Failure		400	{object}	ControlPlaneError
 //	@Failure		401	{object}	ControlPlaneError
@@ -180,9 +204,9 @@ func (h *AppHandler) Install(c *gin.Context) {
 //	@Failure		429	{object}	ControlPlaneError
 //	@Failure		500	{object}	ControlPlaneError
 //	@Failure		503	{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName} [delete]
+//	@Router			/v1/apps/{appId} [delete]
 func (h *AppHandler) Uninstall(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -190,9 +214,13 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 		return
 	}
 
-	if _, err := ds.GetAppManager().UninstallApp(appName); err != nil {
+	if _, err := ds.GetAppManager().UninstallApp(appId); err != nil {
 		AbortWithError(c, http.StatusInternalServerError, ErrCodeUninstallFailed, err)
 		return
+	}
+
+	if err := ds.GetAppScheduler().Refresh(); err != nil {
+		slog.Warn("failed to refresh scheduler after uninstallation", "error", err)
 	}
 
 	c.PureJSON(http.StatusNoContent, nil)
@@ -204,7 +232,7 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 //	@Description	Start an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path		string	true	"App name"
+//	@Param			appId	path		string	true	"App ID"
 //	@Success		200		{object}	AppResponse
 //	@Failure		400		{object}	ControlPlaneError
 //	@Failure		401		{object}	ControlPlaneError
@@ -213,9 +241,9 @@ func (h *AppHandler) Uninstall(c *gin.Context) {
 //	@Failure		429		{object}	ControlPlaneError
 //	@Failure		500		{object}	ControlPlaneError
 //	@Failure		503		{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName}/start [post]
+//	@Router			/v1/apps/{appId}/start [post]
 func (h *AppHandler) Start(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -225,7 +253,7 @@ func (h *AppHandler) Start(c *gin.Context) {
 
 	scheduler := ds.GetAppScheduler()
 
-	app, err := scheduler.StartApp(appName)
+	app, err := scheduler.StartApp(appId)
 	if err != nil {
 		var status int
 		switch {
@@ -259,7 +287,7 @@ func (h *AppHandler) Start(c *gin.Context) {
 //	@Description	Stop an app
 //	@Tags			Apps
 //	@Produce		json
-//	@Param			appName	path		string	true	"App name"
+//	@Param			appId	path		string	true	"App ID"
 //	@Success		200		{object}	AppResponse
 //	@Failure		400		{object}	ControlPlaneError
 //	@Failure		401		{object}	ControlPlaneError
@@ -268,9 +296,9 @@ func (h *AppHandler) Start(c *gin.Context) {
 //	@Failure		429		{object}	ControlPlaneError
 //	@Failure		500		{object}	ControlPlaneError
 //	@Failure		503		{object}	ControlPlaneError
-//	@Router			/v1/apps/{appName}/stop [post]
+//	@Router			/v1/apps/{appId}/stop [post]
 func (h *AppHandler) Stop(c *gin.Context) {
-	appName := c.Param("appName")
+	appId := c.Param("appId")
 
 	ds, err := h.mgr.Get()
 	if err != nil {
@@ -280,7 +308,7 @@ func (h *AppHandler) Stop(c *gin.Context) {
 
 	scheduler := ds.GetAppScheduler()
 
-	app, err := scheduler.StopApp(appName)
+	app, err := scheduler.StopApp(appId)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, apps.ErrNotRunning) {

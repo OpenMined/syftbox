@@ -1069,3 +1069,191 @@ func (h *WorkspaceHandler) GetContent(c *gin.Context) {
 	// Serve the file with range request support
 	c.File(absPath)
 }
+
+// UpdateContent handles PUT requests to update file content
+//
+//	@Summary		Update file content
+//	@Description	Update the content of a file at the specified path. Supports overwrite, append, and prepend modes. Can create the file if it doesn't exist.
+//	@Tags			Workspace
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		WorkspaceContentUpdateRequest	true	"Request body"
+//	@Success		200		{object}	WorkspaceItem
+//	@Failure		400		{object}	ControlPlaneError
+//	@Failure		401		{object}	ControlPlaneError
+//	@Failure		403		{object}	ControlPlaneError
+//	@Failure		404		{object}	ControlPlaneError
+//	@Failure		429		{object}	ControlPlaneError
+//	@Failure		500		{object}	ControlPlaneError
+//	@Failure		503		{object}	ControlPlaneError
+//	@Router			/v1/workspace/content [put]
+func (h *WorkspaceHandler) UpdateContent(c *gin.Context) {
+	var req WorkspaceContentUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get the workspace
+	ws := ds.GetWorkspace()
+
+	// Make sure req.Path is an absolute path
+	if !strings.HasPrefix(req.Path, "/") {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "path must be an absolute path and start with /",
+		})
+		return
+	}
+
+	// Resolve the path
+	absPath := filepath.Join(ws.Root, req.Path)
+
+	// Check if the file exists
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if !req.Create {
+				c.PureJSON(http.StatusNotFound, &ControlPlaneError{
+					ErrorCode: ErrCodeGetWorkspaceContentFailed,
+					Error:     "file not found",
+				})
+				return
+			}
+			// Create parent directories if they don't exist
+			if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+				c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+					ErrorCode: ErrCodeGetWorkspaceContentFailed,
+					Error:     fmt.Sprintf("failed to create parent directories: %v", err),
+				})
+				return
+			}
+			// Create empty file with default permissions
+			fileInfo, err = os.Stat(absPath)
+			if err == nil {
+				// File was created by another process between our check and creation
+				if fileInfo.IsDir() {
+					c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+						ErrorCode: ErrCodeBadRequest,
+						Error:     "path points to a directory, not a file",
+					})
+					return
+				}
+			} else {
+				// Create the file
+				f, err := os.Create(absPath)
+				if err != nil {
+					c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+						ErrorCode: ErrCodeGetWorkspaceContentFailed,
+						Error:     fmt.Sprintf("failed to create file: %v", err),
+					})
+					return
+				}
+				f.Close()
+				fileInfo, err = os.Stat(absPath)
+				if err != nil {
+					c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+						ErrorCode: ErrCodeGetWorkspaceContentFailed,
+						Error:     fmt.Sprintf("failed to stat created file: %v", err),
+					})
+					return
+				}
+			}
+		} else {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeGetWorkspaceContentFailed,
+				Error:     err.Error(),
+			})
+			return
+		}
+	} else if fileInfo.IsDir() {
+		c.PureJSON(http.StatusBadRequest, &ControlPlaneError{
+			ErrorCode: ErrCodeBadRequest,
+			Error:     "path points to a directory, not a file",
+		})
+		return
+	}
+
+	// Read existing content if needed
+	var existingContent []byte
+	if req.Mode != UpdateModeOverwrite {
+		existingContent, err = os.ReadFile(absPath)
+		if err != nil {
+			c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+				ErrorCode: ErrCodeGetWorkspaceContentFailed,
+				Error:     fmt.Sprintf("failed to read existing file: %v", err),
+			})
+			return
+		}
+	}
+
+	// Prepare the new content based on the mode
+	var newContent []byte
+	switch req.Mode {
+	case UpdateModeOverwrite:
+		newContent = []byte(req.Content)
+	case UpdateModeAppend:
+		newContent = append(existingContent, []byte(req.Content)...)
+	case UpdateModePrepend:
+		newContent = append([]byte(req.Content), existingContent...)
+	}
+
+	// Write the content to the file
+	if err := os.WriteFile(absPath, newContent, fileInfo.Mode()); err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeGetWorkspaceContentFailed,
+			Error:     fmt.Sprintf("failed to write file: %v", err),
+		})
+		return
+	}
+
+	// Get updated file info
+	updatedInfo, err := os.Stat(absPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeGetWorkspaceContentFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get relative path for response
+	relPath, err := filepath.Rel(ws.Root, absPath)
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeGetWorkspaceContentFailed,
+			Error:     err.Error(),
+		})
+		return
+	}
+	relPath = filepath.Join("/", filepath.ToSlash(relPath))
+
+	// Create response item
+	item := WorkspaceItem{
+		Id:          relPath,
+		Name:        filepath.Base(absPath),
+		Type:        WorkspaceItemTypeFile,
+		Path:        relPath,
+		CreatedAt:   updatedInfo.ModTime(),
+		ModifiedAt:  updatedInfo.ModTime(),
+		Size:        updatedInfo.Size(),
+		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions: []Permission{},   // TODO: Replace with actual permissions
+		Children:    []WorkspaceItem{},
+	}
+
+	c.PureJSON(http.StatusOK, &item)
+}

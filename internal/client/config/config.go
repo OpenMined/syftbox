@@ -17,7 +17,7 @@ var (
 	home, _            = os.UserHomeDir()
 	DefaultConfigPath  = filepath.Join(home, ".syftbox", "config.json")
 	DefaultDataDir     = filepath.Join(home, "SyftBox")
-	DefaultServerURL   = "https://syftbox.net"
+	DefaultServerURL   = "https://syftboxdev.openmined.org"
 	DefaultClientURL   = "http://localhost:7938"
 	DefaultLogFilePath = filepath.Join(home, ".syftbox", "logs", "syftbox.log")
 	DefaultAppsEnabled = true
