@@ -501,7 +501,7 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 }
 
 func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
-	slog.Info("processHttpMessage", "msgType", msg.Type, "msgId", msg.Id)
+	slog.Debug("processHttpMessage", "msgType", msg.Type, "msgId", msg.Id)
 	httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
 	if !ok {
 		slog.Error("processHttpMessage: invalid type assertion for msg.Data",
