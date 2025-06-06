@@ -149,9 +149,26 @@ type WorkspaceItemCopyResponse struct {
 	Item WorkspaceItem `json:"item"`
 }
 
+// UpdateMode represents how the content should be updated
+type UpdateMode string
+
+const (
+	UpdateModeOverwrite UpdateMode = "overwrite" // Replace entire file content
+	UpdateModeAppend    UpdateMode = "append"    // Add content to end of file
+	UpdateModePrepend   UpdateMode = "prepend"   // Add content to start of file
+)
+
 // WorkspaceContentRequest represents the request parameters for getting file content
 type WorkspaceContentRequest struct {
 	Path string `form:"path" binding:"required"`
+}
+
+// WorkspaceContentUpdateRequest represents the request for updating file content
+type WorkspaceContentUpdateRequest struct {
+	Path    string     `json:"path" binding:"required"`
+	Content string     `json:"content" binding:"required"`
+	Mode    UpdateMode `json:"mode" binding:"required,oneof=overwrite append prepend" default:"overwrite"`
+	Create  bool       `json:"create" default:"false"` // Create file if it doesn't exist
 }
 
 // WorkspaceConflictError represents an error response when there is a conflict with an existing item

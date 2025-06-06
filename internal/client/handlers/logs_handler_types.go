@@ -10,7 +10,7 @@ type LogEntry struct {
 // LogsRequest represents the request parameters for retrieving logs
 type LogsRequest struct {
 	// The name of the app to retrieve logs for.
-	AppName string `form:"appName" binding:"required" default:"system"`
+	AppId string `form:"appId" binding:"required" default:"system"`
 	// Specify the pagination token from a previous request to retrieve the next page of results.
 	StartingToken int64 `form:"startingToken" binding:"min=1" default:"1"`
 	// The maximum number of logs to return in one page of results.
