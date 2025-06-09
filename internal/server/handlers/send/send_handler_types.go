@@ -57,7 +57,8 @@ func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
 			h.Headers[k] = v[0]
 		}
 	}
-	h.Method = ctx.Request.Method
+	// Bind x-syft-from to Headers
+	h.Headers["x-syft-from"] = h.From
 }
 
 // PollObjectRequest represents the request for polling
