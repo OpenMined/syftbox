@@ -48,6 +48,9 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	// Bind request method
 	req.Method = ctx.Request.Method
 
+	// Bind headers
+	req.BindHeaders(ctx)
+
 	// Read request body with size limit
 	bodyBytes, err := readRequestBody(ctx, h.service.cfg.MaxBodySize)
 	if err != nil {

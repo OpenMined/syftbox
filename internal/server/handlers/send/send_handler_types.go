@@ -1,9 +1,7 @@
 package send
 
 import (
-	"encoding/json"
-	"fmt"
-
+	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
@@ -41,25 +39,25 @@ type PollInfo struct {
 	PollURL string `json:"poll_url"`
 }
 
-type JSONHeaders map[string]string
-
-// UnmarshalParam implements gin.ParamUnmarshaler for automatic header binding
-func (h *JSONHeaders) UnmarshalParam(param string) error {
-	var headers map[string]string
-	if err := json.Unmarshal([]byte(param), &headers); err != nil {
-		return fmt.Errorf("invalid JSON in headers: %v", err)
-	}
-	*h = JSONHeaders(headers)
-	return nil
-}
+type Headers map[string]string
 
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
 	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"` // Binds to the syft url using UnmarshalParam
 	From    string           `form:"x-syft-from" binding:"required"`
-	Headers JSONHeaders      `header:"x-syft-headers"`
 	Timeout int              `form:"timeout" binding:"gte=0"`
-	Method  string           `form:"method"`
+	Method  string           // Will be set from request method
+	Headers Headers          // Will be set from request headers
+}
+
+func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
+	h.Headers = make(Headers)
+	for k, v := range ctx.Request.Header {
+		if len(v) > 0 {
+			h.Headers[k] = v[0]
+		}
+	}
+	h.Method = ctx.Request.Method
 }
 
 // PollObjectRequest represents the request for polling

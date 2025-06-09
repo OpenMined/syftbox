@@ -52,6 +52,9 @@ func NewSendService(hub *ws.WebsocketHub, blob *blob.BlobService, cfg *Config) *
 
 // SendMessage handles sending a message to a user
 func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error) {
+
+	// Create the HTTP message
+
 	msg := syftmsg.NewHttpMsg(
 		req.From,
 		req.SyftURL,
