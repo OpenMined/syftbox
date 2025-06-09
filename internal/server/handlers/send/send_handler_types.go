@@ -20,6 +20,7 @@ const (
 	ErrorInvalidRequest = "invalid_request"
 	ErrorInternal       = "internal_error"
 	ErrorNotFound       = "not_found"
+	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s"
 )
 
 // APIError represents a standardized error response
@@ -63,11 +64,10 @@ type MessageRequest struct {
 
 // PollObjectRequest represents the request for polling
 type PollObjectRequest struct {
-	RequestID string `form:"request_id" binding:"required"`
-	AppName   string `form:"app_name" binding:"required"`
-	AppEp     string `form:"app_endpoint" binding:"required"`
-	User      string `form:"user" binding:"required"`
-	Timeout   int    `form:"timeout,omitempty" binding:"gte=0"`
+	RequestID string           `form:"x-syft-request-id" binding:"required"`
+	SyftURL   utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
+	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"`
+	UserAgent string           `header:"user-agent,omitempty"`
 }
 
 // SendResult represents the result of a send operation

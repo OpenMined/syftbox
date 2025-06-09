@@ -15,6 +15,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/ws"
 	"github.com/openmined/syftbox/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 var (
@@ -73,13 +74,13 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 }
 
 // handleOfflineMessage handles sending a message when the user is offline
-func (s *SendService) handleOfflineMessage(ctx context.Context, req *MessageRequest, httpMsg *syftmsg.HttpMsg) (*SendResult, error) {
+func (s *SendService) handleOfflineMessage(
+	ctx context.Context,
+	req *MessageRequest,
+	httpMsg *syftmsg.HttpMsg,
+) (*SendResult, error) {
 	blobPath := path.Join(
-		req.SyftURL.Datasite,
-		"app_data",
-		req.SyftURL.AppName,
-		"rpc",
-		req.SyftURL.Endpoint,
+		req.SyftURL.ToLocalPath(),
 		fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
 	)
 
@@ -89,11 +90,13 @@ func (s *SendService) handleOfflineMessage(ctx context.Context, req *MessageRequ
 		return nil, fmt.Errorf("failed to create RPCMsg: %w", err)
 	}
 
+	// Marshal the RPC message
 	rpcMsgBytes, err := json.Marshal(rpcMsg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal RPCMsg: %w", err)
 	}
 
+	// Save the RPC message to blob storage
 	if _, err := s.blob.Backend().PutObject(ctx, &blob.PutObjectParams{
 		Key:  blobPath,
 		ETag: rpcMsg.ID.String(),
@@ -107,11 +110,7 @@ func (s *SendService) handleOfflineMessage(ctx context.Context, req *MessageRequ
 	return &SendResult{
 		Status:    http.StatusAccepted,
 		RequestID: httpMsg.Id,
-
-		PollURL: s.constructPollURL(
-			httpMsg.Id, req.SyftURL.Datasite,
-			req.SyftURL.AppName, req.SyftURL.Endpoint,
-		),
+		PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL),
 	}, nil
 }
 
@@ -122,11 +121,7 @@ func (s *SendService) handleOnlineMessage(
 	httpMsg *syftmsg.HttpMsg,
 ) (*SendResult, error) {
 	blobPath := path.Join(
-		req.SyftURL.Datasite,
-		"app_data",
-		req.SyftURL.AppName,
-		"rpc",
-		req.SyftURL.Endpoint,
+		req.SyftURL.ToLocalPath(),
 		fmt.Sprintf("%s.response", httpMsg.Id),
 	)
 
@@ -141,12 +136,7 @@ func (s *SendService) handleOnlineMessage(
 			return &SendResult{
 				Status:    http.StatusAccepted,
 				RequestID: httpMsg.Id,
-				PollURL: s.constructPollURL(
-					httpMsg.Id,
-					req.SyftURL.Datasite,
-					req.SyftURL.AppName,
-					req.SyftURL.Endpoint,
-				),
+				PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL),
 			}, nil
 		}
 		return nil, err
@@ -180,7 +170,7 @@ func (s *SendService) handleOnlineMessage(
 // PollForResponse handles polling for a response
 func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error) {
 	fileName := fmt.Sprintf("%s.response", req.RequestID)
-	blobPath := path.Join(req.User, "app_data", req.AppName, "rpc", req.AppEp, fileName)
+	blobPath := path.Join(req.SyftURL.ToLocalPath(), fileName)
 
 	timeout := req.Timeout
 	if timeout <= 0 {
@@ -204,9 +194,9 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 
 	// Clean up in background
 	go s.cleanReqResponse(
-		req.User,
-		req.AppName,
-		req.AppEp,
+		req.SyftURL.Datasite,
+		req.SyftURL.AppName,
+		req.SyftURL.Endpoint,
 		req.RequestID,
 	)
 
@@ -260,13 +250,11 @@ func (s *SendService) cleanReqResponse(sender, appName, appEp, requestID string)
 }
 
 // constructPollURL constructs the poll URL for a request
-func (s *SendService) constructPollURL(requestID, user, appName, appEp string) string {
+func (s *SendService) constructPollURL(requestID string, syftURL utils.SyftBoxURL) string {
 	return fmt.Sprintf(
-		"/send/poll?request_id=%s&user=%s&app_name=%s&app_endpoint=%s",
+		PollURL,
 		requestID,
-		user,
-		appName,
-		appEp,
+		syftURL.BaseURL(),
 	)
 }
 

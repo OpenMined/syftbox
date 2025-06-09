@@ -61,6 +61,11 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	}
 
 	v1 := r.Group("/api/v1")
+
+	// send rpc routes
+	v1.Any("/send/msg", sendH.SendMsg)
+	v1.GET("/send/poll", sendH.PollForResponse)
+
 	v1.Use(middlewares.JWTAuth(svc.Auth))
 	// v1.Use(middlewares.RateLimiter("100-S")) // todo
 	{
@@ -78,8 +83,6 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
-		v1.Any("/send/msg", sendH.SendMsg)
-		v1.GET("/send/poll", sendH.PollForResponse)
 	}
 
 	r.NoRoute(func(c *gin.Context) {

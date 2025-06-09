@@ -34,11 +34,16 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error in field '%s': %s", e.Field, e.Message)
 }
 
+// Syft base URL
+func (s *SyftBoxURL) BaseURL() string {
+	endpoint := strings.Trim(s.Endpoint, pathSeparator)
+	return fmt.Sprintf("%s%s/%s/%s/%s/%s",
+		syftScheme, s.Datasite, appDataPath, s.AppName, rpcPath, endpoint)
+}
+
 // String returns the string representation of the SyftBoxURL
 func (s *SyftBoxURL) String() string {
-	endpoint := strings.Trim(s.Endpoint, pathSeparator)
-	baseURL := fmt.Sprintf("%s%s/%s/%s/%s/%s",
-		syftScheme, s.Datasite, appDataPath, s.AppName, rpcPath, endpoint)
+	baseURL := s.BaseURL()
 
 	// Add query parameters if they exist
 	if len(s.QueryParams) > 0 {

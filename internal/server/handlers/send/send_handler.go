@@ -77,6 +77,10 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		return
 	}
 
+	// add poll url as location header
+	ctx.Header("Location", result.PollURL)
+
+	// return poll info
 	ctx.PureJSON(result.Status, APIResponse{
 		RequestID: result.RequestID,
 		Data: PollInfo{
@@ -99,9 +103,27 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 		return
 	}
 
+	if err := ctx.ShouldBindHeader(&req); err != nil {
+		slog.Error("failed to bind headers", "error", err)
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:     ErrorInvalidRequest,
+			Message:   err.Error(),
+			RequestID: req.RequestID,
+		})
+		return
+	}
+
 	result, err := h.service.PollForResponse(ctx.Request.Context(), &req)
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
+			// Add poll URL to the Response header
+			pollURL := h.service.constructPollURL(
+				req.RequestID,
+				req.SyftURL,
+			)
+
+			// add poll url as location header
+			ctx.Header("Location", pollURL)
 			ctx.PureJSON(http.StatusAccepted, APIError{
 				Error:     ErrorTimeout,
 				Message:   "Polling timeout reached. The request may still be processing.",
