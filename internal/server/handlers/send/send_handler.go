@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -128,27 +129,27 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 				req.SyftURL,
 			)
 
-			// add poll url as location header
-			ctx.Header("Location", pollURL)
-
 			userAgent := ctx.Request.UserAgent()
 			isBrowser := isBrowserUserAgent(userAgent)
+			var refreshInterval int
+			if req.Timeout > 0 {
+				refreshInterval = req.Timeout / 1000
+			} else {
+				refreshInterval = h.service.cfg.DefaultTimeoutMs / 1000
+			}
+
+			// add poll url as location header
+			ctx.Header("Location", pollURL)
+			ctx.Header("Retry-After", strconv.Itoa(refreshInterval))
 
 			if isBrowser || contentTypeHTML {
 				// Return a HTML page with a link to the poll URL
 				// with a http-equiv refresh tag
-				// with refresh interval in seconds
-				var refreshIntervalMs int
-				if req.Timeout > 0 {
-					refreshIntervalMs = req.Timeout
-				} else {
-					refreshIntervalMs = h.service.cfg.DefaultTimeoutMs
-				}
 
 				ctx.HTML(http.StatusAccepted, "poll.html", gin.H{
 					"PollURL":         pollURL,
 					"BaseURL":         ctx.Request.Host,
-					"RefreshInterval": refreshIntervalMs / 1000, // in seconds
+					"RefreshInterval": refreshInterval, // in seconds
 				})
 				return
 			} else {
