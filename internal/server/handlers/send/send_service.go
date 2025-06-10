@@ -20,6 +20,7 @@ import (
 
 var (
 	ErrPollTimeout = errors.New("poll timeout")
+	ErrNoRequest   = errors.New("no request found")
 )
 
 // SendService handles the business logic for message sending and polling
@@ -31,20 +32,22 @@ type SendService struct {
 
 // Config holds the service configuration
 type Config struct {
-	DefaultTimeoutMs int
-	MaxTimeoutMs     int
-	MaxBodySize      int64
-	PollIntervalMs   int
+	DefaultTimeoutMs    int
+	MaxTimeoutMs        int
+	MaxBodySize         int64
+	PollIntervalMs      int
+	RequestChkTimeoutMs int
 }
 
 // NewSendService creates a new send service
 func NewSendService(hub *ws.WebsocketHub, blob *blob.BlobService, cfg *Config) *SendService {
 	if cfg == nil {
 		cfg = &Config{
-			DefaultTimeoutMs: 1000,    // 1000 ms
-			MaxTimeoutMs:     10000,   // 10 seconds
-			MaxBodySize:      4 << 20, // 4MB
-			PollIntervalMs:   500,     // 500 ms
+			DefaultTimeoutMs:    1000,    // 1000 ms
+			MaxTimeoutMs:        10000,   // 10 seconds
+			MaxBodySize:         4 << 20, // 4MB
+			PollIntervalMs:      500,     // 500 ms
+			RequestChkTimeoutMs: 200,     // 200 ms
 		}
 	}
 	return &SendService{hub: hub, blob: blob, cfg: cfg}
@@ -172,15 +175,29 @@ func (s *SendService) handleOnlineMessage(
 
 // PollForResponse handles polling for a response
 func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error) {
-	fileName := fmt.Sprintf("%s.response", req.RequestID)
-	blobPath := path.Join(req.SyftURL.ToLocalPath(), fileName)
+
+	// Validate if the corresponding request exists
+	requestBlobPath := path.Join(req.SyftURL.ToLocalPath(), fmt.Sprintf("%s.request", req.RequestID))
+
+	_, err := s.pollForObject(ctx, requestBlobPath, s.cfg.RequestChkTimeoutMs)
+
+	if err != nil {
+		if errors.Is(err, ErrPollTimeout) {
+			return nil, ErrNoRequest
+		}
+		return nil, err
+	}
+
+	// Check if the corresponding response exists
+	responseFileName := fmt.Sprintf("%s.response", req.RequestID)
+	responseBlobPath := path.Join(req.SyftURL.ToLocalPath(), responseFileName)
 
 	timeout := req.Timeout
 	if timeout <= 0 {
 		timeout = s.cfg.DefaultTimeoutMs
 	}
 
-	object, err := s.pollForObject(ctx, blobPath, timeout)
+	object, err := s.pollForObject(ctx, responseBlobPath, timeout)
 	if err != nil {
 		return nil, err
 	}

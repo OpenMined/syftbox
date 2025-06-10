@@ -129,8 +129,11 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 				req.SyftURL,
 			)
 
+			// check if the request is from a browser
 			userAgent := ctx.Request.UserAgent()
 			isBrowser := isBrowserUserAgent(userAgent)
+
+			// calculate refresh interval in seconds
 			var refreshInterval int
 			if req.Timeout > 0 {
 				refreshInterval = req.Timeout / 1000
@@ -138,14 +141,13 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 				refreshInterval = h.service.cfg.DefaultTimeoutMs / 1000
 			}
 
-			// add poll url as location header
+			// add poll url as location header and retry after header
 			ctx.Header("Location", pollURL)
 			ctx.Header("Retry-After", strconv.Itoa(refreshInterval))
 
 			if isBrowser || contentTypeHTML {
 				// Return a HTML page with a link to the poll URL
-				// with a http-equiv refresh tag
-
+				// with auto refresh capability
 				ctx.HTML(http.StatusAccepted, "poll.html", gin.H{
 					"PollURL":         pollURL,
 					"BaseURL":         ctx.Request.Host,
@@ -160,6 +162,15 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 				})
 				return
 			}
+		}
+
+		if errors.Is(err, ErrNoRequest) {
+			ctx.PureJSON(http.StatusNotFound, APIError{
+				Error:     ErrorNotFound,
+				Message:   "No request found.",
+				RequestID: req.RequestID,
+			})
+			return
 		}
 
 		slog.Error("failed to poll for response", "error", err)
