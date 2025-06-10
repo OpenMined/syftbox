@@ -41,7 +41,7 @@ type Config struct {
 func NewSendService(hub *ws.WebsocketHub, blob *blob.BlobService, cfg *Config) *SendService {
 	if cfg == nil {
 		cfg = &Config{
-			DefaultTimeoutMs: 200,     // 200 ms
+			DefaultTimeoutMs: 1000,    // 1000 ms
 			MaxTimeoutMs:     10000,   // 10 seconds
 			MaxBodySize:      4 << 20, // 4MB
 			PollIntervalMs:   500,     // 500 ms

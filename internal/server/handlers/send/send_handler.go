@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/blob"
@@ -117,6 +118,8 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 	}
 
 	result, err := h.service.PollForResponse(ctx.Request.Context(), &req)
+	contentTypeHTML := ctx.Request.Header.Get("Content-Type") == "text/html"
+
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
 			// Add poll URL to the Response header
@@ -127,12 +130,35 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 
 			// add poll url as location header
 			ctx.Header("Location", pollURL)
-			ctx.PureJSON(http.StatusAccepted, APIError{
-				Error:     ErrorTimeout,
-				Message:   "Polling timeout reached. The request may still be processing.",
-				RequestID: req.RequestID,
-			})
-			return
+
+			userAgent := ctx.Request.UserAgent()
+			isBrowser := isBrowserUserAgent(userAgent)
+
+			if isBrowser || contentTypeHTML {
+				// Return a HTML page with a link to the poll URL
+				// with a http-equiv refresh tag
+				// with refresh interval in seconds
+				var refreshIntervalMs int
+				if req.Timeout > 0 {
+					refreshIntervalMs = req.Timeout
+				} else {
+					refreshIntervalMs = h.service.cfg.DefaultTimeoutMs
+				}
+
+				ctx.HTML(http.StatusAccepted, "poll.html", gin.H{
+					"PollURL":         pollURL,
+					"BaseURL":         ctx.Request.Host,
+					"RefreshInterval": refreshIntervalMs / 1000, // in seconds
+				})
+				return
+			} else {
+				ctx.PureJSON(http.StatusAccepted, APIError{
+					Error:     ErrorTimeout,
+					Message:   "Polling timeout reached. The request may still be processing.",
+					RequestID: req.RequestID,
+				})
+				return
+			}
 		}
 
 		slog.Error("failed to poll for response", "error", err)
@@ -171,4 +197,20 @@ func readRequestBody(ctx *gin.Context, maxSize int64) ([]byte, error) {
 	}
 
 	return bodyBytes, nil
+}
+
+func isBrowserUserAgent(userAgent string) bool {
+	browserKeywords := []string{
+		"Mozilla", "Chrome", "Safari", "Firefox", "Edge",
+		"Opera", "Trident", "MSIE", "Webkit",
+	}
+
+	userAgent = strings.ToLower(userAgent)
+	for _, keyword := range browserKeywords {
+		if strings.Contains(userAgent, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
+
 }

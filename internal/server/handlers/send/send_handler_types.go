@@ -43,14 +43,17 @@ type Headers map[string]string
 
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
-	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"` // Binds to the syft url using UnmarshalParam
-	From    string           `form:"x-syft-from" binding:"required"`
-	Timeout int              `form:"timeout" binding:"gte=0"`
+	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
+	From    string           `form:"x-syft-from" binding:"required"` // The sender of the message
+	Timeout int              `form:"timeout" binding:"gte=0"`        // The timeout for the request
+	AsRaw   bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
 	Method  string           // Will be set from request method
 	Headers Headers          // Will be set from request headers
 }
 
 func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
+
+	// TODO: Filter out headers that are not allowed
 	h.Headers = make(Headers)
 	for k, v := range ctx.Request.Header {
 		if len(v) > 0 {
@@ -66,7 +69,7 @@ type PollObjectRequest struct {
 	RequestID string           `form:"x-syft-request-id" binding:"required"`
 	SyftURL   utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
 	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"`
-	UserAgent string           `header:"user-agent,omitempty"`
+	UserAgent string           `form:"user-agent,omitempty"`
 }
 
 // SendResult represents the result of a send operation

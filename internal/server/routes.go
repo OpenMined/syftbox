@@ -31,6 +31,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		r.Use(middlewares.HSTS())
 	}
 
+	// Load HTML templates
+	r.LoadHTMLGlob("internal/server/handlers/send/*.html")
+
 	// --------------------------- handlers ---------------------------
 
 	blobH := blob.New(svc.Blob)
