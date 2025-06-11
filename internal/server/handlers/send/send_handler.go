@@ -128,6 +128,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 				req.RequestID,
 				req.SyftURL,
 				req.From,
+				req.AsRaw,
 			)
 
 			// check if the request is from a browser

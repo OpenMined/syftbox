@@ -18,7 +18,7 @@ const (
 	ErrorInvalidRequest = "invalid_request"
 	ErrorInternal       = "internal_error"
 	ErrorNotFound       = "not_found"
-	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s&x-syft-from=%s"
+	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s&x-syft-from=%s&x-syft-raw=%t"
 )
 
 // APIError represents a standardized error response
