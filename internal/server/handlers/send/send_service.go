@@ -116,7 +116,7 @@ func (s *SendService) handleOfflineMessage(
 	return &SendResult{
 		Status:    http.StatusAccepted,
 		RequestID: httpMsg.Id,
-		PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL),
+		PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL, req.From),
 	}, nil
 }
 
@@ -142,7 +142,7 @@ func (s *SendService) handleOnlineMessage(
 			return &SendResult{
 				Status:    http.StatusAccepted,
 				RequestID: httpMsg.Id,
-				PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL),
+				PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL, req.From),
 			}, nil
 		}
 		return nil, err
@@ -270,11 +270,12 @@ func (s *SendService) cleanReqResponse(sender, appName, appEp, requestID string)
 }
 
 // constructPollURL constructs the poll URL for a request
-func (s *SendService) constructPollURL(requestID string, syftURL utils.SyftBoxURL) string {
+func (s *SendService) constructPollURL(requestID string, syftURL utils.SyftBoxURL, from string) string {
 	return fmt.Sprintf(
 		PollURL,
 		requestID,
 		syftURL.BaseURL(),
+		from,
 	)
 }
 

@@ -18,7 +18,7 @@ const (
 	ErrorInvalidRequest = "invalid_request"
 	ErrorInternal       = "internal_error"
 	ErrorNotFound       = "not_found"
-	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s"
+	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s&x-syft-from=%s"
 )
 
 // APIError represents a standardized error response
@@ -67,6 +67,7 @@ func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
 // PollObjectRequest represents the request for polling
 type PollObjectRequest struct {
 	RequestID string           `form:"x-syft-request-id" binding:"required"`
+	From      string           `form:"x-syft-from" binding:"required"`
 	SyftURL   utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
 	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"`
 	UserAgent string           `form:"user-agent,omitempty"`
