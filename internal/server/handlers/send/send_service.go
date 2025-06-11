@@ -153,7 +153,7 @@ func (s *SendService) handleOnlineMessage(
 		return nil, fmt.Errorf("failed to read object: %w", err)
 	}
 
-	responseBody, err := unmarshalResponse(bodyBytes)
+	responseBody, err := unmarshalResponse(bodyBytes, req.AsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -207,7 +207,7 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 		return nil, fmt.Errorf("failed to read object: %w", err)
 	}
 
-	responseBody, err := unmarshalResponse(bodyBytes)
+	responseBody, err := unmarshalResponse(bodyBytes, req.AsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
@@ -280,14 +280,24 @@ func (s *SendService) constructPollURL(requestID string, syftURL utils.SyftBoxUR
 
 // unmarshalResponse handles the unmarshaling of a response from blob storage
 // It expects the response to have a base64 encoded body field that contains JSON
-func unmarshalResponse(bodyBytes []byte) (map[string]interface{}, error) {
-	// First unmarshal the outer response
+func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, error) {
+	// If the request is raw, return the body as bytes
+	if asRaw {
+		var bodyJson map[string]interface{}
+		err := json.Unmarshal(bodyBytes, &bodyJson)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal response: %w", err)
+		}
+		return map[string]interface{}{"message": bodyJson}, nil
+	}
+
+	// Otherwise, unmarshal it as a SyftRPCMessage
 	var rpcMsg syftmsg.SyftRPCMessage
 	err := json.Unmarshal(bodyBytes, &rpcMsg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
+	// decode the body if it is base64 encoded
 	// return the SyftRPCMessage as a different json representation
 	return map[string]interface{}{"message": rpcMsg.ToJsonMap()}, nil
 }

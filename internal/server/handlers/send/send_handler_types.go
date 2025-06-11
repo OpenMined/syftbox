@@ -70,6 +70,7 @@ type PollObjectRequest struct {
 	SyftURL   utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
 	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"`
 	UserAgent string           `form:"user-agent,omitempty"`
+	AsRaw     bool             `form:"x-syft-raw" default:"false"` // If true, the request body will be read and sent as is
 }
 
 // SendResult represents the result of a send operation
