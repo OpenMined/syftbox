@@ -1,7 +1,9 @@
 package server
 
 import (
+	"embed"
 	"fmt"
+	"html/template"
 	"net/http"
 	"os"
 
@@ -18,6 +20,9 @@ import (
 	"github.com/openmined/syftbox/internal/version"
 )
 
+//go:embed handlers/send/*.html
+var templateFS embed.FS
+
 func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Handler {
 	r := gin.New()
 
@@ -31,8 +36,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		r.Use(middlewares.HSTS())
 	}
 
-	// Load HTML templates
-	r.LoadHTMLGlob("internal/server/handlers/send/*.html")
+	// Load HTML templates from embedded filesystem
+	tmpl := template.Must(template.ParseFS(templateFS, "handlers/send/*.html"))
+	r.SetHTMLTemplate(tmpl)
 
 	// --------------------------- handlers ---------------------------
 
