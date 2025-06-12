@@ -1,5 +1,10 @@
 package send
 
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/utils"
+)
+
 type PollStatus string
 
 const (
@@ -13,6 +18,7 @@ const (
 	ErrorInvalidRequest = "invalid_request"
 	ErrorInternal       = "internal_error"
 	ErrorNotFound       = "not_found"
+	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s&x-syft-from=%s&x-syft-raw=%t"
 )
 
 // APIError represents a standardized error response
@@ -33,24 +39,39 @@ type PollInfo struct {
 	PollURL string `json:"poll_url"`
 }
 
+type Headers map[string]string
+
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
-	From    string            `header:"x-syft-from" binding:"required"`
-	To      string            `header:"x-syft-to" binding:"required"`
-	AppName string            `header:"x-syft-app" binding:"required"`
-	AppEp   string            `header:"x-syft-appep" binding:"required"`
-	Headers map[string]string `header:"x-syft-headers"`
-	Status  int               `header:"x-syft-status"`
-	Timeout int               `form:"timeout" header:"x-syft-timeout" binding:"gte=0"`
+	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
+	From    string           `form:"x-syft-from" binding:"required"` // The sender of the message
+	Timeout int              `form:"timeout" binding:"gte=0"`        // The timeout for the request
+	AsRaw   bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
+	Method  string           // Will be set from request method
+	Headers Headers          // Will be set from request headers
+}
+
+func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
+
+	// TODO: Filter out headers that are not allowed
+	h.Headers = make(Headers)
+	for k, v := range ctx.Request.Header {
+		if len(v) > 0 {
+			h.Headers[k] = v[0]
+		}
+	}
+	// Bind x-syft-from to Headers
+	h.Headers["x-syft-from"] = h.From
 }
 
 // PollObjectRequest represents the request for polling
 type PollObjectRequest struct {
-	RequestID string `form:"request_id" binding:"required"`
-	AppName   string `form:"app_name" binding:"required"`
-	AppEp     string `form:"app_endpoint" binding:"required"`
-	User      string `form:"user" binding:"required"`
-	Timeout   int    `form:"timeout,omitempty" binding:"gte=0"`
+	RequestID string           `form:"x-syft-request-id" binding:"required"`
+	From      string           `form:"x-syft-from" binding:"required"`
+	SyftURL   utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
+	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"`
+	UserAgent string           `form:"user-agent,omitempty"`
+	AsRaw     bool             `form:"x-syft-raw" default:"false"` // If true, the request body will be read and sent as is
 }
 
 // SendResult represents the result of a send operation

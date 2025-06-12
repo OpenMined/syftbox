@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/blob"
@@ -26,6 +28,17 @@ func New(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
 // SendMsg handles sending a message
 func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	var req MessageRequest
+
+	// Bind query parameters
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:   ErrorInvalidRequest,
+			Message: err.Error(),
+		})
+		return
+	}
+
+	// Bind headers
 	if err := ctx.ShouldBindHeader(&req); err != nil {
 		ctx.PureJSON(http.StatusBadRequest, APIError{
 			Error:   ErrorInvalidRequest,
@@ -33,6 +46,12 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		})
 		return
 	}
+
+	// Bind request method
+	req.Method = ctx.Request.Method
+
+	// Bind headers
+	req.BindHeaders(ctx)
 
 	// Read request body with size limit
 	bodyBytes, err := readRequestBody(ctx, h.service.cfg.MaxBodySize)
@@ -63,6 +82,10 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 		return
 	}
 
+	// add poll url as location header
+	ctx.Header("Location", result.PollURL)
+
+	// return poll info
 	ctx.PureJSON(result.Status, APIResponse{
 		RequestID: result.RequestID,
 		Data: PollInfo{
@@ -85,12 +108,68 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 		return
 	}
 
+	if err := ctx.ShouldBindHeader(&req); err != nil {
+		slog.Error("failed to bind headers", "error", err)
+		ctx.PureJSON(http.StatusBadRequest, APIError{
+			Error:     ErrorInvalidRequest,
+			Message:   err.Error(),
+			RequestID: req.RequestID,
+		})
+		return
+	}
+
 	result, err := h.service.PollForResponse(ctx.Request.Context(), &req)
+	contentTypeHTML := ctx.Request.Header.Get("Content-Type") == "text/html"
+
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
-			ctx.PureJSON(http.StatusAccepted, APIError{
-				Error:     ErrorTimeout,
-				Message:   "Polling timeout reached. The request may still be processing.",
+			// Add poll URL to the Response header
+			pollURL := h.service.constructPollURL(
+				req.RequestID,
+				req.SyftURL,
+				req.From,
+				req.AsRaw,
+			)
+
+			// check if the request is from a browser
+			userAgent := ctx.Request.UserAgent()
+			isBrowser := isBrowserUserAgent(userAgent)
+
+			// calculate refresh interval in seconds
+			var refreshInterval int
+			if req.Timeout > 0 {
+				refreshInterval = req.Timeout / 1000
+			} else {
+				refreshInterval = h.service.cfg.DefaultTimeoutMs / 1000
+			}
+
+			// add poll url as location header and retry after header
+			ctx.Header("Location", pollURL)
+			ctx.Header("Retry-After", strconv.Itoa(refreshInterval))
+
+			if isBrowser || contentTypeHTML {
+				// Return a HTML page with a link to the poll URL
+				// with auto refresh capability
+				ctx.HTML(http.StatusAccepted, "poll.html", gin.H{
+					"PollURL":         pollURL,
+					"BaseURL":         ctx.Request.Host,
+					"RefreshInterval": refreshInterval, // in seconds
+				})
+				return
+			} else {
+				ctx.PureJSON(http.StatusAccepted, APIError{
+					Error:     ErrorTimeout,
+					Message:   "Polling timeout reached. The request may still be processing.",
+					RequestID: req.RequestID,
+				})
+				return
+			}
+		}
+
+		if errors.Is(err, ErrNoRequest) {
+			ctx.PureJSON(http.StatusNotFound, APIError{
+				Error:     ErrorNotFound,
+				Message:   "No request found.",
 				RequestID: req.RequestID,
 			})
 			return
@@ -132,4 +211,20 @@ func readRequestBody(ctx *gin.Context, maxSize int64) ([]byte, error) {
 	}
 
 	return bodyBytes, nil
+}
+
+func isBrowserUserAgent(userAgent string) bool {
+	browserKeywords := []string{
+		"Mozilla", "Chrome", "Safari", "Firefox", "Edge",
+		"Opera", "Trident", "MSIE", "Webkit",
+	}
+
+	userAgent = strings.ToLower(userAgent)
+	for _, keyword := range browserKeywords {
+		if strings.Contains(userAgent, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
+
 }

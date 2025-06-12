@@ -31,6 +31,9 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		r.Use(middlewares.HSTS())
 	}
 
+	// Load HTML templates
+	r.LoadHTMLGlob("internal/server/handlers/send/*.html")
+
 	// --------------------------- handlers ---------------------------
 
 	blobH := blob.New(svc.Blob)
@@ -61,6 +64,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	}
 
 	v1 := r.Group("/api/v1")
+
 	v1.Use(middlewares.JWTAuth(svc.Auth))
 	// v1.Use(middlewares.RateLimiter("100-S")) // todo
 	{
@@ -78,6 +82,8 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
+
+		// send rpc routes
 		v1.Any("/send/msg", sendH.SendMsg)
 		v1.GET("/send/poll", sendH.PollForResponse)
 	}
