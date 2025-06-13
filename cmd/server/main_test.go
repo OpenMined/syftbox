@@ -38,7 +38,8 @@ func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_EMAIL_SENDGRID_API_KEY", "sendgrid_api_key")
 
 	// Call loadConfig
-	cfg, err := loadConfig(rootCmd)
+	cfg, err := loadConfig(rootCmd, false)
+
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -104,7 +105,7 @@ email:
 	rootCmd.Flags().Set("config", dummyConfigFile)
 
 	// Call loadConfig
-	cfg, err := loadConfig(rootCmd)
+	cfg, err := loadConfig(rootCmd, true) // ignore env vars
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -173,7 +174,7 @@ func TestLoadConfigJSON(t *testing.T) {
 	rootCmd.Flags().Set("config", dummyConfigFile)
 
 	// Call loadConfig
-	cfg, err := loadConfig(rootCmd)
+	cfg, err := loadConfig(rootCmd, true) // ignore env vars
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 

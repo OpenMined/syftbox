@@ -32,7 +32,7 @@ var rootCmd = &cobra.Command{
 	Short:   "SyftBox CLI",
 	Version: version.Detailed(),
 	Run: func(cmd *cobra.Command, args []string) {
-		cfg, err := loadConfig(cmd)
+		cfg, err := loadConfig(cmd, false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %s\n", red.Bold(true).Render("ERROR"), err)
 			os.Exit(1)
@@ -130,7 +130,8 @@ func main() {
 
 // loadConfig initializes a config by reading config file/env vars, and cli flags
 // it does not guarantee if the contents are valid, as validation is delegated to the client
-func loadConfig(cmd *cobra.Command) (*config.Config, error) {
+// allows env vars to be ignored which means dev .env can exist while running tests
+func loadConfig(cmd *cobra.Command, ignoreEnv bool) (*config.Config, error) {
 	v := viper.New()
 
 	// config path
@@ -144,9 +145,11 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 		v.SetConfigType("json")
 	}
 
-	// Set up environment variables
-	v.SetEnvPrefix("SYFTBOX")
-	v.AutomaticEnv()
+	// Only use env vars if not disabled
+	if !ignoreEnv {
+		v.SetEnvPrefix("SYFTBOX")
+		v.AutomaticEnv()
+	}
 
 	// Bind cmd flags to viper & set defaults
 	bindWithDefaults(v, cmd)
