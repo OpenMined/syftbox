@@ -26,6 +26,13 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		return func(ctx *gin.Context) {
 			// expect user to be an email address
 			user := ctx.Query("user")
+
+			// if user is not set, check if the request has a x-syft-from query parameter
+			if user == "" {
+				user = ctx.Query("x-syft-from")
+			}
+
+			// check if the user is a valid email address
 			if !utils.IsValidEmail(user) {
 				ctx.Error(fmt.Errorf("invalid email"))
 				ctx.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{

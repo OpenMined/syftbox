@@ -1,7 +1,9 @@
 package server
 
 import (
+	"embed"
 	"fmt"
+	"html/template"
 	"net/http"
 	"os"
 
@@ -12,10 +14,14 @@ import (
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/explorer"
 	"github.com/openmined/syftbox/internal/server/handlers/install"
+	"github.com/openmined/syftbox/internal/server/handlers/send"
 	"github.com/openmined/syftbox/internal/server/handlers/ws"
 	"github.com/openmined/syftbox/internal/server/middlewares"
 	"github.com/openmined/syftbox/internal/version"
 )
+
+//go:embed handlers/send/*.html
+var templateFS embed.FS
 
 func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Handler {
 	r := gin.New()
@@ -30,12 +36,17 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		r.Use(middlewares.HSTS())
 	}
 
+	// Load HTML templates from embedded filesystem
+	tmpl := template.Must(template.ParseFS(templateFS, "handlers/send/*.html"))
+	r.SetHTMLTemplate(tmpl)
+
 	// --------------------------- handlers ---------------------------
 
 	blobH := blob.New(svc.Blob)
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
+	sendH := send.New(hub, svc.Blob)
 
 	// --------------------------- routes ---------------------------
 
@@ -59,6 +70,7 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	}
 
 	v1 := r.Group("/api/v1")
+
 	v1.Use(middlewares.JWTAuth(svc.Auth))
 	// v1.Use(middlewares.RateLimiter("100-S")) // todo
 	{
@@ -76,6 +88,10 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
+
+		// send rpc routes
+		v1.Any("/send/msg", sendH.SendMsg)
+		v1.GET("/send/poll", sendH.PollForResponse)
 	}
 
 	r.NoRoute(func(c *gin.Context) {
