@@ -19,7 +19,7 @@ func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_ACCESS_TOKEN", "test-access-token")
 	t.Setenv("SYFTBOX_CONFIG_PATH", "/tmp/syftbox-test.json")
 
-	cfg, err := loadConfig(rootCmd)
+	cfg, err := loadConfig(rootCmd, false)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
@@ -55,7 +55,7 @@ func TestLoadConfigJSON(t *testing.T) {
 	rootCmd.PersistentFlags().Set("config", dummyConfigFile)
 
 	// Call buildConfig
-	cfg, err := loadConfig(rootCmd)
+	cfg, err := loadConfig(rootCmd, true) // ignore env vars
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, dummyConfigFile, cfg.Path)

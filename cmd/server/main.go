@@ -43,7 +43,7 @@ var rootCmd = &cobra.Command{
 		cmd.SilenceUsage = true
 
 		// load config
-		cfg, err := loadConfig(cmd)
+		cfg, err := loadConfig(cmd, false)
 		if err != nil {
 			cmd.SilenceUsage = false // show usage
 			return err
@@ -122,7 +122,8 @@ func main() {
 }
 
 // loadConfig initializes viper, reads config file/env vars, and maps values to config
-func loadConfig(cmd *cobra.Command) (*server.Config, error) {
+// allows env vars to be ignored which means dev .env can exist while running tests
+func loadConfig(cmd *cobra.Command, ignoreEnv bool) (*server.Config, error) {
 	v := viper.New()
 
 	// Set up config file
@@ -137,10 +138,12 @@ func loadConfig(cmd *cobra.Command) (*server.Config, error) {
 		v.SetConfigType("json")
 	}
 
-	// Set up environment variables
-	v.SetEnvPrefix("SYFTBOX")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
+	// Only use env vars if not disabled
+	if !ignoreEnv {
+		v.SetEnvPrefix("SYFTBOX")
+		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		v.AutomaticEnv()
+	}
 
 	bindWithDefaults(v, cmd)
 
