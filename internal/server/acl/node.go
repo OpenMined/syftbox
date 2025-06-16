@@ -100,6 +100,9 @@ func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
 			})
 		}
 		n.rules = aclRules
+	} else {
+		// Clear rules when empty or nil slice is provided
+		n.rules = nil
 	}
 
 	// set the rules and terminal flag
