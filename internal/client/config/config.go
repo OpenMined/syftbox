@@ -55,29 +55,34 @@ func (c *Config) Save() error {
 func (c *Config) Validate() error {
 	if c.Path == "" {
 		c.Path = DefaultConfigPath
-	} else {
-		cfgPath, err := utils.ResolvePath(c.Path)
-		if err != nil {
-			return fmt.Errorf("invalid config path: %w", err)
-		}
-		c.Path = cfgPath
 	}
 
-	var err error
-	c.DataDir, err = utils.ResolvePath(c.DataDir)
+	// resolve config path
+	cfgPath, err := utils.ResolvePath(c.Path)
+	if err != nil {
+		return fmt.Errorf("invalid config path: %w", err)
+	}
+	c.Path = cfgPath
+
+	// resolve data dir
+	dataDir, err := utils.ResolvePath(c.DataDir)
 	if err != nil {
 		return err
 	}
+	c.DataDir = dataDir
 
+	// validate email
 	c.Email = strings.ToLower(c.Email)
 	if err := utils.ValidateEmail(c.Email); err != nil {
 		return err
 	}
 
+	// validate server url
 	if err := utils.ValidateURL(c.ServerURL); err != nil {
 		return fmt.Errorf("server url: %w", err)
 	}
 
+	// validate client url
 	if err := utils.ValidateURL(c.ClientURL); err != nil {
 		return fmt.Errorf("client url: %w", err)
 	}
