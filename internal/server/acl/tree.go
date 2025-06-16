@@ -3,7 +3,6 @@ package acl
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/openmined/syftbox/internal/aclspec"
@@ -22,7 +21,7 @@ type Tree struct {
 
 func NewTree() *Tree {
 	return &Tree{
-		root: NewNode(pathSep, false, 0),
+		root: NewNode(ACLPathSep, false, 0),
 	}
 }
 
@@ -39,9 +38,9 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 	}
 
 	// Clean and split the path
-	cleanPath := stripSep(ruleset.Path)
-	parts := strings.Split(cleanPath, pathSep)
-	pathDepth := strings.Count(cleanPath, pathSep)
+	cleanPath := ACLNormPath(ruleset.Path)
+	parts := strings.Split(cleanPath, ACLPathSep)
+	pathDepth := strings.Count(cleanPath, ACLPathSep)
 
 	// Check path depth limit (u8)
 	if pathDepth > 255 {
@@ -60,7 +59,8 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 		// Get or create child node
 		child, exists := current.GetChild(part)
 		if !exists {
-			fullPath := strings.Join(parts[:currentDepth], pathSep)
+			// Use forward slashes for paths
+			fullPath := ACLJoinPath(parts[:currentDepth]...)
 			child = NewNode(fullPath, false, currentDepth)
 			current.SetChild(part, child)
 		}
@@ -92,7 +92,7 @@ func (t *Tree) GetRule(path string) (*Rule, error) {
 // GetNearestNodeWithRules returns the nearest node in the tree that has associated rules for the given path.
 // It returns nil if no such node is found.
 func (t *Tree) GetNearestNodeWithRules(path string) *Node {
-	parts := pathParts(path)
+	parts := ACLPathSegments(path)
 
 	var candidate *Node
 	current := t.root
@@ -119,7 +119,7 @@ func (t *Tree) GetNearestNodeWithRules(path string) *Node {
 
 // GetNode finds the exact node applicable for the given path.
 func (t *Tree) GetNode(path string) *Node {
-	parts := pathParts(path)
+	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
@@ -142,7 +142,7 @@ func (t *Tree) RemoveRuleSet(path string) bool {
 	var parent *Node
 	var lastPart string
 
-	parts := pathParts(path)
+	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
@@ -160,12 +160,4 @@ func (t *Tree) RemoveRuleSet(path string) bool {
 	parent.DeleteChild(lastPart)
 
 	return true
-}
-
-func pathParts(path string) []string {
-	return strings.Split(stripSep(path), pathSep)
-}
-
-func stripSep(path string) string {
-	return strings.TrimLeft(filepath.Clean(path), pathSep)
 }

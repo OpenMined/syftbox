@@ -11,8 +11,12 @@ func TestNewTree(t *testing.T) {
 	tree := NewTree()
 	assert.NotNil(t, tree)
 	assert.NotNil(t, tree.root)
-	assert.Equal(t, "/", tree.root.path)
-	assert.Equal(t, pathSep, tree.root.path)
+
+	// The ACL system uses forward slashes internally on all platforms for glob compatibility.
+	// We explicitly test for "/" rather than pathSep (which is "\" on Windows) because
+	// the ACL system is a platform-independent abstraction layer.
+	assert.Equal(t, ACLPathSep, tree.root.path)
+
 	assert.Empty(t, tree.root.children)
 	assert.Empty(t, tree.root.rules)
 }
