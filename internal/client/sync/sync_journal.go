@@ -62,7 +62,7 @@ func (s *SyncJournal) Open() error {
 		return fmt.Errorf("failed to create journal directory %s: %w", dbDir, err)
 	}
 
-	db, err := db.NewSqliteDb(db.WithPath(s.dbPath), db.WithMaxOpenConns(1))
+	db, err := db.NewSqliteDB(db.WithPath(s.dbPath), db.WithMaxOpenConns(1))
 	if err != nil {
 		return fmt.Errorf("failed to create sync journal: %w", err)
 	}
