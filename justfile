@@ -83,6 +83,87 @@ destroy-minio:
 ssh-minio:
     docker exec -it syftbox-minio bash
 
+[group('dev-docker')]
+run-docker-server:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Building and running SyftBox server with MinIO in Docker..."
+    cd docker && COMPOSE_BAKE=true docker-compose up -d --build minio server
+    echo "Server is running at http://localhost:8080"
+    echo "MinIO console is available at http://localhost:9001"
+    echo "Run 'cd docker && docker-compose logs -f server' to view server logs"
+
+[group('dev-docker')]
+run-docker-client email *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    
+    # Build the client image
+    docker build -f docker/Dockerfile.client -t syftbox-client .
+    
+    # Create clients directory if it doesn't exist
+    mkdir -p ~/.syftbox/clients
+    
+    if [ -z "{{ email }}" ]; then
+        echo "Usage: just run-docker-client <email> [command]"
+        echo "Examples:"
+        echo "  just run-docker-client user@example.com login"
+        echo "  just run-docker-client user@example.com daemon"
+        echo "  just run-docker-client user@example.com app list"
+        exit 1
+    fi
+    
+    # Sanitize email for container name (replace @ with -at- and . with -dot-)
+    container_name="syftbox-client-$(echo '{{ email }}' | sed 's/@/-at-/g' | sed 's/\./-dot-/g')"
+    
+    # Run the client with email-specific configuration
+    docker run --rm -it \
+      -v ~/.syftbox/clients:/data/clients \
+      --network docker_syftbox-network \
+      -e SYFTBOX_SERVER_URL=http://syftbox-server:8080 \
+      -e SYFTBOX_AUTH_ENABLED=0 \
+      --name "$container_name" \
+      syftbox-client {{ email }} {{ ARGS }}
+
+[group('dev-docker')]
+run-docker-client-daemon email:
+    #!/bin/bash
+    set -eou pipefail
+    
+    # Build and run client in daemon mode using docker-compose
+    cd docker && CLIENT_EMAIL={{ email }} docker-compose -f docker-compose-client.yml up -d --build
+    echo "Client daemon for {{ email }} is running at http://localhost:7938"
+    echo "Logs: cd docker && docker-compose -f docker-compose-client.yml logs -f"
+
+[group('dev-docker')]
+stop-docker-client email:
+    #!/bin/bash
+    set -eou pipefail
+    
+    cd docker && CLIENT_EMAIL={{ email }} docker-compose -f docker-compose-client.yml down
+
+[group('dev-docker')]
+list-docker-clients:
+    #!/bin/bash
+    set -eou pipefail
+    
+    echo "Available SyftBox clients:"
+    if [ -d ~/.syftbox/clients ]; then
+        ls -la ~/.syftbox/clients/ | grep -E '^d' | grep -v '\.$' | awk '{print "  - " $NF}'
+    else
+        echo "  No clients found"
+    fi
+
+[group('dev-docker')]
+destroy-docker-server:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Stopping and removing SyftBox Docker containers..."
+    cd docker && docker-compose down -v
+    echo "Removing Docker images..."
+    docker rmi syftbox-server syftbox-client 2>/dev/null || true
+    echo "Docker environment cleaned up"
+
 [group('dev')]
 test:
     env -i \
