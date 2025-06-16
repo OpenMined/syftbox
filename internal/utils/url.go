@@ -60,7 +60,7 @@ func (s *SyftBoxURL) String() string {
 // ToLocalPath converts the SyftBoxURL to a local file system path
 func (s *SyftBoxURL) ToLocalPath() string {
 	endpoint := strings.Trim(s.Endpoint, pathSeparator)
-	return filepath.Join(s.Datasite, appDataPath, s.AppName, rpcPath, endpoint)
+	return filepath.ToSlash(filepath.Join(s.Datasite, appDataPath, s.AppName, rpcPath, endpoint))
 }
 
 // Validate validates the SyftBoxURL fields
