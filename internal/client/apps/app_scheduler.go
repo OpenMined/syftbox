@@ -11,9 +11,13 @@ import (
 	"time"
 )
 
-var (
+const (
 	appScanInterval = 5 * time.Second
-	ErrAppNotFound  = errors.New("app not found")
+)
+
+var (
+	ErrAppNotFound       = errors.New("app not found")
+	ErrRefreshInProgress = errors.New("scheduler refresh in progress")
 )
 
 type AppScheduler struct {
@@ -22,6 +26,7 @@ type AppScheduler struct {
 	sched      map[string]*App
 	schedWg    sync.WaitGroup
 	schedMu    sync.RWMutex
+	scanMu     sync.Mutex
 }
 
 func NewAppScheduler(mgr *AppManager, configPath string) *AppScheduler {
@@ -34,26 +39,34 @@ func NewAppScheduler(mgr *AppManager, configPath string) *AppScheduler {
 
 // Start the scheduler
 func (s *AppScheduler) Start(ctx context.Context) error {
-	s.schedMu.Lock()
-	defer s.schedMu.Unlock()
 	slog.Info("scheduler start", "appdir", s.manager.AppsDir)
+
+	// first scan - if that's bad then something's wrong
+	if err := s.scanApps(); err != nil {
+		return err
+	}
 
 	go func() {
 		ticker := time.NewTicker(appScanInterval)
 		defer ticker.Stop()
 
-		s.scanApps() // first scan
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.scanApps()
+				if err := s.scanApps(); err != nil {
+					slog.Warn("scan apps", "error", err)
+				}
 			}
 		}
 	}()
 
 	return nil
+}
+
+func (s *AppScheduler) Refresh() error {
+	return s.scanApps()
 }
 
 // Stop the scheduler
@@ -122,15 +135,19 @@ func (s *AppScheduler) GetApps() []*App {
 	return slices.Collect(maps.Values(s.sched))
 }
 
-func (s *AppScheduler) scanApps() {
+func (s *AppScheduler) scanApps() error {
+	if !s.scanMu.TryLock() {
+		return ErrRefreshInProgress
+	}
+	defer s.scanMu.Unlock()
+
 	scheduled := 0
 	removed := 0
 
 	// list all apps
 	appList, err := s.manager.ListApps()
 	if err != nil {
-		slog.Error("failed to list apps", "error", err)
-		return
+		return fmt.Errorf("failed to list apps: %w", err)
 	}
 
 	// create a map of apps by id
@@ -147,6 +164,7 @@ func (s *AppScheduler) scanApps() {
 	for appID, app := range apps {
 		if _, ok := scheduledApps[appID]; !ok {
 			if err := s.scheduleApp(app); err != nil {
+				// don't return the error continue scheduling
 				slog.Error("scheduler failed to schedule app", "app", appID, "error", err)
 			}
 			scheduled++
@@ -157,13 +175,14 @@ func (s *AppScheduler) scanApps() {
 	for appID := range scheduledApps {
 		if _, ok := apps[appID]; !ok {
 			if err := s.removeApp(appID); err != nil {
+				// don't return the error
 				slog.Error("scheduler remove app error", "app", appID, "error", err)
 			}
 			removed++
 		}
 	}
 
-	// slog.Debug("scheduler scan apps", "installed", len(appList), "running", len(s.runningApps), "scheduled", scheduled, "removed", removed)
+	return nil
 }
 
 func (s *AppScheduler) scheduleApp(appInfo *AppInfo) error {
@@ -206,7 +225,7 @@ func (s *AppScheduler) startAppLifecycle(app *App) error {
 		slog.Error("scheduler failed to start app", "app", appId, "error", err)
 		return err
 	}
-	slog.Info("scheduler started app", "app", appId, "pid", app.Process().Pid, "port", app.port)
+	slog.Info("scheduler started app", "app", appId, "pid", app.Process().Pid, "port", app.port, "url", fmt.Sprintf("http://localhost:%d", app.port))
 
 	// wait for the app to exit
 	code, err := app.Wait()

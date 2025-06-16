@@ -1,15 +1,18 @@
 package handlers
 
 import (
+	"archive/zip"
 	"bufio"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/client/apps"
@@ -35,16 +38,16 @@ func NewLogsHandler(mgr *datasitemgr.DatasiteManager) *LogsHandler {
 	}
 }
 
-func (h *LogsHandler) getLogFilePath(appName string) string {
-	appName = strings.ToLower(appName)
-	if appName == "" || appName == "system" {
+func (h *LogsHandler) getLogFilePath(appId string) string {
+	appId = strings.ToLower(appId)
+	if appId == "" || appId == "system" {
 		return config.DefaultLogFilePath
 	}
 	datasite, err := h.mgr.Get()
 	if err != nil {
 		return ""
 	}
-	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appName)
+	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appId)
 	if !apps.IsValidApp(appPath) {
 		return ""
 	}
@@ -57,7 +60,7 @@ func (h *LogsHandler) getLogFilePath(appName string) string {
 //	@Description	Get system logs with pagination support
 //	@Tags			Logs
 //	@Produce		json
-//	@Param			appName			query		string	false	"The name of the app to retrieve logs for"										default(system)
+//	@Param			appId			query		string	false	"The ID of the app to retrieve logs for"										default(system)
 //	@Param			startingToken	query		int		false	"Pagination token from a previous request to retrieve the next page of results"	default(1)		minimum(1)
 //	@Param			maxResults		query		int		false	"Maximum number of lines to read"												default(100)	minimum(1)	maximum(1000)
 //	@Success		200				{object}	LogsResponse
@@ -85,7 +88,7 @@ func (h *LogsHandler) GetLogs(c *gin.Context) {
 	}
 
 	// Read logs from file with pagination
-	logs, nextToken, hasMore, err := h.readLogsFromFile(params.AppName, params.StartingToken, params.MaxResults)
+	logs, nextToken, hasMore, err := h.readLogsFromFile(params.AppId, params.StartingToken, params.MaxResults)
 	if err != nil {
 		if err.Error() == "app not found" {
 			c.PureJSON(http.StatusNotFound, &ControlPlaneError{
@@ -256,9 +259,9 @@ func (h *LogsHandler) findLinePosition(file *os.File, targetLine int64) (int64, 
 }
 
 // readLogsFromFile reads logs from the log file with token-based pagination
-func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
+func (h *LogsHandler) readLogsFromFile(appId string, startingToken int64, maxResults int) ([]LogEntry, int64, bool, error) {
 	// Open log file
-	logFilePath := h.getLogFilePath(appName)
+	logFilePath := h.getLogFilePath(appId)
 	if logFilePath == "" {
 		return []LogEntry{}, 1, false, fmt.Errorf("app not found")
 	}
@@ -357,4 +360,129 @@ func (h *LogsHandler) readLogsFromFile(appName string, startingToken int64, maxR
 	}
 
 	return logs, nextToken, hasMore, nil
+}
+
+// DownloadLogs handles GET requests to download all logs as a zip file
+//
+//	@Summary		Download logs
+//	@Description	Download all logs as a zip file
+//	@Tags			Logs
+//	@Produce		application/zip
+//	@Success		200	{file}		file	"Zip file containing all logs"
+//	@Failure		400	{object}	ControlPlaneError
+//	@Failure		401	{object}	ControlPlaneError
+//	@Failure		403	{object}	ControlPlaneError
+//	@Failure		429	{object}	ControlPlaneError
+//	@Failure		500	{object}	ControlPlaneError
+//	@Failure		503	{object}	ControlPlaneError
+//	@Router			/v1/logs/download [get]
+func (h *LogsHandler) DownloadLogs(c *gin.Context) {
+	// Get the datasite
+	ds, err := h.mgr.Get()
+	if err != nil {
+		c.PureJSON(http.StatusServiceUnavailable, &ControlPlaneError{
+			ErrorCode: ErrCodeDatasiteNotReady,
+			Error:     err.Error(),
+		})
+		return
+	}
+
+	// Get all app IDs
+	appManager := ds.GetAppManager()
+	apps, err := appManager.ListApps()
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to list apps: %v", err),
+		})
+		return
+	}
+
+	// Create a temporary file for the zip
+	tmpFile, err := os.CreateTemp("", "syftbox-logs-*.zip")
+	if err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to create temporary file: %v", err),
+		})
+		return
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	// Create a new zip writer
+	zipWriter := zip.NewWriter(tmpFile)
+	defer zipWriter.Close()
+
+	// Add all logs from the system logs directory
+	systemLogDir := filepath.Dir(config.DefaultLogFilePath)
+	entries, err := os.ReadDir(systemLogDir)
+	if err != nil {
+		slog.Default().Warn("failed to read system logs directory", "error", err)
+	} else {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".log") {
+				logPath := filepath.Join(systemLogDir, entry.Name())
+				if err := h.addFileToZip(zipWriter, logPath, entry.Name()); err != nil {
+					slog.Default().Warn("failed to add log file to zip", "file", entry.Name(), "error", err)
+					continue
+				}
+			}
+		}
+	}
+
+	// Add app logs
+	for _, app := range apps {
+		appLogPath := filepath.Join(app.Path, "logs", "app.log")
+		if err := h.addFileToZip(zipWriter, appLogPath, fmt.Sprintf("%s.log", app.ID)); err != nil {
+			// Log the error but continue with other apps
+			slog.Default().Warn("failed to add app logs to zip", "app", app.ID, "error", err)
+			continue
+		}
+	}
+
+	// Close the zip writer to ensure all data is written
+	if err := zipWriter.Close(); err != nil {
+		c.PureJSON(http.StatusInternalServerError, &ControlPlaneError{
+			ErrorCode: ErrCodeLogsRetrievalFailed,
+			Error:     fmt.Sprintf("failed to finalize zip file: %v", err),
+		})
+		return
+	}
+
+	// Set response headers
+	c.Header("Content-Type", "application/zip")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=syftbox-logs-%s.zip", time.Now().Format("2006-01-02-15-04-05")))
+	c.Header("Content-Transfer-Encoding", "binary")
+
+	// Send the file
+	c.File(tmpFile.Name())
+}
+
+// addFileToZip adds a file to the zip archive if it exists
+func (h *LogsHandler) addFileToZip(zipWriter *zip.Writer, filePath string, zipName string) error {
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil // Skip if file doesn't exist
+	}
+
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	// Create a new file in the zip
+	zipFile, err := zipWriter.Create(zipName)
+	if err != nil {
+		return fmt.Errorf("failed to create zip entry %s: %w", zipName, err)
+	}
+
+	// Copy the file contents to the zip
+	if _, err := io.Copy(zipFile, file); err != nil {
+		return fmt.Errorf("failed to copy file contents to zip: %w", err)
+	}
+
+	return nil
 }
