@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"runtime"
 	"testing"
 
 	"github.com/openmined/syftbox/internal/aclspec"
@@ -9,9 +8,6 @@ import (
 )
 
 func TestAclServiceGetRule(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
 	service := NewAclService()
 
 	// Add a ruleset
@@ -46,9 +42,6 @@ func TestAclServiceGetRule(t *testing.T) {
 }
 
 func TestAclServiceRemoveRuleSet(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
 	service := NewAclService()
 
 	// Add two rulesets
@@ -99,9 +92,6 @@ func TestAclServiceRemoveRuleSet(t *testing.T) {
 }
 
 func TestAclServiceCanAccess(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
 	service := NewAclService()
 
 	// Add a ruleset with different access levels
@@ -150,9 +140,6 @@ func TestAclServiceCanAccess(t *testing.T) {
 }
 
 func TestAclServiceFileLimits(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
 	service := NewAclService()
 
 	// Add a ruleset with file size limits
@@ -189,9 +176,6 @@ func TestAclServiceFileLimits(t *testing.T) {
 }
 
 func TestAclServiceLoadRuleSets(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
 	service := NewAclService()
 
 	// Create multiple rulesets
@@ -224,9 +208,6 @@ func TestAclServiceLoadRuleSets(t *testing.T) {
 }
 
 func TestAclServiceCacheInvalidation(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Skipping test on Windows")
-	}
 	service := NewAclService()
 
 	// Add a ruleset
