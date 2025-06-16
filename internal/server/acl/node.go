@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -96,7 +95,7 @@ func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
 			aclRules = append(aclRules, &Rule{
 				rule:        rule,
 				node:        n,
-				fullPattern: filepath.Join(n.path, rule.Pattern),
+				fullPattern: ACLJoinPath(n.path, rule.Pattern),
 			})
 		}
 		n.rules = aclRules
@@ -145,7 +144,8 @@ func globSpecificityScore(glob string) int {
 	}
 
 	// 2L + 10D - wildcard penalty
-	score := len(glob)*2 + strings.Count(glob, pathSep)*10
+	// Use forward slash for glob patterns
+	score := len(glob)*2 + strings.Count(glob, ACLPathSep)*10
 
 	for i, c := range glob {
 		switch c {

@@ -1,9 +1,6 @@
 package acl
 
 import (
-	"path/filepath"
-	"strings"
-
 	"github.com/openmined/syftbox/internal/aclspec"
 )
 
@@ -44,7 +41,8 @@ func (s *AclService) RemoveRuleSet(path string) bool {
 
 // GetRule finds the most specific rule applicable to the given path.
 func (s *AclService) GetRule(path string) (*Rule, error) {
-	path = strings.TrimLeft(filepath.Clean(path), pathSep)
+	// Normalize path to use forward slashes for glob matching
+	path = ACLNormPath(path)
 
 	// cache hit
 	cachedRule := s.cache.Get(path) // O(1)
