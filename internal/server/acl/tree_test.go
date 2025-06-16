@@ -198,14 +198,14 @@ func TestGetNode(t *testing.T) {
 
 func TestGetNodeWithTerminalNodes(t *testing.T) {
 	// Test GetNode behavior with terminal nodes
-	// This ensures terminal flag affects node traversal correctly
+	// Terminal nodes allow children to be added but stop traversal during lookups
 	tree := NewTree()
 
-	// Add a terminal node
+	// Add a terminal node with catch-all rule
 	terminalRuleset := aclspec.NewRuleSet(
 		"terminal",
 		aclspec.SetTerminal,
-		aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		aclspec.NewRule("**", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
 	err := tree.AddRuleSet(terminalRuleset)
@@ -216,8 +216,8 @@ func TestGetNodeWithTerminalNodes(t *testing.T) {
 	assert.NotNil(t, terminalNode, "Terminal node should exist")
 	assert.True(t, terminalNode.IsTerminal(), "Node should be marked as terminal")
 
-	// Test that attempting to add a child under a terminal node should fail
-	// This is the correct behavior - terminal nodes should prevent child rulesets
+	// Add a child under the terminal node - this should SUCCEED
+	// The tree allows all nodes to be added for performance (avoids tree rebuilds)
 	childRuleset := aclspec.NewRuleSet(
 		"terminal/child",
 		aclspec.UnsetTerminal,
@@ -225,28 +225,40 @@ func TestGetNodeWithTerminalNodes(t *testing.T) {
 	)
 
 	err = tree.AddRuleSet(childRuleset)
-	// Terminal nodes should prevent child rulesets from being added
-	assert.Error(t, err, "Should reject child rulesets under terminal nodes")
-	assert.Contains(t, err.Error(), "terminal node", "Error should mention terminal restriction")
+	assert.NoError(t, err, "Should allow child rulesets under terminal nodes (tree contains all ACLs)")
 
-	// Test that GetNode stops at terminal node during traversal
-	// Since child ruleset was rejected, any path beyond terminal should stop at terminal
-	node := tree.GetNode("terminal/child/deeper")
-	assert.Equal(t, "terminal", node.path, "Terminal node should stop further traversal")
-	
-	// Test that GetNearestNodeWithRules also respects terminal nodes
+	// GetNode should stop at terminal node during lookup traversal
+	// Even though child exists in tree, GetNode stops at terminal boundary
+	childNode := tree.GetNode("terminal/child")
+	assert.Equal(t, "terminal", childNode.path, "GetNode should stop at terminal boundary")
+
+	// When looking for paths beyond terminal, it also stops at the terminal node
+	deepNode := tree.GetNode("terminal/child/deeper")
+	assert.Equal(t, "terminal", deepNode.path, "Lookup should stop at terminal node")
+
+	// Verify child actually exists in tree structure by accessing parent's children directly
+	terminalNode = tree.GetNode("terminal")
+	actualChild, exists := terminalNode.GetChild("child")
+	assert.True(t, exists, "Child should exist in tree structure")
+	assert.Equal(t, "terminal/child", actualChild.path, "Child should have correct path")
+	assert.False(t, actualChild.IsTerminal(), "Child should not be terminal")
+
+	// AND: GetNearestNodeWithRules should also stop at terminal nodes
 	nearestNode := tree.GetNearestNodeWithRules("terminal/child/file.txt")
 	assert.NotNil(t, nearestNode, "Should find the terminal node")
-	assert.Equal(t, "terminal", nearestNode.path, "Should stop at terminal node for rule lookup")
-	
-	// Verify that the child node was not actually created
-	childNode := tree.GetNode("terminal/child")
-	assert.Equal(t, "terminal", childNode.path, "Child node should not exist, should return terminal parent")
+	assert.Equal(t, "terminal", nearestNode.path, "Rule lookup should stop at terminal node")
+
+	// This means child rules are ignored for inheritance even though they exist in the tree  
+	// Test with child path - should get rule from terminal node (** pattern matches everything)
+	rule, err := tree.GetRule("terminal/child/test.md")
+	assert.NoError(t, err, "Should find rule from terminal node")
+	assert.Equal(t, "terminal", rule.node.path, "Rule should come from terminal node, not child")
+	assert.Equal(t, "**", rule.rule.Pattern, "Should use terminal node's catch-all rule")
 }
 
 func TestTerminalNodeValidation(t *testing.T) {
-	// Test that terminal nodes properly prevent child rulesets from being added
-	// This explicitly tests the terminal enforcement behavior
+	// Test that terminal nodes control inheritance but allow children to be added
+	// This explicitly tests the correct terminal behavior
 	tree := NewTree()
 
 	// Add a terminal node
@@ -263,7 +275,7 @@ func TestTerminalNodeValidation(t *testing.T) {
 	node := tree.GetNode("secure")
 	assert.True(t, node.IsTerminal(), "Node should be marked as terminal")
 
-	// Try to add direct child - should fail
+	// Add direct child - should succeed (tree allows all nodes for performance)
 	childRuleset := aclspec.NewRuleSet(
 		"secure/child",
 		aclspec.UnsetTerminal,
@@ -271,10 +283,9 @@ func TestTerminalNodeValidation(t *testing.T) {
 	)
 
 	err = tree.AddRuleSet(childRuleset)
-	assert.Error(t, err, "Should not be able to add child under terminal node")
-	assert.Contains(t, err.Error(), "terminal node", "Error should mention terminal node")
+	assert.NoError(t, err, "Should be able to add child under terminal node (exists in tree)")
 
-	// Try to add deeper nested child - should also fail
+	// Add deeper nested child - should also succeed
 	deepChildRuleset := aclspec.NewRuleSet(
 		"secure/child/grandchild",
 		aclspec.UnsetTerminal,
@@ -282,10 +293,28 @@ func TestTerminalNodeValidation(t *testing.T) {
 	)
 
 	err = tree.AddRuleSet(deepChildRuleset)
-	assert.Error(t, err, "Should not be able to add nested child under terminal node")
-	assert.Contains(t, err.Error(), "terminal node", "Error should mention terminal node")
+	assert.NoError(t, err, "Should be able to add nested child under terminal node")
 
-	// Verify that non-terminal nodes still allow children
+	// BUT: Terminal nodes should stop traversal for rule lookups
+	// All paths under secure/ should resolve to the secure terminal node
+	
+	// Direct child path should resolve to terminal parent
+	nearestNode := tree.GetNearestNodeWithRules("secure/child/test.txt")
+	assert.NotNil(t, nearestNode, "Should find a node")
+	assert.Equal(t, "secure", nearestNode.path, "Should resolve to terminal parent, not child")
+
+	// Deep child path should also resolve to terminal parent
+	nearestNode = tree.GetNearestNodeWithRules("secure/child/grandchild/test.md")
+	assert.NotNil(t, nearestNode, "Should find a node")
+	assert.Equal(t, "secure", nearestNode.path, "Should resolve to terminal parent, not grandchild")
+
+	// Rule lookup should use terminal node's rules
+	rule, err := tree.GetRule("secure/child/test.txt")
+	assert.NoError(t, err, "Should find rule for child path")
+	assert.Equal(t, "secure", rule.node.path, "Rule should come from terminal parent")
+	assert.Equal(t, "**", rule.rule.Pattern, "Should use terminal node's catch-all rule")
+
+	// Non-terminal nodes should work normally
 	nonTerminalRuleset := aclspec.NewRuleSet(
 		"open",
 		aclspec.UnsetTerminal,
@@ -295,7 +324,7 @@ func TestTerminalNodeValidation(t *testing.T) {
 	err = tree.AddRuleSet(nonTerminalRuleset)
 	assert.NoError(t, err, "Should be able to add non-terminal node")
 
-	// Add child under non-terminal - should succeed
+	// Add child under non-terminal - should succeed and be accessible
 	openChildRuleset := aclspec.NewRuleSet(
 		"open/child",
 		aclspec.UnsetTerminal,
@@ -304,6 +333,11 @@ func TestTerminalNodeValidation(t *testing.T) {
 
 	err = tree.AddRuleSet(openChildRuleset)
 	assert.NoError(t, err, "Should be able to add child under non-terminal node")
+
+	// Child under non-terminal should be accessible for rule lookups
+	nearestNode = tree.GetNearestNodeWithRules("open/child/test.txt")
+	assert.NotNil(t, nearestNode, "Should find a node")
+	assert.Equal(t, "open/child", nearestNode.path, "Should find the actual child node, not parent")
 }
 
 func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
@@ -367,7 +401,7 @@ func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 	assert.Equal(t, "**", rule.rule.Pattern, "Should match the ** rule")
 	assert.True(t, rule.rule.Access.Read.Contains("admin@example.com"), "Should have admin access from ** rule")
 
-	// Test that the terminal flag now prevents children
+	// Test that the terminal flag now controls inheritance
 	childRuleset := aclspec.NewRuleSet(
 		"shared/child",
 		aclspec.UnsetTerminal,
@@ -375,8 +409,13 @@ func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 	)
 
 	err = tree.AddRuleSet(childRuleset)
-	assert.Error(t, err, "Should not be able to add child under terminal node")
-	assert.Contains(t, err.Error(), "terminal node", "Error should mention terminal restriction")
+	assert.NoError(t, err, "Should be able to add child under terminal node (tree allows all nodes)")
+
+	// But rule lookups should stop at terminal node
+	rule, err = tree.GetRule("shared/child/test.go")
+	assert.NoError(t, err, "Should find rule for child path")
+	assert.Equal(t, "shared", rule.node.path, "Rule should come from terminal parent, not child")
+	assert.Equal(t, "**", rule.rule.Pattern, "Should use parent's ** rule, not child's *.go rule")
 }
 
 func TestAddRuleSetErrorCases(t *testing.T) {
@@ -465,22 +504,13 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 	err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
 
-	// Remove parent ruleset - should only remove parent, not affect child
+	// Remove parent - with original behavior, this removes the entire subtree
 	removed := tree.RemoveRuleSet("parent")
 	assert.True(t, removed)
 
-	// Verify parent node structure still exists but rules are gone
-	parentNode, ok := tree.root.GetChild("parent")
-	assert.True(t, ok, "Parent node should still exist")
-	assert.NotNil(t, parentNode, "Parent node should not be nil")
-	assert.Nil(t, parentNode.Rules(), "Parent node should have no rules after removal")
-
-	// Verify child is still there with its rules intact
-	childNode, ok := parentNode.GetChild("child")
-	assert.True(t, ok, "Child node should still exist")
-	assert.NotNil(t, childNode, "Child node should not be nil")
-	assert.NotNil(t, childNode.Rules(), "Child node should still have its rules")
-	assert.True(t, childNode.IsTerminal(), "Child should still be terminal")
+	// Verify both parent and child are gone (original behavior)
+	_, ok := tree.root.GetChild("parent")
+	assert.False(t, ok, "Parent node should be completely removed")
 
 	// Add the parent ruleset back
 	err = tree.AddRuleSet(ruleset1)
@@ -494,12 +524,12 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 	removed = tree.RemoveRuleSet("parent/child")
 	assert.True(t, removed)
 
-	// Verify parent still exists
-	parentNode, ok = tree.root.GetChild("parent")
-	assert.True(t, ok)
-	assert.NotNil(t, parentNode)
+	// Verify parent still exists but child was removed
+	parentNode, ok := tree.root.GetChild("parent")
+	assert.True(t, ok, "Parent node should exist after removing just child")
+	assert.NotNil(t, parentNode, "Parent node should not be nil")
 
 	// Verify child was removed
 	_, ok = parentNode.GetChild("child")
-	assert.False(t, ok)
+	assert.False(t, ok, "Child node should be removed")
 }

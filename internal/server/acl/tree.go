@@ -10,10 +10,9 @@ import (
 )
 
 var (
-	ErrInvalidRuleset     = errors.New("invalid ruleset")
-	ErrMaxDepthExceeded   = errors.New("maximum depth exceeded")
-	ErrNoRuleFound        = errors.New("no rule found")
-	ErrTerminalNodeExists = errors.New("cannot add child ruleset under terminal node")
+	ErrInvalidRuleset   = errors.New("invalid ruleset")
+	ErrMaxDepthExceeded = errors.New("maximum depth exceeded")
+	ErrNoRuleFound      = errors.New("no rule found")
 )
 
 // Tree stores the ACL rules in a n-ary tree for efficient lookups.
@@ -57,11 +56,7 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 	for _, part := range parts {
 		currentDepth++
 
-		// Check if current node is terminal - if so, we cannot add children
-		if current.IsTerminal() {
-			return fmt.Errorf("%w: path %s", ErrTerminalNodeExists, current.path)
-		}
-
+		// Important: We still process terminal nodes to ensure all ACLs are known to the tree
 		// Get or create child node
 		child, exists := current.GetChild(part)
 		if !exists {
@@ -144,46 +139,27 @@ func (t *Tree) GetNode(path string) *Node {
 
 // Removes a ruleset at the specified path
 func (t *Tree) RemoveRuleSet(path string) bool {
+	var parent *Node
+	var lastPart string
+
 	parts := pathParts(path)
 	current := t.root
 
-	// Traverse to find the target node
 	for _, part := range parts {
 		child, exists := current.GetChild(part)
 		if !exists {
 			return false
 		}
+
+		parent = current
 		current = child
+		lastPart = part
 	}
 
-	// Check if the node has rules to remove
-	if current.Rules() == nil {
-		return false
-	}
-
-	// Clear the rules from the node but keep the node structure
-	// This preserves any child nodes that may exist
-	current.SetRules(nil, false)
-
-	// If the node has no children and no rules, we can remove it from its parent
-	// But only if it's not the root and doesn't have children
-	if len(parts) > 0 && !hasChildren(current) {
-		// Find parent to remove this empty node
-		parent := t.root
-		for _, part := range parts[:len(parts)-1] {
-			parent, _ = parent.GetChild(part)
-		}
-		parent.DeleteChild(parts[len(parts)-1])
-	}
+	// Need to lock parent since we're modifying its children
+	parent.DeleteChild(lastPart)
 
 	return true
-}
-
-// Helper function to check if node has children
-func hasChildren(node *Node) bool {
-	node.mu.RLock()
-	defer node.mu.RUnlock()
-	return len(node.children) > 0
 }
 
 func pathParts(path string) []string {
