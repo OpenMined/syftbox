@@ -92,22 +92,10 @@ func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
 		// convert the rules to aclRules
 		aclRules := make([]*Rule, 0, len(sorted))
 		for _, rule := range sorted {
-			// Create glob patterns using forward slashes regardless of OS.
-			// The doublestar library expects forward slashes in all patterns.
-			// Since the ACL system now consistently uses "/" internally (see tree.go),
-			// we can safely concatenate paths without OS-specific separator conversion.
-			var fullPattern string
-			if n.path == "/" {
-				// Root node: don't add extra slash (avoid patterns like "//*.txt")
-				fullPattern = rule.Pattern
-			} else {
-				// Non-root: join with forward slash (e.g., "user" + "/" + "*.txt" = "user/*.txt")
-				fullPattern = n.path + "/" + rule.Pattern
-			}
 			aclRules = append(aclRules, &Rule{
 				rule:        rule,
 				node:        n,
-				fullPattern: fullPattern,
+				fullPattern: ACLJoinPath(n.path, rule.Pattern),
 			})
 		}
 		n.rules = aclRules
@@ -157,7 +145,7 @@ func globSpecificityScore(glob string) int {
 
 	// 2L + 10D - wildcard penalty
 	// Use forward slash for glob patterns
-	score := len(glob)*2 + strings.Count(glob, "/")*10
+	score := len(glob)*2 + strings.Count(glob, ACLPathSep)*10
 
 	for i, c := range glob {
 		switch c {
