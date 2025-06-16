@@ -11,7 +11,9 @@ import (
 )
 
 func TestLoadConfigEnv(t *testing.T) {
-	t.Setenv("SYFTBOX_DATA_DIR", "/tmp/syftbox-test")
+	// Use a platform-appropriate test path
+	testPath := filepath.Join(os.TempDir(), "syftbox-test")
+	t.Setenv("SYFTBOX_DATA_DIR", testPath)
 	// http
 	t.Setenv("SYFTBOX_HTTP_ADDR", ":8080")
 	t.Setenv("SYFTBOX_HTTP_CERT_FILE", "test-cert.pem")
@@ -42,7 +44,10 @@ func TestLoadConfigEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 
-	assert.Equal(t, cfg.DataDir, "/tmp/syftbox-test")
+	// ResolvePath will convert to absolute path, so we need to get the expected absolute path
+	expectedPath, err := filepath.Abs(testPath)
+	require.NoError(t, err)
+	assert.Equal(t, cfg.DataDir, expectedPath)
 	assert.Equal(t, cfg.HTTP.Addr, ":8080")
 	assert.Equal(t, cfg.HTTP.CertFilePath, "test-cert.pem")
 	assert.Equal(t, cfg.HTTP.KeyFilePath, "test-key.pem")

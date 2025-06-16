@@ -44,7 +44,10 @@ func (s *AclService) RemoveRuleSet(path string) bool {
 
 // GetRule finds the most specific rule applicable to the given path.
 func (s *AclService) GetRule(path string) (*Rule, error) {
-	path = strings.TrimLeft(filepath.Clean(path), pathSep)
+	// Normalize path to use forward slashes for glob matching
+	// The doublestar library expects forward slashes regardless of OS
+	path = filepath.ToSlash(filepath.Clean(path))
+	path = strings.TrimLeft(path, "/")
 
 	// cache hit
 	cachedRule := s.cache.Get(path) // O(1)

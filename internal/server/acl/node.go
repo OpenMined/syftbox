@@ -1,7 +1,6 @@
 package acl
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -93,10 +92,16 @@ func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
 		// convert the rules to aclRules
 		aclRules := make([]*Rule, 0, len(sorted))
 		for _, rule := range sorted {
+			// Use forward slashes for glob patterns regardless of OS
+			// The doublestar library expects forward slashes
+			fullPattern := n.path + "/" + rule.Pattern
+			if n.path == "" || n.path == "." {
+				fullPattern = rule.Pattern
+			}
 			aclRules = append(aclRules, &Rule{
 				rule:        rule,
 				node:        n,
-				fullPattern: filepath.Join(n.path, rule.Pattern),
+				fullPattern: fullPattern,
 			})
 		}
 		n.rules = aclRules
@@ -145,7 +150,8 @@ func globSpecificityScore(glob string) int {
 	}
 
 	// 2L + 10D - wildcard penalty
-	score := len(glob)*2 + strings.Count(glob, pathSep)*10
+	// Use forward slash for glob patterns
+	score := len(glob)*2 + strings.Count(glob, "/")*10
 
 	for i, c := range glob {
 		switch c {

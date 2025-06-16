@@ -22,7 +22,7 @@ type Tree struct {
 
 func NewTree() *Tree {
 	return &Tree{
-		root: NewNode(pathSep, false, 0),
+		root: NewNode("/", false, 0),
 	}
 }
 
@@ -40,8 +40,8 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 
 	// Clean and split the path
 	cleanPath := stripSep(ruleset.Path)
-	parts := strings.Split(cleanPath, pathSep)
-	pathDepth := strings.Count(cleanPath, pathSep)
+	parts := pathParts(ruleset.Path)
+	pathDepth := strings.Count(cleanPath, "/")
 
 	// Check path depth limit (u8)
 	if pathDepth > 255 {
@@ -60,7 +60,8 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 		// Get or create child node
 		child, exists := current.GetChild(part)
 		if !exists {
-			fullPath := strings.Join(parts[:currentDepth], pathSep)
+			// Use forward slashes for paths
+			fullPath := strings.Join(parts[:currentDepth], "/")
 			child = NewNode(fullPath, false, currentDepth)
 			current.SetChild(part, child)
 		}
@@ -163,9 +164,16 @@ func (t *Tree) RemoveRuleSet(path string) bool {
 }
 
 func pathParts(path string) []string {
-	return strings.Split(stripSep(path), pathSep)
+	// Normalize to forward slashes for consistent splitting
+	normalized := stripSep(path)
+	if normalized == "" {
+		return []string{}
+	}
+	return strings.Split(normalized, "/")
 }
 
 func stripSep(path string) string {
-	return strings.TrimLeft(filepath.Clean(path), pathSep)
+	// Clean and normalize to forward slashes for glob matching
+	cleaned := filepath.ToSlash(filepath.Clean(path))
+	return strings.TrimLeft(cleaned, "/")
 }
