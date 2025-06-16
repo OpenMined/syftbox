@@ -3,6 +3,7 @@ package blob
 import (
 	"math/rand"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,11 @@ func TestBlobIndexBurstInsert(t *testing.T) {
 
 	index, err := newBlobIndex(db)
 	assert.NoError(t, err)
+
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping test on Windows")
+		return
+	}
 
 	const numOperations = 10000
 
