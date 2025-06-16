@@ -45,9 +45,9 @@ func (t *ACLTree) AddRuleSet(ruleset *aclspec.RuleSet) (ACLVersion, error) {
 	}
 
 	// Clean and split the path
-	cleanPath := CleanACLPath(ruleset.Path)
-	parts := strings.Split(cleanPath, PathSep)
-	pathDepth := strings.Count(cleanPath, PathSep)
+	cleanPath := ACLNormPath(ruleset.Path)
+	parts := strings.Split(cleanPath, ACLPathSep)
+	pathDepth := strings.Count(cleanPath, ACLPathSep)
 
 	// owner is assumed to be the first part of the path.
 	// but in future we can always bake it as a part of the acl schema
@@ -73,7 +73,7 @@ func (t *ACLTree) AddRuleSet(ruleset *aclspec.RuleSet) (ACLVersion, error) {
 		// Get or create child node
 		child, exists := current.GetChild(part)
 		if !exists {
-			fullPath := strings.Join(parts[:currentDepth], PathSep)
+			fullPath := ACLJoinPath(parts[:currentDepth]...)
 			child = NewACLNode(fullPath, owner, false, currentDepth)
 			current.SetChild(part, child)
 		}
@@ -106,7 +106,7 @@ func (t *ACLTree) GetEffectiveRule(path string) (*ACLRule, error) {
 // LookupNearestNode returns the nearest node in the tree that has associated rules for the given path.
 // It returns nil if no such node is found.
 func (t *ACLTree) LookupNearestNode(path string) *ACLNode {
-	parts := getPathSegments(path)
+	parts := ACLPathSegments(path)
 
 	var candidate *ACLNode
 	current := t.root
@@ -133,7 +133,7 @@ func (t *ACLTree) LookupNearestNode(path string) *ACLNode {
 
 // GetNode finds the exact node applicable for the given path.
 func (t *ACLTree) GetNode(path string) *ACLNode {
-	parts := getPathSegments(path)
+	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
@@ -156,7 +156,7 @@ func (t *ACLTree) RemoveRuleSet(path string) bool {
 	var parent *ACLNode
 	var lastPart string
 
-	parts := getPathSegments(path)
+	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
@@ -174,8 +174,4 @@ func (t *ACLTree) RemoveRuleSet(path string) bool {
 	parent.DeleteChild(lastPart)
 
 	return true
-}
-
-func getPathSegments(path string) []string {
-	return strings.Split(CleanACLPath(path), PathSep)
 }

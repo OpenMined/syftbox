@@ -38,7 +38,7 @@ type Server struct {
 // New creates a new server instance with the provided configuration
 func New(config *Config) (*Server, error) {
 	dbPath := filepath.Join(config.DataDir, "state.db")
-	sqliteDb, err := db.NewSqliteDb(
+	sqliteDb, err := db.NewSqliteDB(
 		db.WithPath(dbPath),
 		db.WithMaxOpenConns(runtime.NumCPU()),
 	)

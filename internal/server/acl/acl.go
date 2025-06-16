@@ -63,7 +63,7 @@ func (s *ACLService) RemoveRuleSet(path string) bool {
 
 // GetEffectiveRule finds the most specific rule applicable to the given path.
 func (s *ACLService) GetEffectiveRule(path string) (*ACLRule, error) {
-	path = CleanACLPath(path)
+	path = ACLNormPath(path)
 
 	// cache hit
 	cachedRule := s.cache.Get(path) // O(1)

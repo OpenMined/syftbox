@@ -15,8 +15,9 @@ PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
 PRAGMA foreign_keys=ON;
 PRAGMA temp_store=MEMORY;
-PRAGMA cache_size=8000;
+PRAGMA cache_size=10000;
 PRAGMA mmap_size=268435456;
+PRAGMA synchronous=NORMAL;
 `
 
 // config holds internal configuration for DB creation
@@ -68,8 +69,8 @@ func WithConnMaxLifetime(d time.Duration) SqliteOption {
 	}
 }
 
-// NewSqliteDb creates a new sqlx.DB with the provided options
-func NewSqliteDb(opts ...SqliteOption) (*sqlx.DB, error) {
+// NewSqliteDB creates a new sqlx.DB with the provided options
+func NewSqliteDB(opts ...SqliteOption) (*sqlx.DB, error) {
 	// Default configuration
 	cfg := &config{
 		path:         ":memory:",

@@ -86,7 +86,7 @@ func (r *ACLRule) CheckLimits(info *File) error {
 		return ErrFileSizeExceeded
 	}
 
-	if !limits.AllowDirs && (info.IsDir || strings.Count(info.Path, PathSep) > 0) {
+	if !limits.AllowDirs && (info.IsDir || strings.Count(info.Path, ACLPathSep) > 0) {
 		return ErrDirsNotAllowed
 	}
 
