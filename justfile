@@ -85,8 +85,16 @@ ssh-minio:
 
 [group('dev')]
 test:
-    go test -coverprofile=cover.out ./...
+    env -i \
+        PATH="$PATH" \
+        HOME="$HOME" \
+        GOROOT="${GOROOT:-}" \
+        GOPATH="${GOPATH:-}" \
+        GOCACHE="${GOCACHE:-}" \
+        GOENV="${GOENV:-}" \
+        go test -coverprofile=cover.out ./...
     go tool cover -html=cover.out
+
 
 [doc('Needs a platform specific compiler. Example: CC="aarch64-linux-musl-gcc" just build-client-target goos=linux goarch=arm64')]
 [group('build')]
