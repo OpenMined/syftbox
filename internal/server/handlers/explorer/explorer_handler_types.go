@@ -16,6 +16,6 @@ type directoryContents struct {
 	Folders []string
 }
 
-func (d *directoryContents) IsEmpty() bool {
-	return len(d.Files) == 0 && len(d.Folders) == 0
+func (d *directoryContents) EmptyDir() bool {
+	return d.IsDir && len(d.Files) == 0 && len(d.Folders) == 0
 }
