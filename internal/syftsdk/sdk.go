@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/openmined/syftbox/internal/utils"
@@ -74,7 +76,7 @@ func (s *SyftSDK) Close() {
 
 // Authenticate sets the user authentication for API calls and events
 func (s *SyftSDK) Authenticate(ctx context.Context) error {
-	if isAuthDisabled() {
+	if isAuthDisabled() || isDevURL(s.config.BaseURL) {
 		slog.Warn("sdk auth disabled, skipping auth")
 		return nil
 	}
@@ -169,5 +171,15 @@ func (s *SyftSDK) setAccessToken(accessToken string) error {
 
 func isAuthDisabled() bool {
 	authEnabled := os.Getenv("SYFTBOX_AUTH_ENABLED")
-	return authEnabled == "0" || authEnabled == "false"
+	enabled, err := strconv.ParseBool(authEnabled)
+	if err != nil {
+		return false
+	}
+	return !enabled
+}
+
+func isDevURL(baseURL string) bool {
+	return strings.Contains(baseURL, "localhost") ||
+		strings.Contains(baseURL, "127.0.0.1") ||
+		strings.Contains(baseURL, "0.0.0.0")
 }
