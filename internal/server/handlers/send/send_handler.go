@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/blob"
@@ -131,10 +130,6 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 				req.AsRaw,
 			)
 
-			// check if the request is from a browser
-			userAgent := ctx.Request.UserAgent()
-			isBrowser := isBrowserUserAgent(userAgent)
-
 			// calculate refresh interval in seconds
 			var refreshInterval int
 			if req.Timeout > 0 {
@@ -147,7 +142,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			ctx.Header("Location", pollURL)
 			ctx.Header("Retry-After", strconv.Itoa(refreshInterval))
 
-			if isBrowser || contentTypeHTML {
+			if contentTypeHTML {
 				// Return a HTML page with a link to the poll URL
 				// with auto refresh capability
 				ctx.HTML(http.StatusAccepted, "poll.html", gin.H{
@@ -211,20 +206,4 @@ func readRequestBody(ctx *gin.Context, maxSize int64) ([]byte, error) {
 	}
 
 	return bodyBytes, nil
-}
-
-func isBrowserUserAgent(userAgent string) bool {
-	browserKeywords := []string{
-		"Mozilla", "Chrome", "Safari", "Firefox", "Edge",
-		"Opera", "Trident", "MSIE", "Webkit",
-	}
-
-	userAgent = strings.ToLower(userAgent)
-	for _, keyword := range browserKeywords {
-		if strings.Contains(userAgent, strings.ToLower(keyword)) {
-			return true
-		}
-	}
-	return false
-
 }
