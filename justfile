@@ -88,7 +88,7 @@ run-docker-server:
     #!/bin/bash
     set -eou pipefail
     echo "Building and running SyftBox server with MinIO in Docker..."
-    cd docker && COMPOSE_BAKE=true docker-compose up -d --build minio server
+    cd docker && docker-compose up -d --build minio server
     echo "Server is running at http://localhost:8080"
     echo "MinIO console is available at http://localhost:9001"
     echo "Run 'cd docker && docker-compose logs -f server' to view server logs"
@@ -129,18 +129,57 @@ run-docker-client email *ARGS:
 run-docker-client-daemon email:
     #!/bin/bash
     set -eou pipefail
-    
-    # Build and run client in daemon mode using docker-compose
-    cd docker && CLIENT_EMAIL={{ email }} docker-compose -f docker-compose-client.yml up -d --build
+
+    CLIENT_EMAIL="{{ email }}"
+    CLIENT_EMAIL_SANITIZED=$(echo "$CLIENT_EMAIL" | sed 's/@/-at-/g; s/\./-dot-/g')
+    SYFTBOX_CLIENTS_DIR="${SYFTBOX_CLIENTS_DIR:-$HOME/.syftbox/clients}"
+    SYFTBOX_SERVER_URL="http://syftbox-server:8080"
+
+    cd docker && \
+        CLIENT_EMAIL="$CLIENT_EMAIL" \
+        CLIENT_EMAIL_SANITIZED="$CLIENT_EMAIL_SANITIZED" \
+        SYFTBOX_SERVER_URL="$SYFTBOX_SERVER_URL" \
+        SYFTBOX_CLIENTS_DIR="$SYFTBOX_CLIENTS_DIR" \
+        docker-compose \
+            -p "syftbox-client-${CLIENT_EMAIL_SANITIZED}" \
+            -f docker-compose-client.yml up -d --build
+
     echo "Client daemon for {{ email }} is running at http://localhost:7938"
     echo "Logs: cd docker && docker-compose -f docker-compose-client.yml logs -f"
+
+    # WORKAROUND
+    # - issue: the config.json points to the internal docker data_dir /data/clients/{{ email }}/SyftBox
+    # - issue: the config.json points to syftbox-server:<port> instead of localhost:<port>
+    # - fix: we create a config_external.json that points to the mounted directory and localhost
+
+    MOUNTED_CLIENT_DIR="$SYFTBOX_CLIENTS_DIR/{{ email }}"
+    MOUNTED_SYFTBOX_DIR="$MOUNTED_CLIENT_DIR/SyftBox"
+    MOUNTED_CONFIG_JSON="$MOUNTED_CLIENT_DIR/config.json"
+    EXTERNAL_CONFIG_JSON="$MOUNTED_CLIENT_DIR/config_external.json"
+
+    # Create an external config_external.json that points to the mounted directory
+    # Replace data_dir with the mounted directory, and syftbox-server:<port> with localhost:<port>
+    jq --arg mounted_dir "$MOUNTED_SYFTBOX_DIR" '
+        .data_dir = $mounted_dir |
+        (.. | strings) |= gsub("syftbox-server:"; "localhost:")
+        ' "$MOUNTED_CLIENT_DIR/config.json" > "$EXTERNAL_CONFIG_JSON"
+
+
 
 [group('dev-docker')]
 stop-docker-client email:
     #!/bin/bash
     set -eou pipefail
-    
-    cd docker && CLIENT_EMAIL={{ email }} docker-compose -f docker-compose-client.yml down
+
+    CLIENT_EMAIL="{{ email }}"
+    CLIENT_EMAIL_SANITIZED=$(echo "$CLIENT_EMAIL" | sed 's/@/-at-/g; s/\./-dot-/g')
+
+    cd docker && \
+        CLIENT_EMAIL="$CLIENT_EMAIL" \
+        CLIENT_EMAIL_SANITIZED="$CLIENT_EMAIL_SANITIZED" \
+        docker-compose \
+            -p "syftbox-client-${CLIENT_EMAIL_SANITIZED}" \
+            -f docker-compose-client.yml down
 
 [group('dev-docker')]
 list-docker-clients:

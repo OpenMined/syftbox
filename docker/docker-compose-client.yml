@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.client
     image: syftbox-client:latest
-    container_name: syftbox-client-${CLIENT_EMAIL:-default}
+    container_name: syftbox-client-${CLIENT_EMAIL_SANITIZED:-default}
     ports:
       - "${CLIENT_PORT:-7938}:7938"
     environment:
