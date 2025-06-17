@@ -39,6 +39,10 @@ func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK) (*SyncMana
 
 func (m *SyncManager) Start(ctx context.Context) error {
 	slog.Info("sync manager start")
+
+	// load the ignore list
+	m.ignore.Load()
+
 	if err := m.watcher.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start watcher: %w", err)
 	}

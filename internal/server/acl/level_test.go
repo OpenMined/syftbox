@@ -21,24 +21,24 @@ func TestAccessLevelString(t *testing.T) {
 			desc:     "AccessRead should return 'Read'",
 		},
 		{
-			level:    AccessCreate,
-			expected: "Create",
-			desc:     "AccessCreate should return 'Create'",
-		},
-		{
 			level:    AccessWrite,
 			expected: "Write",
 			desc:     "AccessWrite should return 'Write'",
 		},
 		{
-			level:    AccessReadACL,
-			expected: "ReadACL",
-			desc:     "AccessReadACL should return 'ReadACL'",
+			level:    AccessAdmin,
+			expected: "Admin",
+			desc:     "AccessAdmin should return 'Admin'",
 		},
 		{
-			level:    AccessWriteACL,
-			expected: "WriteACL",
-			desc:     "AccessWriteACL should return 'WriteACL'",
+			level:    0,
+			expected: "Unknown",
+			desc:     "Zero value should return 'Unknown'",
+		},
+		{
+			level:    AccessLevel(10),
+			expected: "Unknown",
+			desc:     "Undefined values should return 'Unknown'",
 		},
 	}
 
@@ -58,16 +58,13 @@ func TestAccessLevelStringUnknown(t *testing.T) {
 	assert.Equal(t, "Unknown", result, "Unknown access levels should return 'Unknown'")
 }
 
-func TestAccessLevelBitFlags(t *testing.T) {
-	// Test that AccessLevel constants are properly defined as bit flags
-	// This validates the bit flag implementation which allows for efficient permission checking
+func TestAccessLevelValues(t *testing.T) {
+	// Test that AccessLevel constants have the expected values
+	// Since iota starts at 0 and we use iota + 1, values should be 1, 2, 3
 	
-	// Verify each level has a unique bit pattern
-	assert.Equal(t, AccessLevel(1), AccessRead, "AccessRead should be bit 0 (value 1)")
-	assert.Equal(t, AccessLevel(2), AccessCreate, "AccessCreate should be bit 1 (value 2)")
-	assert.Equal(t, AccessLevel(4), AccessWrite, "AccessWrite should be bit 2 (value 4)")
-	assert.Equal(t, AccessLevel(8), AccessReadACL, "AccessReadACL should be bit 3 (value 8)")
-	assert.Equal(t, AccessLevel(16), AccessWriteACL, "AccessWriteACL should be bit 4 (value 16)")
+	assert.Equal(t, AccessLevel(1), AccessRead, "AccessRead should be 1")
+	assert.Equal(t, AccessLevel(2), AccessWrite, "AccessWrite should be 2")
+	assert.Equal(t, AccessLevel(3), AccessAdmin, "AccessAdmin should be 3")
 }
 
 func TestAccessLevelUniqueness(t *testing.T) {
@@ -75,10 +72,8 @@ func TestAccessLevelUniqueness(t *testing.T) {
 	// This prevents accidental duplicate values that could cause permission conflicts
 	levels := []AccessLevel{
 		AccessRead,
-		AccessCreate,
 		AccessWrite,
-		AccessReadACL,
-		AccessWriteACL,
+		AccessAdmin,
 	}
 
 	// Check that no two levels have the same value
@@ -93,36 +88,14 @@ func TestAccessLevelUniqueness(t *testing.T) {
 	}
 }
 
-func TestAccessLevelBitOperations(t *testing.T) {
-	// Test that bit operations work correctly with AccessLevel flags
-	// This validates that the bit flag design allows for combining permissions
-	
-	// Test combining permissions with OR
-	combined := AccessRead | AccessWrite
-	assert.NotEqual(t, AccessRead, combined, "Combined permissions should differ from individual permissions")
-	assert.NotEqual(t, AccessWrite, combined, "Combined permissions should differ from individual permissions")
-	
-	// Test checking individual permissions with AND
-	assert.Equal(t, AccessRead, combined&AccessRead, "Should be able to check for read permission in combined flags")
-	assert.Equal(t, AccessWrite, combined&AccessWrite, "Should be able to check for write permission in combined flags")
-	assert.Equal(t, AccessLevel(0), combined&AccessCreate, "Should not find create permission in read+write combination")
-}
-
 func TestAccessLevelHierarchy(t *testing.T) {
 	// Test the logical hierarchy of access levels
 	// This documents the intended permission hierarchy in the system
 	
-	// Basic file operations should have lower bit values than ACL operations
-	assert.True(t, AccessRead < AccessReadACL, "Read should have lower value than ReadACL")
-	assert.True(t, AccessWrite < AccessWriteACL, "Write should have lower value than WriteACL")
-	
-	// Within basic operations, read should be the lowest level
-	assert.True(t, AccessRead < AccessCreate, "Read should be the most basic permission")
-	assert.True(t, AccessRead < AccessWrite, "Read should be lower than write")
-	
-	// ACL operations should be the highest levels
-	assert.True(t, AccessReadACL > AccessWrite, "ReadACL should be higher than basic write")
-	assert.True(t, AccessWriteACL > AccessReadACL, "WriteACL should be the highest permission")
+	// Verify the ordering based on iota values
+	assert.True(t, AccessRead < AccessWrite, "Read should be lower than Write")
+	assert.True(t, AccessWrite < AccessAdmin, "Write should be lower than Admin")
+	assert.True(t, AccessRead < AccessAdmin, "Read should be lower than Admin")
 }
 
 func TestAccessLevelZeroValue(t *testing.T) {
@@ -131,14 +104,12 @@ func TestAccessLevelZeroValue(t *testing.T) {
 	var zeroLevel AccessLevel
 	
 	assert.Equal(t, AccessLevel(0), zeroLevel, "Zero value should be 0")
-	assert.Equal(t, "Unknown", zeroLevel.String(), "Zero value should be treated as unknown")
+	assert.Equal(t, "Unknown", zeroLevel.String(), "Zero value should return 'Unknown'")
 	
 	// Zero should not match any defined permission
 	assert.NotEqual(t, AccessRead, zeroLevel, "Zero should not equal AccessRead")
-	assert.NotEqual(t, AccessCreate, zeroLevel, "Zero should not equal AccessCreate")
 	assert.NotEqual(t, AccessWrite, zeroLevel, "Zero should not equal AccessWrite")
-	assert.NotEqual(t, AccessReadACL, zeroLevel, "Zero should not equal AccessReadACL")
-	assert.NotEqual(t, AccessWriteACL, zeroLevel, "Zero should not equal AccessWriteACL")
+	assert.NotEqual(t, AccessAdmin, zeroLevel, "Zero should not equal AccessAdmin")
 }
 
 func TestAccessLevelCasting(t *testing.T) {
@@ -154,7 +125,7 @@ func TestAccessLevelCasting(t *testing.T) {
 	assert.Equal(t, uint8(1), readValue, "Should be able to cast AccessLevel to uint8")
 	
 	// Test round-trip casting
-	originalLevel := AccessWriteACL
+	originalLevel := AccessAdmin
 	castValue := uint8(originalLevel)
 	backToLevel := AccessLevel(castValue)
 	assert.Equal(t, originalLevel, backToLevel, "Round-trip casting should preserve value")
@@ -183,10 +154,10 @@ func TestAccessLevelEdgeCases(t *testing.T) {
 	assert.Equal(t, "Unknown", maxLevel.String(), "Maximum value should be handled as unknown")
 	
 	// Test values between defined constants
-	betweenLevels := AccessLevel(3) // Between AccessCreate (2) and AccessWrite (4)
-	assert.Equal(t, "Unknown", betweenLevels.String(), "Undefined intermediate values should be unknown")
+	betweenLevels := AccessLevel(4) // Just after AccessAdmin (3)
+	assert.Equal(t, "Unknown", betweenLevels.String(), "Undefined values should be unknown")
 	
-	// Test that the bit flag pattern continues to work with undefined values
-	undefinedLevel := AccessLevel(32) // Next bit after AccessWriteACL (16)
-	assert.Equal(t, "Unknown", undefinedLevel.String(), "Higher undefined bits should be unknown")
+	// Test that undefined values are handled correctly
+	undefinedLevel := AccessLevel(10)
+	assert.Equal(t, "Unknown", undefinedLevel.String(), "Higher undefined values should be unknown")
 }

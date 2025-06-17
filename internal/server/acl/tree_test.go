@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewTree(t *testing.T) {
-	tree := NewTree()
+func TestNewACLTree(t *testing.T) {
+	tree := NewACLTree()
 	assert.NotNil(t, tree)
 	assert.NotNil(t, tree.root)
 
@@ -22,7 +22,7 @@ func TestNewTree(t *testing.T) {
 }
 
 func TestAddRuleSet(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	ruleset := aclspec.NewRuleSet(
 		"test/path",
@@ -30,14 +30,15 @@ func TestAddRuleSet(t *testing.T) {
 		aclspec.NewDefaultRule(aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset)
+	ver, err := tree.AddRuleSet(ruleset)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// check root node "/"
 	assert.NoError(t, err)
 	assert.Empty(t, tree.root.rules)
 	assert.Contains(t, tree.root.children, "test")
 	assert.Equal(t, tree.root.path, "/")
-	assert.Equal(t, tree.root.depth, uint8(0))
+	assert.Equal(t, tree.root.depth, ACLDepth(0))
 
 	// check node "test"
 	child, ok := tree.root.GetChild("test")
@@ -46,18 +47,18 @@ func TestAddRuleSet(t *testing.T) {
 	assert.Empty(t, child.rules)
 	assert.Contains(t, child.children, "path")
 	assert.Equal(t, child.path, "test")
-	assert.Equal(t, child.depth, uint8(1))
+	assert.Equal(t, child.depth, ACLDepth(1))
 
 	// check node "path"
 	child, ok = child.GetChild("path")
 	assert.True(t, ok)
 	assert.NotNil(t, child)
 	assert.Equal(t, child.path, "test/path")
-	assert.Equal(t, child.depth, uint8(2))
+	assert.Equal(t, child.depth, ACLDepth(2))
 }
 
 func TestTreeTraversal(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add rulesets with nested paths
 	ruleset1 := aclspec.NewRuleSet(
@@ -68,7 +69,7 @@ func TestTreeTraversal(t *testing.T) {
 
 	ruleset2 := aclspec.NewRuleSet(
 		"parent/child",
-		aclspec.UnsetTerminal, // Changed to non-terminal so we can add grandchild
+		aclspec.UnsetTerminal, // Non-terminal to allow grandchild
 		aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
@@ -78,36 +79,39 @@ func TestTreeTraversal(t *testing.T) {
 		aclspec.NewRule("*.go", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	ver, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset3)
+	ver, err = tree.AddRuleSet(ruleset3)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Test finding nearest node with rules for different paths
-	node := tree.GetNearestNodeWithRules("parent/file.txt")
+	node := tree.LookupNearestNode("parent/file.txt")
 	assert.Equal(t, "parent", node.path)
 
-	node = tree.GetNearestNodeWithRules("parent/child/document.md")
+	node = tree.LookupNearestNode("parent/child/document.md")
 	assert.Equal(t, "parent/child", node.path)
 
-	node = tree.GetNearestNodeWithRules("parent/child/grandchild/main.go")
+	node = tree.LookupNearestNode("parent/child/grandchild/main.go")
 	assert.Equal(t, "parent/child/grandchild", node.path)
 
-	// Test inheritance - terminal nodes (like grandchild) block inheritance from higher levels
-	node = tree.GetNearestNodeWithRules("parent/child/unknown.txt")
+	// Test inheritance - terminal nodes (like parent/child) block inheritance from higher levels
+	node = tree.LookupNearestNode("parent/child/unknown.txt")
 	assert.Equal(t, "parent/child", node.path)
 
 	// Test path that doesn't exist in the tree
-	node = tree.GetNearestNodeWithRules("unknown/path")
+	node = tree.LookupNearestNode("unknown/path")
 	assert.Nil(t, node)
 }
 
 func TestRemoveRuleSet(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add rulesets
 	ruleset1 := aclspec.NewRuleSet(
@@ -122,11 +126,13 @@ func TestRemoveRuleSet(t *testing.T) {
 		aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	ver, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Verify both rulesets are in the tree
 	_, ok := tree.root.GetChild("folder1")
@@ -155,7 +161,7 @@ func TestRemoveRuleSet(t *testing.T) {
 func TestGetNode(t *testing.T) {
 	// Test the GetNode method which finds exact nodes for given paths
 	// This validates precise node location without rule inheritance logic
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add nested rulesets to create a tree structure
 	ruleset1 := aclspec.NewRuleSet(
@@ -170,10 +176,10 @@ func TestGetNode(t *testing.T) {
 		aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	_, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
 
-	err = tree.AddRuleSet(ruleset2)
+	_, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
 
 	// Test getting exact nodes that exist
@@ -203,7 +209,7 @@ func TestGetNode(t *testing.T) {
 func TestGetNodeWithTerminalNodes(t *testing.T) {
 	// Test GetNode behavior with terminal nodes
 	// Terminal nodes allow children to be added but stop traversal during lookups
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add a terminal node with catch-all rule
 	terminalRuleset := aclspec.NewRuleSet(
@@ -212,13 +218,13 @@ func TestGetNodeWithTerminalNodes(t *testing.T) {
 		aclspec.NewRule("**", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(terminalRuleset)
+	_, err := tree.AddRuleSet(terminalRuleset)
 	assert.NoError(t, err)
 
 	// Verify the terminal node was added
 	terminalNode := tree.GetNode("terminal")
 	assert.NotNil(t, terminalNode, "Terminal node should exist")
-	assert.True(t, terminalNode.IsTerminal(), "Node should be marked as terminal")
+	assert.True(t, terminalNode.GetTerminal(), "Node should be marked as terminal")
 
 	// Add a child under the terminal node - this should SUCCEED
 	// The tree allows all nodes to be added for performance (avoids tree rebuilds)
@@ -228,7 +234,7 @@ func TestGetNodeWithTerminalNodes(t *testing.T) {
 		aclspec.NewRule("*.md", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 	)
 
-	err = tree.AddRuleSet(childRuleset)
+	_, err = tree.AddRuleSet(childRuleset)
 	assert.NoError(t, err, "Should allow child rulesets under terminal nodes (tree contains all ACLs)")
 
 	// GetNode should stop at terminal node during lookup traversal
@@ -245,16 +251,16 @@ func TestGetNodeWithTerminalNodes(t *testing.T) {
 	actualChild, exists := terminalNode.GetChild("child")
 	assert.True(t, exists, "Child should exist in tree structure")
 	assert.Equal(t, "terminal/child", actualChild.path, "Child should have correct path")
-	assert.False(t, actualChild.IsTerminal(), "Child should not be terminal")
+	assert.False(t, actualChild.GetTerminal(), "Child should not be terminal")
 
-	// AND: GetNearestNodeWithRules should also stop at terminal nodes
-	nearestNode := tree.GetNearestNodeWithRules("terminal/child/file.txt")
+	// AND: LookupNearestNode should also stop at terminal nodes
+	nearestNode := tree.LookupNearestNode("terminal/child/file.txt")
 	assert.NotNil(t, nearestNode, "Should find the terminal node")
 	assert.Equal(t, "terminal", nearestNode.path, "Rule lookup should stop at terminal node")
 
 	// This means child rules are ignored for inheritance even though they exist in the tree  
 	// Test with child path - should get rule from terminal node (** pattern matches everything)
-	rule, err := tree.GetRule("terminal/child/test.md")
+	rule, err := tree.GetEffectiveRule("terminal/child/test.md")
 	assert.NoError(t, err, "Should find rule from terminal node")
 	assert.Equal(t, "terminal", rule.node.path, "Rule should come from terminal node, not child")
 	assert.Equal(t, "**", rule.rule.Pattern, "Should use terminal node's catch-all rule")
@@ -263,7 +269,7 @@ func TestGetNodeWithTerminalNodes(t *testing.T) {
 func TestTerminalNodeValidation(t *testing.T) {
 	// Test that terminal nodes control inheritance but allow children to be added
 	// This explicitly tests the correct terminal behavior
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add a terminal node
 	terminalRuleset := aclspec.NewRuleSet(
@@ -272,12 +278,12 @@ func TestTerminalNodeValidation(t *testing.T) {
 		aclspec.NewRule("**", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(terminalRuleset)
+	_, err := tree.AddRuleSet(terminalRuleset)
 	assert.NoError(t, err, "Should be able to add terminal node")
 
 	// Verify it's terminal
 	node := tree.GetNode("secure")
-	assert.True(t, node.IsTerminal(), "Node should be marked as terminal")
+	assert.True(t, node.GetTerminal(), "Node should be marked as terminal")
 
 	// Add direct child - should succeed (tree allows all nodes for performance)
 	childRuleset := aclspec.NewRuleSet(
@@ -286,7 +292,7 @@ func TestTerminalNodeValidation(t *testing.T) {
 		aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 	)
 
-	err = tree.AddRuleSet(childRuleset)
+	_, err = tree.AddRuleSet(childRuleset)
 	assert.NoError(t, err, "Should be able to add child under terminal node (exists in tree)")
 
 	// Add deeper nested child - should also succeed
@@ -296,24 +302,24 @@ func TestTerminalNodeValidation(t *testing.T) {
 		aclspec.NewRule("*.md", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 	)
 
-	err = tree.AddRuleSet(deepChildRuleset)
+	_, err = tree.AddRuleSet(deepChildRuleset)
 	assert.NoError(t, err, "Should be able to add nested child under terminal node")
 
 	// BUT: Terminal nodes should stop traversal for rule lookups
 	// All paths under secure/ should resolve to the secure terminal node
 	
 	// Direct child path should resolve to terminal parent
-	nearestNode := tree.GetNearestNodeWithRules("secure/child/test.txt")
+	nearestNode := tree.LookupNearestNode("secure/child/test.txt")
 	assert.NotNil(t, nearestNode, "Should find a node")
 	assert.Equal(t, "secure", nearestNode.path, "Should resolve to terminal parent, not child")
 
 	// Deep child path should also resolve to terminal parent
-	nearestNode = tree.GetNearestNodeWithRules("secure/child/grandchild/test.md")
+	nearestNode = tree.LookupNearestNode("secure/child/grandchild/test.md")
 	assert.NotNil(t, nearestNode, "Should find a node")
 	assert.Equal(t, "secure", nearestNode.path, "Should resolve to terminal parent, not grandchild")
 
 	// Rule lookup should use terminal node's rules
-	rule, err := tree.GetRule("secure/child/test.txt")
+	rule, err := tree.GetEffectiveRule("secure/child/test.txt")
 	assert.NoError(t, err, "Should find rule for child path")
 	assert.Equal(t, "secure", rule.node.path, "Rule should come from terminal parent")
 	assert.Equal(t, "**", rule.rule.Pattern, "Should use terminal node's catch-all rule")
@@ -325,7 +331,7 @@ func TestTerminalNodeValidation(t *testing.T) {
 		aclspec.NewRule("**", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 	)
 
-	err = tree.AddRuleSet(nonTerminalRuleset)
+	_, err = tree.AddRuleSet(nonTerminalRuleset)
 	assert.NoError(t, err, "Should be able to add non-terminal node")
 
 	// Add child under non-terminal - should succeed and be accessible
@@ -335,11 +341,11 @@ func TestTerminalNodeValidation(t *testing.T) {
 		aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err = tree.AddRuleSet(openChildRuleset)
+	_, err = tree.AddRuleSet(openChildRuleset)
 	assert.NoError(t, err, "Should be able to add child under non-terminal node")
 
 	// Child under non-terminal should be accessible for rule lookups
-	nearestNode = tree.GetNearestNodeWithRules("open/child/test.txt")
+	nearestNode = tree.LookupNearestNode("open/child/test.txt")
 	assert.NotNil(t, nearestNode, "Should find a node")
 	assert.Equal(t, "open/child", nearestNode.path, "Should find the actual child node, not parent")
 }
@@ -347,7 +353,7 @@ func TestTerminalNodeValidation(t *testing.T) {
 func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 	// Test what happens when adding multiple rulesets to the same path
 	// This tests ruleset replacement/overwriting behavior
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add initial ruleset
 	initialRuleset := aclspec.NewRuleSet(
@@ -356,14 +362,14 @@ func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 		aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(initialRuleset)
+	_, err := tree.AddRuleSet(initialRuleset)
 	assert.NoError(t, err, "Should be able to add initial ruleset")
 
 	// Verify initial ruleset
 	node := tree.GetNode("shared")
 	assert.NotNil(t, node, "Node should exist")
-	assert.False(t, node.IsTerminal(), "Node should not be terminal initially")
-	assert.Len(t, node.Rules(), 1, "Should have 1 rule initially")
+	assert.False(t, node.GetTerminal(), "Node should not be terminal initially")
+	assert.Len(t, node.GetRules(), 1, "Should have 1 rule initially")
 
 	// Add conflicting ruleset at the SAME path with different rules and terminal flag
 	conflictingRuleset := aclspec.NewRuleSet(
@@ -373,14 +379,14 @@ func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 		aclspec.NewRule("**", aclspec.SharedReadAccess("admin@example.com"), aclspec.DefaultLimits()), // Additional rule
 	)
 
-	err = tree.AddRuleSet(conflictingRuleset)
+	_, err = tree.AddRuleSet(conflictingRuleset)
 	assert.NoError(t, err, "Should be able to add conflicting ruleset (overwrites)")
 
 	// Verify the conflicting ruleset completely replaced the original
 	node = tree.GetNode("shared")
 	assert.NotNil(t, node, "Node should still exist")
-	assert.True(t, node.IsTerminal(), "Node should now be terminal (overwritten)")
-	assert.Len(t, node.Rules(), 2, "Should have 2 rules from new ruleset")
+	assert.True(t, node.GetTerminal(), "Node should now be terminal (overwritten)")
+	assert.Len(t, node.GetRules(), 2, "Should have 2 rules from new ruleset")
 
 	// Verify the conflicting ruleset completely replaced the original
 	// The original *.txt rule with PrivateAccess is gone
@@ -412,11 +418,11 @@ func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 		aclspec.NewRule("*.go", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err = tree.AddRuleSet(childRuleset)
+	_, err = tree.AddRuleSet(childRuleset)
 	assert.NoError(t, err, "Should be able to add child under terminal node (tree allows all nodes)")
 
 	// But rule lookups should stop at terminal node
-	rule, err = tree.GetRule("shared/child/test.go")
+	rule, err = tree.GetEffectiveRule("shared/child/test.go")
 	assert.NoError(t, err, "Should find rule for child path")
 	assert.Equal(t, "shared", rule.node.path, "Rule should come from terminal parent, not child")
 	assert.Equal(t, "**", rule.rule.Pattern, "Should use parent's ** rule, not child's *.go rule")
@@ -425,10 +431,10 @@ func TestConflictingRuleSetsAtSameLevel(t *testing.T) {
 func TestAddRuleSetErrorCases(t *testing.T) {
 	// Test AddRuleSet with various error conditions
 	// This improves coverage of edge cases and error handling
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Test with nil ruleset
-	err := tree.AddRuleSet(nil)
+	_, err := tree.AddRuleSet(nil)
 	assert.Error(t, err, "Should reject nil ruleset")
 	assert.Contains(t, err.Error(), "ruleset is nil", "Error should indicate nil ruleset")
 
@@ -438,7 +444,7 @@ func TestAddRuleSetErrorCases(t *testing.T) {
 		Terminal: false,
 		Rules:    []*aclspec.Rule{},
 	}
-	err = tree.AddRuleSet(emptyRuleset)
+	_, err = tree.AddRuleSet(emptyRuleset)
 	assert.Error(t, err, "Should reject empty ruleset")
 	assert.Contains(t, err.Error(), "ruleset is empty", "Error should indicate empty ruleset")
 
@@ -452,7 +458,7 @@ func TestAddRuleSetErrorCases(t *testing.T) {
 		aclspec.UnsetTerminal,
 		aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
-	err = tree.AddRuleSet(deepRuleset)
+	_, err = tree.AddRuleSet(deepRuleset)
 	assert.Error(t, err, "Should reject paths that are too deep")
 	assert.Contains(t, err.Error(), "maximum depth exceeded", "Error should indicate depth limit")
 }
@@ -460,7 +466,7 @@ func TestAddRuleSetErrorCases(t *testing.T) {
 func TestAddRuleSetPathNormalization(t *testing.T) {
 	// Test that AddRuleSet properly normalizes different path formats
 	// This ensures consistent path handling across different input formats
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Test with path that has leading/trailing separators
 	rule := aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits())
@@ -476,7 +482,7 @@ func TestAddRuleSetPathNormalization(t *testing.T) {
 
 	for i, path := range testPaths {
 		ruleset := aclspec.NewRuleSet(path, false, rule)
-		err := tree.AddRuleSet(ruleset)
+		_, err := tree.AddRuleSet(ruleset)
 		assert.NoError(t, err, "Should accept path format: %s", path)
 		
 		// All paths should result in the same node being found
@@ -487,7 +493,7 @@ func TestAddRuleSetPathNormalization(t *testing.T) {
 }
 
 func TestNestedRuleSetRemoval(t *testing.T) {
-	tree := NewTree()
+	tree := NewACLTree()
 
 	// Add nested rulesets
 	ruleset1 := aclspec.NewRuleSet(
@@ -502,11 +508,13 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 		aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 	)
 
-	err := tree.AddRuleSet(ruleset1)
+	ver, err := tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Remove parent - with original behavior, this removes the entire subtree
 	removed := tree.RemoveRuleSet("parent")
@@ -517,12 +525,14 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 	assert.False(t, ok, "Parent node should be completely removed")
 
 	// Add the parent ruleset back
-	err = tree.AddRuleSet(ruleset1)
+	ver, err = tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Add the child ruleset back
-	err = tree.AddRuleSet(ruleset2)
+	ver, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 
 	// Remove just the child
 	removed = tree.RemoveRuleSet("parent/child")

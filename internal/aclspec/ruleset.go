@@ -19,7 +19,7 @@ type RuleSet struct {
 // NewRuleSet creates a new RuleSet instance with the given path, terminal flag, and initial rules.
 func NewRuleSet(path string, terminal bool, rules ...*Rule) *RuleSet {
 	return &RuleSet{
-		Path:     WithoutAclPath(path),
+		Path:     WithoutACLPath(path),
 		Terminal: terminal,
 		Rules:    rules,
 	}
@@ -32,7 +32,7 @@ func (r *RuleSet) AllRules() []*Rule {
 // LoadFromFile loads a RuleSet from the specified file path
 // For security reasons, symlinks are not allowed as ACL files
 func LoadFromFile(path string) (*RuleSet, error) {
-	aclPath := AsAclPath(path)
+	aclPath := AsACLPath(path)
 	
 	// Check if file is a symlink before opening
 	stat, err := os.Lstat(aclPath)
@@ -55,7 +55,7 @@ func LoadFromFile(path string) (*RuleSet, error) {
 
 // LoadFromReader creates a RuleSet by reading and parsing YAML content from the provided reader.
 // The path parameter is used to set the internal path of the RuleSet.
-func LoadFromReader(path string, reader io.ReadCloser) (*RuleSet, error) {
+func LoadFromReader(path string, reader io.Reader) (*RuleSet, error) {
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
@@ -66,12 +66,12 @@ func LoadFromReader(path string, reader io.ReadCloser) (*RuleSet, error) {
 		return nil, err
 	}
 
-	ruleset.Path = WithoutAclPath(path)
+	ruleset.Path = WithoutACLPath(path)
 	return setDefaults(&ruleset)
 }
 
 func (r *RuleSet) Save() error {
-	aclPath := AsAclPath(r.Path)
+	aclPath := AsACLPath(r.Path)
 	file, err := os.Create(aclPath)
 	if err != nil {
 		return fmt.Errorf("failed to create file %s: %w", r.Path, err)

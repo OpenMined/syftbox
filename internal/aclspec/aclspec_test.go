@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIsAclFile(t *testing.T) {
+func TestIsACLFile(t *testing.T) {
 	// Test the core ACL file detection logic
 	// This is critical for the system to recognize permission files correctly
 	testCases := []struct {
@@ -66,13 +66,13 @@ func TestIsAclFile(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			result := IsAclFile(tc.path)
+			result := IsACLFile(tc.path)
 			assert.Equal(t, tc.expected, result, "Path: %s", tc.path)
 		})
 	}
 }
 
-func TestAsAclPath(t *testing.T) {
+func TestAsACLPath(t *testing.T) {
 	// Test converting directory paths to ACL file paths
 	// This ensures the system can correctly locate ACL files for directories
 	testCases := []struct {
@@ -114,13 +114,13 @@ func TestAsAclPath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			result := AsAclPath(tc.input)
+			result := AsACLPath(tc.input)
 			assert.Equal(t, tc.expected, result, "Input: %s", tc.input)
 		})
 	}
 }
 
-func TestWithoutAclPath(t *testing.T) {
+func TestWithoutACLPath(t *testing.T) {
 	// Test removing ACL filename from paths
 	// This is used to get the directory path from an ACL file path
 	testCases := []struct {
@@ -162,7 +162,7 @@ func TestWithoutAclPath(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			result := WithoutAclPath(tc.input)
+			result := WithoutACLPath(tc.input)
 			assert.Equal(t, tc.expected, result, "Input: %s", tc.input)
 		})
 	}
@@ -298,15 +298,15 @@ rules:
 	assert.Error(t, err, "LoadFromFile() should reject symlinked ACL files")
 	assert.Contains(t, err.Error(), "symlinks are not allowed", "Error should mention symlink restriction")
 	
-	// 3. AsAclPath and IsAclFile should work normally (they don't check file existence)
-	aclPath := AsAclPath(symlinkDir)
-	assert.Equal(t, symlinkAclFile, aclPath, "AsAclPath should work normally")
-	assert.True(t, IsAclFile(aclPath), "IsAclFile should work normally")
+	// 3. AsACLPath and IsACLFile should work normally (they don't check file existence)
+	aclPath := AsACLPath(symlinkDir)
+	assert.Equal(t, symlinkAclFile, aclPath, "AsACLPath should work normally")
+	assert.True(t, IsACLFile(aclPath), "IsACLFile should work normally")
 	
-	// 4. Test that WithoutAclPath works normally
-	dirPath := WithoutAclPath(aclPath)
-	// Note: WithoutAclPath may add trailing separator, so we use filepath.Clean for comparison
-	assert.Equal(t, symlinkDir, filepath.Clean(dirPath), "WithoutAclPath should work normally")
+	// 4. Test that WithoutACLPath works normally
+	dirPath := WithoutACLPath(aclPath)
+	// Note: WithoutACLPath may add trailing separator, so we use filepath.Clean for comparison
+	assert.Equal(t, symlinkDir, filepath.Clean(dirPath), "WithoutACLPath should work normally")
 	
 	// Verify that regular files still work
 	regularDir := filepath.Join(tempDir, "regular")
@@ -340,18 +340,18 @@ func TestPathEdgeCases(t *testing.T) {
 	
 	// Test with paths containing special characters
 	specialPath := "/home/user with spaces/syft.pub.yaml"
-	assert.True(t, IsAclFile(specialPath), "Paths with spaces should be handled correctly")
+	assert.True(t, IsACLFile(specialPath), "Paths with spaces should be handled correctly")
 	
 	// Test with Unicode characters
 	unicodePath := "/home/用户/syft.pub.yaml"
-	assert.True(t, IsAclFile(unicodePath), "Unicode paths should be handled correctly")
+	assert.True(t, IsACLFile(unicodePath), "Unicode paths should be handled correctly")
 	
 	// Test with multiple slashes
 	multiSlashPath := "/home//user///syft.pub.yaml"
 	expected := "/home//user///syft.pub.yaml"
-	assert.Equal(t, expected, AsAclPath(multiSlashPath), "Multiple slashes should be preserved")
+	assert.Equal(t, expected, AsACLPath(multiSlashPath), "Multiple slashes should be preserved")
 	
 	// Test with backslashes (Windows-style paths)
 	windowsPath := "C:\\Users\\user\\syft.pub.yaml"
-	assert.True(t, IsAclFile(windowsPath), "Windows-style paths should be detected")
+	assert.True(t, IsACLFile(windowsPath), "Windows-style paths should be detected")
 }
