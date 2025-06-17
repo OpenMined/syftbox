@@ -30,8 +30,21 @@ func (r *RuleSet) AllRules() []*Rule {
 }
 
 // LoadFromFile loads a RuleSet from the specified file path
+// For security reasons, symlinks are not allowed as ACL files
 func LoadFromFile(path string) (*RuleSet, error) {
 	aclPath := AsAclPath(path)
+	
+	// Check if file is a symlink before opening
+	stat, err := os.Lstat(aclPath)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Reject symlinks for security reasons
+	if stat.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("symlinks are not allowed as ACL files: %s", aclPath)
+	}
+	
 	fd, err := os.Open(aclPath)
 	if err != nil {
 		return nil, err
