@@ -1,0 +1,75 @@
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: syftbox-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+      - ../minio/init.d:/etc/minio/init.d
+    command: server /data --console-address ':9001'
+    networks:
+      - syftbox-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.server
+    container_name: syftbox-server
+    ports:
+      - "8080:8080"
+    environment:
+      - SYFTBOX_ENV=DEV
+      - SYFTBOX_AUTH_ENABLED=0
+      - SYFTBOX_AUTH_EMAIL_OTP_LENGTH=8
+      - SYFTBOX_AUTH_EMAIL_OTP_EXPIRY=5m
+      - SYFTBOX_AUTH_TOKEN_ISSUER=https://syftboxdev.openmined.org
+      - SYFTBOX_AUTH_REFRESH_TOKEN_SECRET=123
+      - SYFTBOX_AUTH_REFRESH_TOKEN_EXPIRY=0
+      - SYFTBOX_AUTH_ACCESS_TOKEN_SECRET=132
+      - SYFTBOX_AUTH_ACCESS_TOKEN_EXPIRY=72h
+      - SYFTBOX_BLOB_REGION=us-east-1
+      - SYFTBOX_BLOB_BUCKET_NAME=syftbox-local
+      - SYFTBOX_BLOB_ENDPOINT=http://minio:9000
+      - SYFTBOX_BLOB_ACCESS_KEY=ptSLdKiwOi2LYQFZYEZ6
+      - SYFTBOX_BLOB_SECRET_KEY=GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8
+      - SYFTBOX_HTTP_ADDR=0.0.0.0:8080
+    networks:
+      - syftbox-network
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    command: >
+      sh -c "
+        # Wait for MinIO to be ready and run setup
+        until mc alias set local http://minio:9000 minioadmin minioadmin >/dev/null 2>&1; do
+          echo 'Waiting for MinIO...'
+          sleep 1
+        done
+        echo 'Running MinIO setup...'
+        # Update the setup script to use the correct endpoint
+        sed 's|http://localhost:9000|http://minio:9000|g' /etc/minio/init.d/setup.sh > /tmp/setup.sh
+        chmod +x /tmp/setup.sh
+        /tmp/setup.sh || true
+        echo 'Starting server...'
+        ./server
+      "
+    volumes:
+      - ../minio/init.d:/etc/minio/init.d:ro
+
+networks:
+  syftbox-network:
+    driver: bridge
+
+volumes:
+  minio-data:
