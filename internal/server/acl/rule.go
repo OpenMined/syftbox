@@ -8,27 +8,37 @@ import (
 )
 
 var (
-	ErrAdminRequired      = errors.New("admin access required")
-	ErrWriteRequired      = errors.New("write access required")
-	ErrReadRequired       = errors.New("read access required")
+	ErrNoAdminAccess      = errors.New("no admin access")
+	ErrNoWriteAccess      = errors.New("no write access")
+	ErrNoReadAccess       = errors.New("no read access")
 	ErrDirsNotAllowed     = errors.New("directories not allowed")
 	ErrSymlinksNotAllowed = errors.New("symlinks not allowed")
 	ErrFileSizeExceeded   = errors.New("file size exceeds limits")
 	ErrInvalidAccessLevel = errors.New("invalid access level")
 )
 
-// Rule represents an access control rule for a file or directory in an ACL Node.
+// ACLRule represents an access control rule for a file or directory in an ACL Node.
 // It contains the full pattern of the rule, the rule itself, and the node it applies to
-type Rule struct {
+type ACLRule struct {
 	fullPattern string        // full pattern = full path + glob
 	rule        *aclspec.Rule // the rule itself
-	node        *Node         // the node this rule applies to
+	node        *ACLNode      // the node this rule applies to
+}
+
+// Owner returns the owner of the rule (inherited from the node)
+func (r *ACLRule) Owner() string {
+	return r.node.GetOwner()
+}
+
+// Version returns the version of the rule (inherited from the node)s
+func (r *ACLRule) Version() ACLVersion {
+	return r.node.GetVersion()
 }
 
 // CheckAccess checks if the user has permission to perform the specified action on the node.
-func (r *Rule) CheckAccess(user *User, level AccessLevel) error {
+func (r *ACLRule) CheckAccess(user *User, level AccessLevel) error {
 	// the rule is owned by the user, so they can do anything
-	if user.IsOwner {
+	if r.Owner() == user.ID {
 		return nil
 	}
 
@@ -44,19 +54,19 @@ func (r *Rule) CheckAccess(user *User, level AccessLevel) error {
 
 	// Use a switch with fallthrough for permission hierarchy
 	switch level {
-	case AccessWriteACL:
+	case AccessAdmin:
 		if !isAdmin {
-			return ErrAdminRequired
+			return ErrNoAdminAccess
 		}
 		return nil
 	case AccessWrite:
 		if !isWriter {
-			return ErrWriteRequired
+			return ErrNoWriteAccess
 		}
 		return nil
 	case AccessRead:
 		if !isReader {
-			return ErrReadRequired
+			return ErrNoReadAccess
 		}
 		return nil
 	default:
@@ -65,7 +75,7 @@ func (r *Rule) CheckAccess(user *User, level AccessLevel) error {
 }
 
 // CheckLimits checks if the file is within the limits specified by the rule.
-func (r *Rule) CheckLimits(info *File) error {
+func (r *ACLRule) CheckLimits(info *File) error {
 	limits := r.rule.Limits
 
 	if limits == nil {

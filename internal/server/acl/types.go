@@ -1,8 +1,7 @@
 package acl
 
 type User struct {
-	ID      string
-	IsOwner bool
+	ID string
 }
 
 type File struct {

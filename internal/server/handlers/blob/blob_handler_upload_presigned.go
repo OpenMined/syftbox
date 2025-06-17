@@ -5,47 +5,57 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 )
 
 func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
-	var req PresignUrlRequest
+	var req PresignURLRequest
+	user := ctx.GetString("user")
+
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.Error(fmt.Errorf("failed to bind json: %w", err))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("failed to bind json: %w", err))
 		return
 	}
 
-	if len(req.Keys) == 0 {
-		ctx.Error(fmt.Errorf("keys cannot be empty"))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "keys cannot be empty",
-		})
-		return
-	}
-
-	urls := make([]*BlobUrl, 0, len(req.Keys))
-	errors := make([]*BlobError, 0)
+	urls := make([]*BlobURL, 0, len(req.Keys))
+	errors := make([]*BlobAPIError, 0)
 	for _, key := range req.Keys {
-		if !isValidDatasiteKey(key) {
-			ctx.Error(fmt.Errorf("invalid datasite path: %s", key))
-			errors = append(errors, &BlobError{
-				Key:   key,
-				Error: "invalid key",
+		if !datasite.IsValidPath(key) {
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeDatasiteInvalidPath,
+					Message: "invalid key",
+				},
+				Key: key,
 			})
 			continue
 		}
+
+		if err := h.checkPermissions(key, user, acl.AccessWrite); err != nil {
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeAccessDenied,
+					Message: err.Error(),
+				},
+				Key: key,
+			})
+			continue
+		}
+
 		url, err := h.blob.Backend().PutObjectPresigned(ctx, key)
 		if err != nil {
-			ctx.Error(fmt.Errorf("failed to put object: %w", err))
-			errors = append(errors, &BlobError{
-				Key:   key,
-				Error: err.Error(),
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeBlobPutFailed,
+					Message: err.Error(),
+				},
+				Key: key,
 			})
 			continue
 		}
-		urls = append(urls, &BlobUrl{
+		urls = append(urls, &BlobURL{
 			Key: key,
 			Url: url,
 		})
@@ -53,12 +63,12 @@ func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
 
 	code := http.StatusOK
 	if len(urls) == 0 && len(errors) > 0 {
-		code = http.StatusBadRequest
+		code = http.StatusMultiStatus
 	} else if len(urls) > 0 && len(errors) > 0 {
 		code = http.StatusMultiStatus
 	}
 
-	ctx.PureJSON(code, &PresignUrlResponse{
+	ctx.PureJSON(code, &PresignURLResponse{
 		URLs:   urls,
 		Errors: errors,
 	})

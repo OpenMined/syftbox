@@ -3,6 +3,7 @@ package acl
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/openmined/syftbox/internal/aclspec"
@@ -11,30 +12,36 @@ import (
 var (
 	ErrInvalidRuleset   = errors.New("invalid ruleset")
 	ErrMaxDepthExceeded = errors.New("maximum depth exceeded")
-	ErrNoRuleFound      = errors.New("no rule found")
+	ErrNoRuleFound      = errors.New("no rules available")
 )
 
-// Tree stores the ACL rules in a n-ary tree for efficient lookups.
-type Tree struct {
-	root *Node
+const (
+	rootPath = "/"
+	noOwner  = ""
+)
+
+// ACLTree stores the ACL rules in a n-ary tree for efficient lookups.
+type ACLTree struct {
+	root *ACLNode
 }
 
-func NewTree() *Tree {
-	return &Tree{
-		root: NewNode(ACLPathSep, false, 0),
+// NewACLTree creates a new ACLTree.
+func NewACLTree() *ACLTree {
+	return &ACLTree{
+		root: NewACLNode(rootPath, noOwner, false, 0),
 	}
 }
 
 // Add or update a ruleset in the tree.
-func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
+func (t *ACLTree) AddRuleSet(ruleset *aclspec.RuleSet) (ACLVersion, error) {
 	// Validate the ruleset
 	if ruleset == nil {
-		return fmt.Errorf("%w: ruleset is nil", ErrInvalidRuleset)
+		return 0, fmt.Errorf("%w: ruleset is nil", ErrInvalidRuleset)
 	}
 
 	allRules := ruleset.AllRules()
 	if len(allRules) == 0 {
-		return fmt.Errorf("%w: ruleset is empty", ErrInvalidRuleset)
+		return 0, fmt.Errorf("%w: ruleset is empty", ErrInvalidRuleset)
 	}
 
 	// Clean and split the path
@@ -42,9 +49,16 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 	parts := strings.Split(cleanPath, ACLPathSep)
 	pathDepth := strings.Count(cleanPath, ACLPathSep)
 
+	// owner is assumed to be the first part of the path.
+	// but in future we can always bake it as a part of the acl schema
+	owner := parts[0]
+	if owner == "" {
+		return 0, fmt.Errorf("%w: owner is empty", ErrInvalidRuleset)
+	}
+
 	// Check path depth limit (u8)
-	if pathDepth > 255 {
-		return ErrMaxDepthExceeded
+	if pathDepth > ACLMaxDepth {
+		return 0, ErrMaxDepthExceeded
 	}
 
 	// Start at the root node
@@ -59,24 +73,24 @@ func (t *Tree) AddRuleSet(ruleset *aclspec.RuleSet) error {
 		// Get or create child node
 		child, exists := current.GetChild(part)
 		if !exists {
-			// Use forward slashes for paths
 			fullPath := ACLJoinPath(parts[:currentDepth]...)
-			child = NewNode(fullPath, false, currentDepth)
+			child = NewACLNode(fullPath, owner, false, currentDepth)
 			current.SetChild(part, child)
 		}
+
 		current = child
 	}
 
 	// Set the rules on the final node
 	current.SetRules(allRules, ruleset.Terminal)
+	slog.Debug("added ruleset", "path", ruleset.Path, "owner", owner, "version", current.GetVersion())
 
-	return nil
+	return current.GetVersion(), nil
 }
 
-// Get rule for the given path
-func (t *Tree) GetRule(path string) (*Rule, error) {
-
-	node := t.GetNearestNodeWithRules(path) // O(depth)
+// GetEffectiveRule returns the most specific rule applicable to the given path.
+func (t *ACLTree) GetEffectiveRule(path string) (*ACLRule, error) {
+	node := t.LookupNearestNode(path) // O(depth)
 	if node == nil {
 		return nil, ErrNoRuleFound
 	}
@@ -89,17 +103,17 @@ func (t *Tree) GetRule(path string) (*Rule, error) {
 	return rule, nil
 }
 
-// GetNearestNodeWithRules returns the nearest node in the tree that has associated rules for the given path.
+// LookupNearestNode returns the nearest node in the tree that has associated rules for the given path.
 // It returns nil if no such node is found.
-func (t *Tree) GetNearestNodeWithRules(path string) *Node {
+func (t *ACLTree) LookupNearestNode(path string) *ACLNode {
 	parts := ACLPathSegments(path)
 
-	var candidate *Node
+	var candidate *ACLNode
 	current := t.root
 
 	for _, part := range parts {
 		// Stop if the current node is terminal.
-		if current.IsTerminal() {
+		if current.GetTerminal() {
 			break
 		}
 
@@ -109,7 +123,7 @@ func (t *Tree) GetNearestNodeWithRules(path string) *Node {
 		}
 
 		current = child
-		if child.Rules() != nil {
+		if child.GetRules() != nil {
 			candidate = current
 		}
 	}
@@ -118,12 +132,12 @@ func (t *Tree) GetNearestNodeWithRules(path string) *Node {
 }
 
 // GetNode finds the exact node applicable for the given path.
-func (t *Tree) GetNode(path string) *Node {
+func (t *ACLTree) GetNode(path string) *ACLNode {
 	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
-		if current.IsTerminal() {
+		if current.GetTerminal() {
 			break
 		}
 
@@ -138,8 +152,8 @@ func (t *Tree) GetNode(path string) *Node {
 }
 
 // Removes a ruleset at the specified path
-func (t *Tree) RemoveRuleSet(path string) bool {
-	var parent *Node
+func (t *ACLTree) RemoveRuleSet(path string) bool {
+	var parent *ACLNode
 	var lastPart string
 
 	parts := ACLPathSegments(path)

@@ -14,7 +14,7 @@ import (
 
 type Services struct {
 	Blob     *blob.BlobService
-	ACL      *acl.AclService
+	ACL      *acl.ACLService
 	Datasite *datasite.DatasiteService
 	Auth     *auth.AuthService
 	Email    *email.EmailService
@@ -28,7 +28,7 @@ func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 		return nil, err
 	}
 
-	aclSvc := acl.NewAclService()
+	aclSvc := acl.NewACLService()
 
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
 

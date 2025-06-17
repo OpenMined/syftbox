@@ -1,62 +1,58 @@
 package acl
 
 import (
+	"log/slog"
 	"strings"
 	"sync"
 )
 
-type cacheEntry struct {
-	rule    *Rule
-	version uint8
-}
-
-type RuleCache struct {
-	index map[string]*cacheEntry
+// ACLCache stores the effective ACL rule for a given path.
+type ACLCache struct {
+	index map[string]*ACLRule // path -> ACLRule
 	mu    sync.RWMutex
 }
 
-func NewRuleCache() *RuleCache {
-	return &RuleCache{
-		index: make(map[string]*cacheEntry),
+// NewACLCache creates a new ACLCache.
+func NewACLCache() *ACLCache {
+	return &ACLCache{
+		index: make(map[string]*ACLRule),
 	}
 }
 
-func (c *RuleCache) Get(path string) *Rule {
+// Get returns the effective ACL rule for the given path.
+func (c *ACLCache) Get(path string) *ACLRule {
 	c.mu.RLock()
-	cached, ok := c.index[path]
+	cacheRule, ok := c.index[path]
 	c.mu.RUnlock()
+
 	if !ok {
 		return nil
 	}
 
-	// validate the cache entry
-	valid := cached.rule.node.Version() == cached.version
-	if !valid {
-		c.Delete(path)
-		return nil
-	}
-
-	return cached.rule
+	return cacheRule
 }
 
-func (c *RuleCache) Set(path string, rule *Rule) {
+// Set sets the effective ACL rule for the given path.
+func (c *ACLCache) Set(path string, rule *ACLRule) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.index[path] = &cacheEntry{
-		rule:    rule,
-		version: rule.node.Version(),
-	}
+	c.index[path] = rule
+
+	slog.Debug("acl cache set", "path", path, "version", rule.Version())
 }
 
-func (c *RuleCache) Delete(path string) {
+// Delete deletes the effective ACL rule for the given path.
+func (c *ACLCache) Delete(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	delete(c.index, path)
+	slog.Debug("acl cache delete", "path", path)
 }
 
-func (c *RuleCache) DeletePrefix(path string) {
+// DeletePrefix deletes the effective ACL rule for all paths that match the given prefix.
+func (c *ACLCache) DeletePrefix(path string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -64,6 +60,7 @@ func (c *RuleCache) DeletePrefix(path string) {
 	for k := range c.index {
 		if strings.HasPrefix(k, path) {
 			delete(c.index, k)
+			slog.Debug("acl cache prefix delete", "path", k)
 		}
 	}
 }

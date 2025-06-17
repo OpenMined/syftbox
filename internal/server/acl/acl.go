@@ -1,47 +1,68 @@
 package acl
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/openmined/syftbox/internal/aclspec"
 )
 
-// AclService helps to manage and enforce access control rules for file system operations.
-type AclService struct {
-	tree  *Tree
-	cache *RuleCache
+// ACLService helps to manage and enforce access control rules for file system operations.
+type ACLService struct {
+	tree  *ACLTree
+	cache *ACLCache
 }
 
-// NewAclService creates a new ACL service instance
-func NewAclService() *AclService {
-	return &AclService{
-		tree:  NewTree(),
-		cache: NewRuleCache(),
+// NewACLService creates a new ACL service instance
+func NewACLService() *ACLService {
+	return &ACLService{
+		tree:  NewACLTree(),
+		cache: NewACLCache(),
 	}
 }
 
-func (s *AclService) LoadRuleSets(ruleSets []*aclspec.RuleSet) error {
+// AddRuleSet adds or updates a new set of rules to the service.
+func (s *ACLService) AddRuleSet(ruleSet *aclspec.RuleSet) (ACLVersion, error) {
+	version, err := s.tree.AddRuleSet(ruleSet)
+	if err != nil {
+		return 0, err
+	}
+
+	s.cache.DeletePrefix(ruleSet.Path)
+	return version, nil
+}
+
+// AddRuleSets adds a new set of rules to the service.
+func (s *ACLService) AddRuleSets(ruleSets []*aclspec.RuleSet) error {
+	errs := make([]error, 0)
+
 	for _, ruleSet := range ruleSets {
-		if err := s.tree.AddRuleSet(ruleSet); err != nil {
-			return err
+		if _, err := s.tree.AddRuleSet(ruleSet); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	return nil
-}
 
-// AddRuleSet adds a new set of rules to the service.
-func (s *AclService) AddRuleSet(ruleSet *aclspec.RuleSet) error {
-	return s.tree.AddRuleSet(ruleSet)
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to add rule sets: %w", errors.Join(errs...))
+	}
+
+	return nil
 }
 
 // RemoveRuleSet removes a ruleset at the specified path.
 // Returns true if a ruleset was removed, false otherwise.
-func (s *AclService) RemoveRuleSet(path string) bool {
-	s.cache.DeletePrefix(path)
-	return s.tree.RemoveRuleSet(path)
+// path must be a dir or dir/syft.pub.yaml
+func (s *ACLService) RemoveRuleSet(path string) bool {
+	path = aclspec.WithoutACLPath(path)
+	if ok := s.tree.RemoveRuleSet(path); ok {
+		s.cache.DeletePrefix(path)
+		return true
+	}
+	return false
 }
 
-// GetRule finds the most specific rule applicable to the given path.
-func (s *AclService) GetRule(path string) (*Rule, error) {
-	// Normalize path to use forward slashes for glob matching
+// GetEffectiveRule finds the most specific rule applicable to the given path.
+func (s *ACLService) GetEffectiveRule(path string) (*ACLRule, error) {
 	path = ACLNormPath(path)
 
 	// cache hit
@@ -51,9 +72,9 @@ func (s *AclService) GetRule(path string) (*Rule, error) {
 	}
 
 	// cache miss
-	rule, err := s.tree.GetRule(path) // O(depth)
+	rule, err := s.tree.GetEffectiveRule(path) // O(depth)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no effective rules for path '%s': %w", path, err)
 	}
 
 	// cache the result
@@ -63,36 +84,38 @@ func (s *AclService) GetRule(path string) (*Rule, error) {
 }
 
 // CanAccess checks if a user has the specified access permission for a file.
-func (s *AclService) CanAccess(user *User, file *File, level AccessLevel) error {
-	if user.IsOwner {
-		return nil
-	}
-
-	rule, err := s.GetRule(file.Path)
+func (s *ACLService) CanAccess(user *User, file *File, level AccessLevel) error {
+	// get the effective rule for the file
+	rule, err := s.GetEffectiveRule(file.Path)
 	if err != nil {
 		return err
 	}
 
-	isAcl := aclspec.IsAclFile(file.Path)
+	// early return if user is the owner
+	if rule.Owner() == user.ID {
+		return nil
+	}
 
 	// elevate action for ACL files
+	isAcl := aclspec.IsACLFile(file.Path)
 	if isAcl && level == AccessWrite {
-		level = AccessWriteACL
+		level = AccessAdmin
 	} else if level == AccessWrite {
 		// writes need to be checked against the file limits
 		if err := rule.CheckLimits(file); err != nil {
-			return err
+			return fmt.Errorf("file limits exceeded for user '%s' on path '%s': %w", user.ID, file.Path, err)
 		}
 	}
 
+	// finally check the access
 	if err := rule.CheckAccess(user, level); err != nil {
-		return err
+		return fmt.Errorf("access denied for user '%s' on path '%s': %w", user.ID, file.Path, err)
 	}
 
 	return nil
 }
 
 // String returns a string representation of the ACL service's rule tree.
-func (s *AclService) String() string {
+func (s *ACLService) String() string {
 	return s.tree.String()
 }

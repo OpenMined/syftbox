@@ -5,60 +5,70 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/datasite"
+	"github.com/openmined/syftbox/internal/server/handlers/api"
 )
 
 func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
-	var req PresignUrlRequest
+	var req PresignURLRequest
+	user := ctx.GetString("user")
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.Error(fmt.Errorf("failed to bind json: %w", err))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("failed to bind json: %w", err))
 		return
 	}
 
-	if len(req.Keys) == 0 {
-		ctx.Error(fmt.Errorf("keys cannot be empty"))
-		ctx.PureJSON(http.StatusBadRequest, gin.H{
-			"error": "keys cannot be empty",
-		})
-		return
-	}
-
-	urls := make([]*BlobUrl, 0, len(req.Keys))
-	errors := make([]*BlobError, 0)
+	urls := make([]*BlobURL, 0, len(req.Keys))
+	errors := make([]*BlobAPIError, 0)
 	index := h.blob.Index()
 	for _, key := range req.Keys {
-		if !isValidDatasiteKey(key) {
-			ctx.Error(fmt.Errorf("invalid datasite path: %s", key))
-			errors = append(errors, &BlobError{
-				Key:   key,
-				Error: "invalid key",
+		if !datasite.IsValidPath(key) {
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeDatasiteInvalidPath,
+					Message: "invalid key",
+				},
+				Key: key,
+			})
+			continue
+		}
+
+		if err := h.checkPermissions(key, user, acl.AccessRead); err != nil {
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeAccessDenied,
+					Message: err.Error(),
+				},
+				Key: key,
 			})
 			continue
 		}
 
 		_, ok := index.Get(key)
 		if !ok {
-			ctx.Error(fmt.Errorf("object not found: %s", key))
-			errors = append(errors, &BlobError{
-				Key:   key,
-				Error: "object not found",
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeBlobNotFound,
+					Message: "object not found",
+				},
+				Key: key,
 			})
 			continue
 		}
 
 		url, err := h.blob.Backend().GetObjectPresigned(ctx, key)
 		if err != nil {
-			ctx.Error(fmt.Errorf("failed to get object: %w", err))
-			errors = append(errors, &BlobError{
-				Key:   key,
-				Error: err.Error(),
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeBlobGetFailed,
+					Message: err.Error(),
+				},
+				Key: key,
 			})
 			continue
 		}
-		urls = append(urls, &BlobUrl{
+		urls = append(urls, &BlobURL{
 			Key: key,
 			Url: url,
 		})
@@ -71,7 +81,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 		code = http.StatusMultiStatus
 	}
 
-	ctx.PureJSON(code, &PresignUrlResponse{
+	ctx.PureJSON(code, &PresignURLResponse{
 		URLs:   urls,
 		Errors: errors,
 	})
