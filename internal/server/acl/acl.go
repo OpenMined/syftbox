@@ -1,8 +1,8 @@
 package acl
 
 import (
-	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/openmined/syftbox/internal/aclspec"
 )
@@ -23,30 +23,14 @@ func NewACLService() *ACLService {
 
 // AddRuleSet adds or updates a new set of rules to the service.
 func (s *ACLService) AddRuleSet(ruleSet *aclspec.RuleSet) (ACLVersion, error) {
-	version, err := s.tree.AddRuleSet(ruleSet)
+	node, err := s.tree.AddRuleSet(ruleSet)
 	if err != nil {
 		return 0, err
 	}
 
 	s.cache.DeletePrefix(ruleSet.Path)
-	return version, nil
-}
-
-// AddRuleSets adds a new set of rules to the service.
-func (s *ACLService) AddRuleSets(ruleSets []*aclspec.RuleSet) error {
-	errs := make([]error, 0)
-
-	for _, ruleSet := range ruleSets {
-		if _, err := s.tree.AddRuleSet(ruleSet); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to add rule sets: %w", errors.Join(errs...))
-	}
-
-	return nil
+	slog.Debug("updated rule set", "path", node.path, "version", node.version)
+	return node.version, nil
 }
 
 // RemoveRuleSet removes a ruleset at the specified path.
@@ -61,8 +45,8 @@ func (s *ACLService) RemoveRuleSet(path string) bool {
 	return false
 }
 
-// GetEffectiveRule finds the most specific rule applicable to the given path.
-func (s *ACLService) GetEffectiveRule(path string) (*ACLRule, error) {
+// GetRule finds the most specific rule applicable to the given path.
+func (s *ACLService) GetRule(path string) (*ACLRule, error) {
 	path = ACLNormPath(path)
 
 	// cache hit
@@ -86,7 +70,7 @@ func (s *ACLService) GetEffectiveRule(path string) (*ACLRule, error) {
 // CanAccess checks if a user has the specified access permission for a file.
 func (s *ACLService) CanAccess(user *User, file *File, level AccessLevel) error {
 	// get the effective rule for the file
-	rule, err := s.GetEffectiveRule(file.Path)
+	rule, err := s.GetRule(file.Path)
 	if err != nil {
 		return err
 	}
@@ -95,13 +79,13 @@ func (s *ACLService) CanAccess(user *User, file *File, level AccessLevel) error 
 	if rule.Owner() == user.ID {
 		return nil
 	}
-
-	// elevate action for ACL files
-	isAcl := aclspec.IsACLFile(file.Path)
-	if isAcl && level == AccessWrite {
+	// Elevate ACL file writes to admin level
+	if aclspec.IsACLFile(file.Path) && level >= AccessCreate {
 		level = AccessAdmin
-	} else if level == AccessWrite {
-		// writes need to be checked against the file limits
+	}
+
+	// Check file limits for write operations
+	if level >= AccessCreate {
 		if err := rule.CheckLimits(file); err != nil {
 			return fmt.Errorf("file limits exceeded for user '%s' on path '%s': %w", user.ID, file.Path, err)
 		}

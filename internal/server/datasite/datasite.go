@@ -50,7 +50,11 @@ func (d *DatasiteService) Start(ctx context.Context) error {
 
 	// Load the ACL rulesets
 	start = time.Now()
-	d.acl.AddRuleSets(ruleSets)
+	for _, ruleSet := range ruleSets {
+		if _, err := d.acl.AddRuleSet(ruleSet); err != nil {
+			slog.Warn("ruleset update error", "path", ruleSet.Path, "error", err)
+		}
+	}
 	slog.Debug("acl build", "count", len(ruleSets), "took", time.Since(start))
 
 	// Warm up the ACL cache
@@ -60,7 +64,7 @@ func (d *DatasiteService) Start(ctx context.Context) error {
 			&acl.User{ID: aclspec.Everyone},
 			&acl.File{Path: blob.Key},
 			acl.AccessRead,
-		); err != nil && errors.Is(err, acl.ErrNoRuleFound) {
+		); err != nil && errors.Is(err, acl.ErrNoRule) {
 			slog.Warn("acl cache warm error", "path", blob.Key, "error", err)
 		}
 	}
@@ -81,11 +85,6 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 
 	// Filter blobs based on ACL
 	for _, blob := range blobs {
-		if IsOwner(blob.Key, user) {
-			view = append(view, blob)
-			continue
-		}
-
 		if err := d.acl.CanAccess(
 			&acl.User{ID: user},
 			&acl.File{Path: blob.Key},

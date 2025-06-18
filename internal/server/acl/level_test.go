@@ -21,6 +21,11 @@ func TestAccessLevelString(t *testing.T) {
 			desc:     "AccessRead should return 'Read'",
 		},
 		{
+			level:    AccessCreate,
+			expected: "Create",
+			desc:     "AccessCreate should return 'Create'",
+		},
+		{
 			level:    AccessWrite,
 			expected: "Write",
 			desc:     "AccessWrite should return 'Write'",
@@ -32,13 +37,23 @@ func TestAccessLevelString(t *testing.T) {
 		},
 		{
 			level:    0,
-			expected: "Unknown",
-			desc:     "Zero value should return 'Unknown'",
+			expected: "None",
+			desc:     "Zero value should return 'None'",
 		},
 		{
-			level:    AccessLevel(10),
+			level:    AccessLevel(16),
 			expected: "Unknown",
 			desc:     "Undefined values should return 'Unknown'",
+		},
+		{
+			level:    AccessRead | AccessWrite,
+			expected: "Read+Write",
+			desc:     "Combined permissions should be joined with '+'",
+		},
+		{
+			level:    AccessRead | AccessCreate | AccessWrite,
+			expected: "Read+Create+Write",
+			desc:     "Multiple combined permissions should be joined in order",
 		},
 	}
 
@@ -53,18 +68,19 @@ func TestAccessLevelString(t *testing.T) {
 func TestAccessLevelStringUnknown(t *testing.T) {
 	// Test String() method with invalid/unknown access level values
 	// This ensures the system handles undefined access levels gracefully
-	unknownLevel := AccessLevel(255) // Invalid access level
+	unknownLevel := AccessLevel(16) // Invalid access level (higher than any defined bit)
 	result := unknownLevel.String()
 	assert.Equal(t, "Unknown", result, "Unknown access levels should return 'Unknown'")
 }
 
 func TestAccessLevelValues(t *testing.T) {
 	// Test that AccessLevel constants have the expected values
-	// Since iota starts at 0 and we use iota + 1, values should be 1, 2, 3
+	// Using bit flags: 1 << iota creates powers of 2
 	
-	assert.Equal(t, AccessLevel(1), AccessRead, "AccessRead should be 1")
-	assert.Equal(t, AccessLevel(2), AccessWrite, "AccessWrite should be 2")
-	assert.Equal(t, AccessLevel(3), AccessAdmin, "AccessAdmin should be 3")
+	assert.Equal(t, AccessLevel(1), AccessRead, "AccessRead should be 1 (1 << 0)")
+	assert.Equal(t, AccessLevel(2), AccessCreate, "AccessCreate should be 2 (1 << 1)")
+	assert.Equal(t, AccessLevel(4), AccessWrite, "AccessWrite should be 4 (1 << 2)")
+	assert.Equal(t, AccessLevel(8), AccessAdmin, "AccessAdmin should be 8 (1 << 3)")
 }
 
 func TestAccessLevelUniqueness(t *testing.T) {
@@ -72,6 +88,7 @@ func TestAccessLevelUniqueness(t *testing.T) {
 	// This prevents accidental duplicate values that could cause permission conflicts
 	levels := []AccessLevel{
 		AccessRead,
+		AccessCreate,
 		AccessWrite,
 		AccessAdmin,
 	}
@@ -92,8 +109,9 @@ func TestAccessLevelHierarchy(t *testing.T) {
 	// Test the logical hierarchy of access levels
 	// This documents the intended permission hierarchy in the system
 	
-	// Verify the ordering based on iota values
-	assert.True(t, AccessRead < AccessWrite, "Read should be lower than Write")
+	// Verify the ordering based on bit values
+	assert.True(t, AccessRead < AccessCreate, "Read should be lower than Create")
+	assert.True(t, AccessCreate < AccessWrite, "Create should be lower than Write")
 	assert.True(t, AccessWrite < AccessAdmin, "Write should be lower than Admin")
 	assert.True(t, AccessRead < AccessAdmin, "Read should be lower than Admin")
 }
@@ -104,10 +122,11 @@ func TestAccessLevelZeroValue(t *testing.T) {
 	var zeroLevel AccessLevel
 	
 	assert.Equal(t, AccessLevel(0), zeroLevel, "Zero value should be 0")
-	assert.Equal(t, "Unknown", zeroLevel.String(), "Zero value should return 'Unknown'")
+	assert.Equal(t, "None", zeroLevel.String(), "Zero value should return 'None'")
 	
 	// Zero should not match any defined permission
 	assert.NotEqual(t, AccessRead, zeroLevel, "Zero should not equal AccessRead")
+	assert.NotEqual(t, AccessCreate, zeroLevel, "Zero should not equal AccessCreate")
 	assert.NotEqual(t, AccessWrite, zeroLevel, "Zero should not equal AccessWrite")
 	assert.NotEqual(t, AccessAdmin, zeroLevel, "Zero should not equal AccessAdmin")
 }
@@ -151,13 +170,42 @@ func TestAccessLevelEdgeCases(t *testing.T) {
 	
 	// Test maximum uint8 value
 	maxLevel := AccessLevel(255)
-	assert.Equal(t, "Unknown", maxLevel.String(), "Maximum value should be handled as unknown")
+	assert.Equal(t, "Read+Create+Write+Admin", maxLevel.String(), "Maximum value should show all known bits set")
 	
 	// Test values between defined constants
-	betweenLevels := AccessLevel(4) // Just after AccessAdmin (3)
+	betweenLevels := AccessLevel(16) // Higher than all defined constants
 	assert.Equal(t, "Unknown", betweenLevels.String(), "Undefined values should be unknown")
 	
 	// Test that undefined values are handled correctly
-	undefinedLevel := AccessLevel(10)
+	undefinedLevel := AccessLevel(32)
 	assert.Equal(t, "Unknown", undefinedLevel.String(), "Higher undefined values should be unknown")
+}
+
+func TestAccessLevelBitOperations(t *testing.T) {
+	// Test bit flag operations
+	// This validates that permissions can be combined and checked using bitwise operations
+	
+	// Test combining permissions
+	readWrite := AccessRead | AccessWrite
+	assert.Equal(t, AccessLevel(5), readWrite, "Read | Write should be 5 (1 | 4)")
+	assert.Equal(t, "Read+Write", readWrite.String(), "Combined permissions should show both")
+	
+	// Test checking individual permissions
+	allPerms := AccessRead | AccessCreate | AccessWrite | AccessAdmin
+	assert.True(t, (allPerms & AccessRead) == AccessRead, "Should have Read permission")
+	assert.True(t, (allPerms & AccessCreate) == AccessCreate, "Should have Create permission")
+	assert.True(t, (allPerms & AccessWrite) == AccessWrite, "Should have Write permission")
+	assert.True(t, (allPerms & AccessAdmin) == AccessAdmin, "Should have Admin permission")
+	
+	// Test absence of permissions
+	readOnly := AccessRead
+	assert.True(t, (readOnly & AccessRead) == AccessRead, "Should have Read permission")
+	assert.False(t, (readOnly & AccessWrite) == AccessWrite, "Should not have Write permission")
+	assert.False(t, (readOnly & AccessAdmin) == AccessAdmin, "Should not have Admin permission")
+	
+	// Test removing permissions
+	allButAdmin := allPerms &^ AccessAdmin
+	assert.True(t, (allButAdmin & AccessRead) == AccessRead, "Should still have Read")
+	assert.True(t, (allButAdmin & AccessWrite) == AccessWrite, "Should still have Write")
+	assert.False(t, (allButAdmin & AccessAdmin) == AccessAdmin, "Should not have Admin")
 }

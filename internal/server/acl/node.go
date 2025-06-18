@@ -111,7 +111,7 @@ func (n *ACLNode) SetRules(rules []*aclspec.Rule, terminal bool) {
 		n.rules = nil
 	}
 
-	// set the rules and terminal flag
+	// set the terminal flag
 	n.terminal = terminal
 
 	// increment the version
@@ -132,17 +132,17 @@ func (n *ACLNode) FindBestRule(path string) (*ACLRule, error) {
 	defer n.mu.RUnlock()
 
 	if n.rules == nil {
-		return nil, ErrNoRuleFound
+		return nil, ErrNoRule
 	}
 
-	// find the best matching rule
+	// find the best matching rule (rules are already sorted by specificity)
 	for _, aclRule := range n.rules {
 		if ok, _ := doublestar.Match(aclRule.fullPattern, path); ok {
 			return aclRule, nil
 		}
 	}
 
-	return nil, ErrNoRuleFound
+	return nil, ErrNoRule
 }
 
 // GetOwner returns the owner of the node.

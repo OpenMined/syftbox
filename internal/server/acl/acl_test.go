@@ -24,19 +24,19 @@ func TestAclServiceGetRule(t *testing.T) {
 
 	// Test cache miss rules
 	assert.NotContains(t, service.cache.index, "user/readme.md")
-	rule, err := service.GetEffectiveRule("user/readme.md")
+	rule, err := service.GetRule("user/readme.md")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "*.md", rule.rule.Pattern)
 
 	// test cache hit
 	assert.Contains(t, service.cache.index, "user/readme.md")
-	rule, err = service.GetEffectiveRule("user/readme.md")
+	rule, err = service.GetRule("user/readme.md")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "*.md", rule.rule.Pattern)
 
-	rule, err = service.GetEffectiveRule("user/notes.txt")
+	rule, err = service.GetRule("user/notes.txt")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "*.txt", rule.rule.Pattern)
@@ -67,11 +67,11 @@ func TestAclServiceRemoveRuleSet(t *testing.T) {
 	assert.Equal(t, ACLVersion(1), ver)
 
 	// Verify both rulesets work
-	rule, err := service.GetEffectiveRule("user1@email.com/file.txt")
+	rule, err := service.GetRule("user1@email.com/file.txt")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 
-	rule, err = service.GetEffectiveRule("user2@email.com/file.txt")
+	rule, err = service.GetRule("user2@email.com/file.txt")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 
@@ -80,12 +80,12 @@ func TestAclServiceRemoveRuleSet(t *testing.T) {
 	assert.True(t, removed)
 
 	// Verify removed ruleset no longer works
-	rule, err = service.GetEffectiveRule("user1@email.com/file.txt")
+	rule, err = service.GetRule("user1@email.com/file.txt")
 	assert.Error(t, err)
 	assert.Nil(t, rule)
 
 	// Verify other ruleset still works
-	rule, err = service.GetEffectiveRule("user2@email.com/file.txt")
+	rule, err = service.GetRule("user2@email.com/file.txt")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 
@@ -195,16 +195,22 @@ func TestAclServiceLoadRuleSets(t *testing.T) {
 	)
 
 	// Load multiple rulesets at once
-	err := service.AddRuleSets([]*aclspec.RuleSet{ruleset1, ruleset2})
+	ver, err := service.AddRuleSet(ruleset1)
+	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
+
+	ver, err = service.AddRuleSet(ruleset2)
+	assert.NoError(t, err)
+	assert.Equal(t, ACLVersion(1), ver)
 	assert.NoError(t, err)
 
 	// Verify both rulesets work
-	rule, err := service.GetEffectiveRule("user1@email.com/file.txt")
+	rule, err := service.GetRule("user1@email.com/file.txt")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "*.txt", rule.rule.Pattern)
 
-	rule, err = service.GetEffectiveRule("user2@email.com/file.md")
+	rule, err = service.GetRule("user2@email.com/file.md")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "*.md", rule.rule.Pattern)
@@ -225,7 +231,7 @@ func TestAclServiceCacheInvalidation(t *testing.T) {
 	assert.Equal(t, ACLVersion(1), ver)
 
 	// Access a path to cache the rule
-	rule, err := service.GetEffectiveRule("user1@email.com/readme.md")
+	rule, err := service.GetRule("user1@email.com/readme.md")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "*.md", rule.rule.Pattern)
@@ -244,7 +250,7 @@ func TestAclServiceCacheInvalidation(t *testing.T) {
 	assert.Equal(t, ACLVersion(2), ver)
 
 	// Access the same path, should get the new rule
-	rule, err = service.GetEffectiveRule("user1@email.com/readme.md")
+	rule, err = service.GetRule("user1@email.com/readme.md")
 	assert.NoError(t, err)
 	assert.NotNil(t, rule)
 	assert.True(t, rule.node.GetTerminal())
