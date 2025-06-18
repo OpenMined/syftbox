@@ -163,7 +163,8 @@ func (t *ACLTree) RemoveRuleSet(path string) bool {
 	var parent *ACLNode
 	var lastPart string
 
-	parts := ACLPathSegments(path)
+	normalizedPath := ACLNormPath(path)
+	parts := ACLPathSegments(normalizedPath)
 	currentNode := t.root
 
 	for _, part := range parts {
@@ -177,8 +178,12 @@ func (t *ACLTree) RemoveRuleSet(path string) bool {
 		lastPart = part
 	}
 
-	// Need to lock parent since we're modifying its children
-	parent.DeleteChild(lastPart)
+	// clear the rules for the node, but if it has no children, delete the whole node from it's parent
+	if currentNode.GetChildCount() == 0 {
+		parent.DeleteChild(lastPart)
+	} else {
+		currentNode.ClearRules()
+	}
 
 	return true
 }
