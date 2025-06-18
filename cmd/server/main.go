@@ -32,7 +32,6 @@ const (
 
 var (
 	dotenvLoaded bool
-	prodEnv      bool
 )
 
 var rootCmd = &cobra.Command{
@@ -84,19 +83,31 @@ func init() {
 	} else {
 		dotenvLoaded = true
 	}
-
-	prodEnv = os.Getenv("SYFTBOX_ENV") == "PROD"
 }
 
 func main() {
 	// Setup logger
-	var handler slog.Handler
-	if prodEnv {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+	logger := slog.New(setupHandler())
+	slog.SetDefault(logger)
+
+	// Setup root context with signal handling
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	// server go brr
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		os.Exit(1)
+	}
+}
+
+func setupHandler() slog.Handler {
+	switch os.Getenv("SYFTBOX_ENV") {
+	case "PROD", "STAGE":
+		return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: slog.LevelDebug,
 		})
-	} else {
-		handler = tint.NewHandler(os.Stdout, &tint.Options{
+	default:
+		return tint.NewHandler(os.Stdout, &tint.Options{
 			Level:      slog.LevelDebug,
 			AddSource:  true,
 			TimeFormat: time.DateTime,
@@ -107,17 +118,6 @@ func main() {
 				return a
 			},
 		})
-	}
-	logger := slog.New(handler)
-	slog.SetDefault(logger)
-
-	// Setup root context with signal handling
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// server go brr
-	if err := rootCmd.ExecuteContext(ctx); err != nil {
-		os.Exit(1)
 	}
 }
 
