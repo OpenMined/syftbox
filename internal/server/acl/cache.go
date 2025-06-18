@@ -1,14 +1,13 @@
 package acl
 
 import (
-	"log/slog"
 	"strings"
 	"sync"
 )
 
 // ACLCache stores the effective ACL rule for a given path.
 type ACLCache struct {
-	index map[string]*ACLRule // path -> ACLRule
+	index map[string]*ACLRule // Normalized ACLPath -> ACLRule
 	mu    sync.RWMutex
 }
 
@@ -38,8 +37,6 @@ func (c *ACLCache) Set(path string, rule *ACLRule) {
 	defer c.mu.Unlock()
 
 	c.index[path] = rule
-
-	slog.Debug("acl cache set", "path", path, "version", rule.Version())
 }
 
 // Delete deletes the effective ACL rule for the given path.
@@ -48,7 +45,6 @@ func (c *ACLCache) Delete(path string) {
 	defer c.mu.Unlock()
 
 	delete(c.index, path)
-	slog.Debug("acl cache delete", "path", path)
 }
 
 // DeletePrefix deletes the effective ACL rule for all paths that match the given prefix.
@@ -60,7 +56,6 @@ func (c *ACLCache) DeletePrefix(path string) {
 	for k := range c.index {
 		if strings.HasPrefix(k, path) {
 			delete(c.index, k)
-			slog.Debug("acl cache prefix delete", "path", k)
 		}
 	}
 }
