@@ -166,7 +166,7 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 
 	// this will error out because a re-auth with server will be required
 	if strings.Contains(cfg.ServerURL, "openmined.org") {
-		return nil, fmt.Errorf("config pointing to legacy server. please run `syftbox login` to re-authenticate")
+		return nil, fmt.Errorf("legacy server detected. run `syftbox login` to re-authenticate")
 	}
 
 	return cfg, nil
