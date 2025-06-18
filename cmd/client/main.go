@@ -22,9 +22,7 @@ import (
 )
 
 var (
-	home, _     = os.UserHomeDir()
-	oldProdURL  = "syftbox.openmined.org"
-	oldStageURL = "syftboxstage.openmined.org"
+	home, _ = os.UserHomeDir()
 )
 
 var rootCmd = &cobra.Command{
@@ -166,11 +164,9 @@ func loadConfig(cmd *cobra.Command) (*config.Config, error) {
 		return nil, fmt.Errorf("config read: %w", err)
 	}
 
-	// perform migrations
 	// this will error out because a re-auth with server will be required
-	if strings.Contains(cfg.ServerURL, oldProdURL) ||
-		strings.Contains(cfg.ServerURL, oldStageURL) {
-		return nil, fmt.Errorf("legacy config detected. please run `syftbox login` to re-authenticate")
+	if strings.Contains(cfg.ServerURL, "openmined.org") {
+		return nil, fmt.Errorf("legacy server detected. run `syftbox login` to re-authenticate")
 	}
 
 	return cfg, nil
