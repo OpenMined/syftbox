@@ -9,8 +9,6 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/openmined/syftbox/internal/server/blob"
-	"github.com/openmined/syftbox/internal/server/handlers/ws"
 )
 
 // SendHandler handles HTTP requests for sending messages
@@ -19,8 +17,8 @@ type SendHandler struct {
 }
 
 // New creates a new send handler
-func New(hub *ws.WebsocketHub, blob *blob.BlobService) *SendHandler {
-	service := NewSendService(hub, blob, nil)
+func New(msgDispatcher MessageDispatcher, msgStore RPCMsgStore) *SendHandler {
+	service := NewSendService(msgDispatcher, msgStore, nil)
 	return &SendHandler{service: service}
 }
 

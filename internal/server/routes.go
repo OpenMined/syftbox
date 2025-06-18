@@ -48,8 +48,8 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
-	sendH := send.New(hub, svc.Blob)
 	aclH := acl.NewACLHandler(svc.ACL)
+	sendH := send.New(send.NewWSMsgDispatcher(hub), send.NewBlobMsgStore(svc.Blob))
 
 	// --------------------------- routes ---------------------------
 

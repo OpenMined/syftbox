@@ -23,11 +23,59 @@ var (
 	ErrNoRequest   = errors.New("no request found")
 )
 
+type BlobMsgStore struct {
+	blob *blob.BlobService
+}
+
+func (m *BlobMsgStore) GetMsg(ctx context.Context, path string) (io.ReadCloser, error) {
+	object, err := m.blob.Backend().GetObject(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return object.Body, nil
+}
+
+func (m *BlobMsgStore) DeleteMsg(ctx context.Context, path string) error {
+	_, err := m.blob.Backend().DeleteObject(ctx, path)
+	return err
+}
+
+func (m *BlobMsgStore) StoreMsg(ctx context.Context, path string, msg syftmsg.SyftRPCMessage) error {
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	_, err = m.blob.Backend().PutObject(ctx, &blob.PutObjectParams{
+		Key:  path,
+		ETag: msg.ID.String(),
+		Body: bytes.NewReader(msgBytes),
+		Size: int64(len(msgBytes)),
+	})
+	return err
+}
+
+type WSMsgDispatcher struct {
+	hub *ws.WebsocketHub
+}
+
+func (m *WSMsgDispatcher) SendMsg(datasite string, msg *syftmsg.Message) bool {
+	return m.hub.SendMessageUser(datasite, msg)
+}
+
+func NewWSMsgDispatcher(hub *ws.WebsocketHub) MessageDispatcher {
+	return &WSMsgDispatcher{hub: hub}
+}
+
+func NewBlobMsgStore(blob *blob.BlobService) RPCMsgStore {
+	return &BlobMsgStore{blob: blob}
+}
+
 // SendService handles the business logic for message sending and polling
 type SendService struct {
-	hub  *ws.WebsocketHub
-	blob *blob.BlobService
-	cfg  *Config
+	dispatcher MessageDispatcher
+	store      RPCMsgStore
+	cfg        *Config
 }
 
 // Config holds the service configuration
@@ -40,7 +88,7 @@ type Config struct {
 }
 
 // NewSendService creates a new send service
-func NewSendService(hub *ws.WebsocketHub, blob *blob.BlobService, cfg *Config) *SendService {
+func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) *SendService {
 	if cfg == nil {
 		cfg = &Config{
 			DefaultTimeoutMs:    1000,    // 1000 ms
@@ -50,7 +98,7 @@ func NewSendService(hub *ws.WebsocketHub, blob *blob.BlobService, cfg *Config) *
 			RequestChkTimeoutMs: 200,     // 200 ms
 		}
 	}
-	return &SendService{hub: hub, blob: blob, cfg: cfg}
+	return &SendService{dispatcher: dispatch, store: store, cfg: cfg}
 }
 
 // SendMessage handles sending a message to a user
@@ -71,11 +119,12 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 
 	// TODO: Check if user has permission to send message to this application
 
-	// Try sending via websocket first
-	if ok := s.hub.SendMessageUser(req.SyftURL.Datasite, msg); !ok {
+	// Dispatch the message to the user via websocket
+	if ok := s.dispatcher.SendMsg(req.SyftURL.Datasite, msg); !ok {
 		return s.handleOfflineMessage(ctx, req, httpMsg)
 	}
 
+	// If the message is not sent via websocket, handle it as an offline message
 	return s.handleOnlineMessage(ctx, req, httpMsg)
 }
 
@@ -96,19 +145,8 @@ func (s *SendService) handleOfflineMessage(
 		return nil, fmt.Errorf("failed to create RPCMsg: %w", err)
 	}
 
-	// Marshal the RPC message
-	rpcMsgBytes, err := json.Marshal(rpcMsg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal RPCMsg: %w", err)
-	}
-
 	// Save the RPC message to blob storage
-	if _, err := s.blob.Backend().PutObject(ctx, &blob.PutObjectParams{
-		Key:  blobPath,
-		ETag: rpcMsg.ID.String(),
-		Body: bytes.NewReader(rpcMsgBytes),
-		Size: int64(len(rpcMsgBytes)),
-	}); err != nil {
+	if err := s.store.StoreMsg(ctx, blobPath, *rpcMsg); err != nil {
 		return nil, fmt.Errorf("failed to save message to blob storage: %w", err)
 	}
 
@@ -148,7 +186,8 @@ func (s *SendService) handleOnlineMessage(
 		return nil, err
 	}
 
-	bodyBytes, err := io.ReadAll(object.Body)
+	// Read the object
+	bodyBytes, err := io.ReadAll(object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read object: %w", err)
 	}
@@ -202,7 +241,7 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 		return nil, err
 	}
 
-	bodyBytes, err := io.ReadAll(object.Body)
+	bodyBytes, err := io.ReadAll(object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read object: %w", err)
 	}
@@ -228,7 +267,7 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 }
 
 // pollForObject polls for an object in blob storage
-func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeout int) (*blob.GetObjectResponse, error) {
+func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeout int) (io.ReadCloser, error) {
 	startTime := time.Now()
 	maxTimeout := time.Duration(timeout) * time.Millisecond
 
@@ -237,7 +276,7 @@ func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeou
 			return nil, ErrPollTimeout
 		}
 
-		object, err := s.blob.Backend().GetObject(ctx, blobPath)
+		object, err := s.store.GetMsg(ctx, blobPath)
 		if err != nil {
 			slog.Error("Failed to get object from backend", "error", err, "blobPath", blobPath)
 			continue
@@ -260,11 +299,11 @@ func (s *SendService) cleanReqResponse(sender, appName, appEp, requestID string)
 	requestPath := path.Join(sender, "app_data", appName, "rpc", appEp, fmt.Sprintf("%s.request", requestID))
 	responsePath := path.Join(sender, "app_data", appName, "rpc", appEp, fmt.Sprintf("%s.response", requestID))
 
-	if _, err := s.blob.Backend().DeleteObject(context.Background(), requestPath); err != nil {
+	if err := s.store.DeleteMsg(context.Background(), requestPath); err != nil {
 		slog.Error("failed to delete request object", "error", err, "path", requestPath)
 	}
 
-	if _, err := s.blob.Backend().DeleteObject(context.Background(), responsePath); err != nil {
+	if err := s.store.DeleteMsg(context.Background(), responsePath); err != nil {
 		slog.Error("failed to delete response object", "error", err, "path", responsePath)
 	}
 }
