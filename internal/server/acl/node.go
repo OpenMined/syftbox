@@ -71,6 +71,13 @@ func (n *ACLNode) SetChild(key string, child *ACLNode) {
 	n.version++
 }
 
+// GetChildCount returns the number of children for the node.
+func (n *ACLNode) GetChildCount() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return len(n.children)
+}
+
 // DeleteChild deletes the child for the node.
 func (n *ACLNode) DeleteChild(key string) {
 	n.mu.Lock()

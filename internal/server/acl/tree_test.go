@@ -508,32 +508,59 @@ func TestNestedRuleSetRemoval(t *testing.T) {
 	_, err = tree.AddRuleSet(ruleset2)
 	assert.NoError(t, err)
 
-	// Remove parent - with original behavior, this removes the entire subtree
+	// Remove parent - with new behavior, this only clears rules since parent has children
 	removed := tree.RemoveRuleSet("parent")
 	assert.True(t, removed)
 
-	// Verify both parent and child are gone (original behavior)
-	_, ok := tree.root.GetChild("parent")
-	assert.False(t, ok, "Parent node should be completely removed")
+	// Verify parent node still exists but rules are cleared
+	parentNode, ok := tree.root.GetChild("parent")
+	assert.True(t, ok, "Parent node should still exist after removing ruleset")
+	assert.NotNil(t, parentNode, "Parent node should not be nil")
+	assert.Nil(t, parentNode.GetRules(), "Parent node rules should be cleared")
+
+	// Verify child still exists since parent wasn't deleted
+	childNode, ok := parentNode.GetChild("child")
+	assert.True(t, ok, "Child node should still exist")
+	assert.NotNil(t, childNode, "Child node should not be nil")
+	assert.NotNil(t, childNode.GetRules(), "Child node rules should still exist")
 
 	// Add the parent ruleset back
 	_, err = tree.AddRuleSet(ruleset1)
 	assert.NoError(t, err)
 
-	// Add the child ruleset back
-	_, err = tree.AddRuleSet(ruleset2)
-	assert.NoError(t, err)
-
-	// Remove just the child
+	// Remove just the child - this should delete the child node since it has no children
 	removed = tree.RemoveRuleSet("parent/child")
 	assert.True(t, removed)
 
-	// Verify parent still exists but child was removed
-	parentNode, ok := tree.root.GetChild("parent")
+	// Verify parent still exists
+	parentNode, ok = tree.root.GetChild("parent")
 	assert.True(t, ok, "Parent node should exist after removing just child")
 	assert.NotNil(t, parentNode, "Parent node should not be nil")
 
-	// Verify child was removed
+	// Verify child was deleted since it had no children
 	_, ok = parentNode.GetChild("child")
-	assert.False(t, ok, "Child node should be removed")
+	assert.False(t, ok, "Child node should be deleted since it had no children")
+
+	// Test removing a leaf node (no children) - should delete the node
+	leafRuleset := aclspec.NewRuleSet(
+		"leaf",
+		aclspec.SetTerminal,
+		aclspec.NewRule("*.log", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+	)
+
+	_, err = tree.AddRuleSet(leafRuleset)
+	assert.NoError(t, err)
+
+	// Verify leaf node exists
+	leafNode, ok := tree.root.GetChild("leaf")
+	assert.True(t, ok, "Leaf node should exist")
+	assert.NotNil(t, leafNode, "Leaf node should not be nil")
+
+	// Remove leaf node - should delete it since it has no children
+	removed = tree.RemoveRuleSet("leaf")
+	assert.True(t, removed)
+
+	// Verify leaf node was deleted
+	_, ok = tree.root.GetChild("leaf")
+	assert.False(t, ok, "Leaf node should be deleted since it had no children")
 }
