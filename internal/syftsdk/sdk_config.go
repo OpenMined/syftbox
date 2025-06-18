@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	DefaultBaseURL = "https://syftboxdev.openmined.org"
+	DefaultBaseURL = "https://syftbox.net"
 )
 
 // SyftSDKConfig is the configuration for the SyftSDK
