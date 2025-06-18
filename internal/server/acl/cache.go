@@ -48,14 +48,19 @@ func (c *ACLCache) Delete(path string) {
 }
 
 // DeletePrefix deletes the effective ACL rule for all paths that match the given prefix.
-func (c *ACLCache) DeletePrefix(path string) {
+func (c *ACLCache) DeletePrefix(path string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	deleted := 0
 
 	// iterate over index keys and delete the entry
 	for k := range c.index {
 		if strings.HasPrefix(k, path) {
 			delete(c.index, k)
+			deleted++
 		}
 	}
+
+	return deleted
 }

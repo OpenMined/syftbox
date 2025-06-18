@@ -3,6 +3,7 @@ package acl
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/openmined/syftbox/internal/aclspec"
 )
@@ -28,8 +29,8 @@ func (s *ACLService) AddRuleSet(ruleSet *aclspec.RuleSet) (ACLVersion, error) {
 		return 0, err
 	}
 
-	s.cache.DeletePrefix(ruleSet.Path)
-	slog.Debug("updated rule set", "path", node.path, "version", node.version)
+	deleted := s.cache.DeletePrefix(ruleSet.Path)
+	slog.Debug("updated rule set", "path", node.path, "version", node.version, "cache.deleted", deleted)
 	return node.version, nil
 }
 
@@ -39,7 +40,8 @@ func (s *ACLService) AddRuleSet(ruleSet *aclspec.RuleSet) (ACLVersion, error) {
 func (s *ACLService) RemoveRuleSet(path string) bool {
 	path = aclspec.WithoutACLPath(path)
 	if ok := s.tree.RemoveRuleSet(path); ok {
-		s.cache.DeletePrefix(path)
+		deleted := s.cache.DeletePrefix(path)
+		slog.Debug("deleted cached rules", "path", path, "count", deleted)
 		return true
 	}
 	return false
@@ -69,16 +71,17 @@ func (s *ACLService) GetRule(path string) (*ACLRule, error) {
 
 // CanAccess checks if a user has the specified access permission for a file.
 func (s *ACLService) CanAccess(user *User, file *File, level AccessLevel) error {
+	// early return if user is the owner
+	if isOwner(file.Path, user.ID) {
+		return nil
+	}
+
 	// get the effective rule for the file
 	rule, err := s.GetRule(file.Path)
 	if err != nil {
 		return err
 	}
 
-	// early return if user is the owner
-	if rule.Owner() == user.ID {
-		return nil
-	}
 	// Elevate ACL file writes to admin level
 	if aclspec.IsACLFile(file.Path) && level >= AccessCreate {
 		level = AccessAdmin
@@ -102,4 +105,10 @@ func (s *ACLService) CanAccess(user *User, file *File, level AccessLevel) error 
 // String returns a string representation of the ACL service's rule tree.
 func (s *ACLService) String() string {
 	return s.tree.String()
+}
+
+// checks if the user is the owner of the path
+func isOwner(path string, user string) bool {
+	path = ACLNormPath(path)
+	return strings.HasPrefix(path, user)
 }
