@@ -49,6 +49,27 @@ run-server-reload *ARGS:
 run-client *ARGS: gen-swagger
     go run -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
 
+# Starts a client against localhost:8080 with sensible defaults
+[group('dev')]
+run-client-simple user_email server_url="http://localhost:8080" base_clients_dir="~/.syftbox/clients" *ARGS="":
+    #!/bin/bash
+    set -eou pipefail
+
+    CLIENT_DIR="{{ base_clients_dir }}/{{ user_email }}"
+    CONFIG_PATH="${CLIENT_DIR}/config.json"
+    DATA_DIR="${CLIENT_DIR}/SyftBox"
+
+    mkdir -p "{{ base_clients_dir }}"
+    mkdir -p "$CLIENT_DIR"
+
+    echo "Running client:"
+    echo "  Email: {{ user_email }}"
+    echo "  Server: {{ server_url }}"
+    echo "  Data dir: $DATA_DIR"
+    echo "  Config path: $CONFIG_PATH"
+
+    just run-client -e "{{ user_email }}" -s "{{ server_url }}" -d "$DATA_DIR" -c "$CONFIG_PATH" {{ ARGS }}
+
 [group('dev')]
 run-client-reload *ARGS:
     wgo run -file 'cmd/.*' -file 'internal/.*' -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
