@@ -1,6 +1,12 @@
 package sync
 
 import (
+	"bufio"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	"github.com/openmined/syftbox/internal/utils"
 	gitignore "github.com/sabhiram/go-gitignore"
 )
 
@@ -37,11 +43,42 @@ type SyncIgnoreList struct {
 }
 
 func NewSyncIgnoreList(baseDir string) *SyncIgnoreList {
-	ignore := gitignore.CompileIgnoreLines(defaultIgnoreLines...)
-	return &SyncIgnoreList{baseDir: baseDir, ignore: ignore}
+	return &SyncIgnoreList{baseDir: baseDir}
+}
+
+func (s *SyncIgnoreList) Load() {
+	ignorePath := filepath.Join(s.baseDir, "syftignore")
+	ignoreLines := defaultIgnoreLines
+
+	// read the syftignore file if it exists
+	if utils.FileExists(ignorePath) {
+		rules := 0
+		file, err := os.Open(ignorePath)
+		if err != nil {
+			slog.Warn("Failed to open syftignore file", "path", ignorePath, "error", err)
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line != "" {
+				ignoreLines = append(ignoreLines, line)
+				rules++
+			}
+		}
+
+		// Check for errors during the scan
+		if err := scanner.Err(); err != nil {
+			slog.Warn("Error reading syftignore file", "path", ignorePath, "error", err)
+		} else {
+			slog.Info("Loaded syftignore file", "path", ignorePath, "rules", rules)
+		}
+	}
+
+	s.ignore = gitignore.CompileIgnoreLines(ignoreLines...)
 }
 
 func (s *SyncIgnoreList) ShouldIgnore(path string) bool {
-	// todo strip baseDir from relPath
 	return s.ignore.MatchesPath(path)
 }

@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -9,90 +10,96 @@ import (
 	"github.com/openmined/syftbox/internal/aclspec"
 )
 
-// Node represents a node in the ACL tree.
+// ACLVersion is the version of the node.
+// overflow will reset it to 0.
+type ACLVersion = uint16
+
+// ACLDepth is the depth of the node in the tree.
+type ACLDepth = uint8
+
+const (
+	ACLMaxDepth   = 1<<8 - 1  // keep this in sync with the type ACLDepth
+	ACLMaxVersion = 1<<16 - 1 // keep this in sync with the type ACLVersion
+)
+
+// ACLNode represents a node in the ACL tree.
 // Each node corresponds to a part of the path and contains rules for that part.
-type Node struct {
+type ACLNode struct {
 	mu       sync.RWMutex
-	rules    []*Rule          // rules for this part of the path. sorted by specificity.
-	path     string           // path is the full path to this node
-	children map[string]*Node // key is the part of the path
-	terminal bool             // true if this node is a terminal node
-	depth    uint8            // depth of the node in the tree. 0 is root node
-	version  uint8            // version of the node. incremented on every change
+	rules    []*ACLRule          // rules for this part of the path. sorted by specificity.
+	children map[string]*ACLNode // key is the part of the path
+	owner    string              // owner of the node
+	path     string              // path is the full path to this Anode
+	terminal bool                // true if this node is a terminal node
+	depth    ACLDepth            // depth of the node in the tree. 0 is root node
+	version  ACLVersion          // version of the node. incremented on every change
 }
 
-func NewNode(path string, terminal bool, depth uint8) *Node {
-	return &Node{
+// NewACLNode creates a new ACLNode.
+func NewACLNode(path string, owner string, terminal bool, depth ACLDepth) *ACLNode {
+	// note rules & children are not initialized here.
+	// this is to avoid unnecessary allocations, until the node is set with rules.
+	return &ACLNode{
 		path:     path,
+		owner:    owner,
 		terminal: terminal,
 		depth:    depth,
+		version:  0,
 	}
 }
 
-func (n *Node) Version() uint8 {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.version
-}
-
-func (n *Node) IsTerminal() bool {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.terminal
-}
-
-func (n *Node) Depth() uint8 {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.depth
-}
-
-func (n *Node) Rules() []*Rule {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.rules
-}
-
-func (n *Node) SetChild(key string, child *Node) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.children == nil {
-		n.children = make(map[string]*Node)
-	}
-	if child == nil {
-		delete(n.children, key)
-	} else {
-		n.children[key] = child
-	}
-}
-
-func (n *Node) GetChild(key string) (*Node, bool) {
+// GetChild returns the child for the node.
+func (n *ACLNode) GetChild(key string) (*ACLNode, bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	child, exists := n.children[key]
 	return child, exists
 }
 
-func (n *Node) DeleteChild(key string) {
+// SetChild sets the child for the node.
+func (n *ACLNode) SetChild(key string, child *ACLNode) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.children == nil {
+		n.children = make(map[string]*ACLNode)
+	}
+	if child == nil {
+		delete(n.children, key)
+	} else {
+		n.children[key] = child
+	}
+	n.version++
+}
+
+// DeleteChild deletes the child for the node.
+func (n *ACLNode) DeleteChild(key string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	delete(n.children, key)
+	n.version++
+}
+
+// GetRules returns the rules for the node.
+func (n *ACLNode) GetRules() []*ACLRule {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.rules
 }
 
 // SetRules the rules, terminal flag and depth for the node.
 // Increments the version counter for repeated operation.
-func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
+func (n *ACLNode) SetRules(rules []*aclspec.Rule, terminal bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
 	if len(rules) > 0 {
 		// pre-sort the rules by specificity
-		sorted := sortBySpecificity(rules)
+		sorted := sortRulesBySpecificity(rules)
 
 		// convert the rules to aclRules
-		aclRules := make([]*Rule, 0, len(sorted))
+		aclRules := make([]*ACLRule, 0, len(sorted))
 		for _, rule := range sorted {
-			aclRules = append(aclRules, &Rule{
+			aclRules = append(aclRules, &ACLRule{
 				rule:        rule,
 				node:        n,
 				fullPattern: ACLJoinPath(n.path, rule.Pattern),
@@ -104,12 +111,20 @@ func (n *Node) SetRules(rules []*aclspec.Rule, terminal bool) {
 	// set the rules and terminal flag
 	n.terminal = terminal
 
-	// increment the version. uint8 overflow will reset it to 0.
+	// increment the version
+	n.version++
+}
+
+// ClearRules clears the rules for the node.
+func (n *ACLNode) ClearRules() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.rules = nil
 	n.version++
 }
 
 // FindBestRule finds the best matching rule for the given path.
-func (n *Node) FindBestRule(path string) (*Rule, error) {
+func (n *ACLNode) FindBestRule(path string) (*ACLRule, error) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
@@ -127,15 +142,43 @@ func (n *Node) FindBestRule(path string) (*Rule, error) {
 	return nil, ErrNoRuleFound
 }
 
-// Equal checks if the node is equal to another node.
-func (n *Node) Equal(other *Node) bool {
+// GetOwner returns the owner of the node.
+func (n *ACLNode) GetOwner() string {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
-	return n.path == other.path && n.terminal == other.terminal && n.depth == other.depth
+	return n.owner
 }
 
-func globSpecificityScore(glob string) int {
-	// exact
+// GetVersion returns the version of the node.
+func (n *ACLNode) GetVersion() ACLVersion {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.version
+}
+
+// GetTerminal returns true if the node is a terminal node.
+func (n *ACLNode) GetTerminal() bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.terminal
+}
+
+// GetDepth returns the depth of the node.
+func (n *ACLNode) GetDepth() ACLDepth {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.depth
+}
+
+// Equal checks if the node is equal to another node.
+func (n *ACLNode) Equal(other *ACLNode) bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.path == other.path && n.terminal == other.terminal && n.depth == other.depth && n.version == other.version
+}
+
+func calculateGlobSpecificity(glob string) int {
+	// early return for the most specific glob patterns
 	switch glob {
 	case "**":
 		return -100
@@ -147,6 +190,7 @@ func globSpecificityScore(glob string) int {
 	// Use forward slash for glob patterns
 	score := len(glob)*2 + strings.Count(glob, ACLPathSep)*10
 
+	// penalize base score for substr wildcards
 	for i, c := range glob {
 		switch c {
 		case '*':
@@ -163,13 +207,14 @@ func globSpecificityScore(glob string) int {
 	return score
 }
 
-func sortBySpecificity(rules []*aclspec.Rule) []*aclspec.Rule {
+func sortRulesBySpecificity(rules []*aclspec.Rule) []*aclspec.Rule {
 	// copy the rules
-	clone := append([]*aclspec.Rule(nil), rules...)
+	clone := slices.Clone(rules)
 
-	// sort by specificity, descending
+	// sort by specificity (or priority), descending
 	sort.Slice(clone, func(i, j int) bool {
-		return globSpecificityScore(clone[i].Pattern) > globSpecificityScore(clone[j].Pattern)
+		return calculateGlobSpecificity(clone[i].Pattern) > calculateGlobSpecificity(clone[j].Pattern)
 	})
+
 	return clone
 }

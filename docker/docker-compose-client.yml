@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.client
+    image: syftbox-client:latest
+    container_name: syftbox-client-${CLIENT_EMAIL:-default}
+    ports:
+      - "${CLIENT_PORT:-7938}:7938"
+    environment:
+      - SYFTBOX_SERVER_URL=${SYFTBOX_SERVER_URL:-http://syftbox-server:8080}
+      - SYFTBOX_AUTH_ENABLED=0
+    volumes:
+      - ${SYFTBOX_CLIENTS_DIR:-~/.syftbox/clients}:/data/clients
+    networks:
+      - syftbox-network
+    stdin_open: true
+    tty: true
+    command: ${CLIENT_EMAIL:---help}
+
+networks:
+  syftbox-network:
+    external: true
+    name: docker_syftbox-network

@@ -1,13 +1,33 @@
 package blob
 
-type BlobUrl struct {
+import (
+	"fmt"
+
+	"github.com/openmined/syftbox/internal/server/handlers/api"
+)
+
+type BlobURL struct {
 	Key string `json:"key"`
 	Url string `json:"url"`
 }
 
-type BlobError struct {
-	Key   string `json:"key"`
-	Error string `json:"error"`
+type BlobAPIError struct {
+	api.SyftAPIError
+	Key string `json:"key"`
+}
+
+func NewBlobAPIError(code string, message string, key string) *BlobAPIError {
+	return &BlobAPIError{
+		Key: key,
+		SyftAPIError: api.SyftAPIError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
+
+func (e *BlobAPIError) Error() string {
+	return fmt.Sprintf("syft api blob error: code=%s, message=%s, key=%s", e.Code, e.Message, e.Key)
 }
 
 type UploadRequest struct {
@@ -26,20 +46,20 @@ type UploadResponse struct {
 	LastModified string `json:"lastModified"`
 }
 
-type PresignUrlRequest struct {
-	Keys []string `json:"keys" binding:"required"`
+type PresignURLRequest struct {
+	Keys []string `json:"keys" binding:"required,min=1"`
 }
 
-type PresignUrlResponse struct {
-	URLs   []*BlobUrl   `json:"urls"`
-	Errors []*BlobError `json:"errors"`
+type PresignURLResponse struct {
+	URLs   []*BlobURL      `json:"urls"`
+	Errors []*BlobAPIError `json:"errors"`
 }
 
 type DeleteRequest struct {
-	Keys []string `json:"keys" binding:"required"`
+	Keys []string `json:"keys" binding:"required,min=1"`
 }
 
 type DeleteResponse struct {
-	Deleted []string     `json:"deleted"`
-	Errors  []*BlobError `json:"errors"`
+	Deleted []string        `json:"deleted"`
+	Errors  []*BlobAPIError `json:"errors"`
 }

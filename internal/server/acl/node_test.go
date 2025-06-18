@@ -9,7 +9,7 @@ import (
 
 func TestNodeFindBestRule(t *testing.T) {
 	// Create a node with some rules
-	node := NewNode("test", false, 1)
+	node := NewACLNode("some/path", "user1", false, 1)
 
 	// Create test rules with different patterns
 	rules := []*aclspec.Rule{
@@ -21,19 +21,19 @@ func TestNodeFindBestRule(t *testing.T) {
 	node.SetRules(rules, false)
 
 	// Test matching with different paths
-	rule, err := node.FindBestRule("test/file.txt")
+	rule, err := node.FindBestRule("some/path/file.txt")
 	assert.NoError(t, err)
 	assert.Equal(t, "*.txt", rule.rule.Pattern)
 
-	rule, err = node.FindBestRule("test/file.md")
+	rule, err = node.FindBestRule("some/path/file.md")
 	assert.NoError(t, err)
 	assert.Equal(t, "file.md", rule.rule.Pattern)
 
-	rule, err = node.FindBestRule("test/subdir/main.go")
+	rule, err = node.FindBestRule("some/path/subdir/main.go")
 	assert.NoError(t, err)
 	assert.Equal(t, "**/*.go", rule.rule.Pattern)
 
-	rule, err = node.FindBestRule("test/main.go")
+	rule, err = node.FindBestRule("some/path/main.go")
 	assert.NoError(t, err)
 	assert.Equal(t, "**/*.go", rule.rule.Pattern)
 
@@ -48,10 +48,10 @@ func TestNodeFindBestRule(t *testing.T) {
 }
 
 func TestNodeSetRules(t *testing.T) {
-	node := NewNode("test", false, 1)
+	node := NewACLNode("test", "user1", false, 1)
 
 	// Initial version should be 0
-	assert.Equal(t, uint8(0), node.Version())
+	assert.Equal(t, ACLVersion(0), node.GetVersion())
 
 	// Set rules and check that version increments
 	rules := []*aclspec.Rule{
@@ -61,13 +61,13 @@ func TestNodeSetRules(t *testing.T) {
 	node.SetRules(rules, true)
 
 	// Version should increment
-	assert.Equal(t, uint8(1), node.Version())
+	assert.Equal(t, ACLVersion(1), node.GetVersion())
 
 	// Terminal flag should be set
-	assert.True(t, node.IsTerminal())
+	assert.True(t, node.GetTerminal())
 
 	// Rules should be set
-	assert.Len(t, node.Rules(), 1)
+	assert.Len(t, node.GetRules(), 1)
 
 	// Set new rules and check version increments again
 	newRules := []*aclspec.Rule{
@@ -78,21 +78,21 @@ func TestNodeSetRules(t *testing.T) {
 	node.SetRules(newRules, false)
 
 	// Version should increment
-	assert.Equal(t, uint8(2), node.Version())
+	assert.Equal(t, ACLVersion(2), node.GetVersion())
 
 	// Terminal flag should be updated
-	assert.False(t, node.IsTerminal())
+	assert.False(t, node.GetTerminal())
 
 	// Rules should be updated
-	assert.Len(t, node.Rules(), 2)
+	assert.Len(t, node.GetRules(), 2)
 }
 
 func TestNodeEqual(t *testing.T) {
-	node1 := NewNode("test", false, 1)
-	node2 := NewNode("test", false, 1)
-	node3 := NewNode("different", false, 1)
-	node4 := NewNode("test", true, 1)
-	node5 := NewNode("test", false, 2)
+	node1 := NewACLNode("some/path", "user1", false, 1)
+	node2 := NewACLNode("some/path", "user1", false, 1)
+	node3 := NewACLNode("different/path", "user1", false, 1)
+	node4 := NewACLNode("some/path", "user1", true, 1)
+	node5 := NewACLNode("some/path", "user1", false, 2)
 
 	assert.True(t, node1.Equal(node2), "Identical nodes should be equal")
 	assert.False(t, node1.Equal(node3), "Nodes with different paths should not be equal")
@@ -111,7 +111,7 @@ func TestRuleSpecificity(t *testing.T) {
 	}
 
 	// Sort by specificity
-	sorted := sortBySpecificity(rules)
+	sorted := sortRulesBySpecificity(rules)
 
 	// Most specific should come first, least specific last
 	assert.Equal(t, "specific.txt", sorted[0].Pattern)
@@ -134,13 +134,15 @@ func TestGlobSpecificityScore(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		score := globSpecificityScore(tc.pattern)
-		assert.Equal(t, tc.score, score, "Specificity score for %q should be %d, got %d", tc.pattern, tc.score, score)
+		t.Run(tc.pattern, func(t *testing.T) {
+			score := calculateGlobSpecificity(tc.pattern)
+			assert.Equal(t, tc.score, score, "Specificity score for '%s' should be %d, got %d", tc.pattern, tc.score, score)
+		})
 	}
 }
 
 func TestNodeGetChild(t *testing.T) {
-	node := NewNode("parent", false, 1)
+	node := NewACLNode("path/to", "user1", false, 1)
 
 	// Initially, no children
 	child, exists := node.GetChild("child")
@@ -148,13 +150,13 @@ func TestNodeGetChild(t *testing.T) {
 	assert.Nil(t, child)
 
 	// Add a child
-	childNode := NewNode("parent/child", false, 2)
+	childNode := NewACLNode("path/to/child", "user1", false, 2)
 	node.SetChild("child", childNode)
 
 	// Verify child can be retrieved
 	child, exists = node.GetChild("child")
 	assert.True(t, exists)
-	assert.Equal(t, "parent/child", child.path)
+	assert.Equal(t, "path/to/child", child.path)
 
 	// Delete the child
 	node.DeleteChild("child")
