@@ -2,9 +2,11 @@ package sync
 
 import (
 	"bufio"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/openmined/syftbox/internal/utils"
 	gitignore "github.com/sabhiram/go-gitignore"
@@ -52,27 +54,12 @@ func (s *SyncIgnoreList) Load() {
 
 	// read the syftignore file if it exists
 	if utils.FileExists(ignorePath) {
-		rules := 0
-		file, err := os.Open(ignorePath)
+		customRules, err := readIgnoreFile(ignorePath)
 		if err != nil {
-			slog.Warn("Failed to open syftignore file", "path", ignorePath, "error", err)
-		}
-		defer file.Close()
-
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if line != "" {
-				ignoreLines = append(ignoreLines, line)
-				rules++
-			}
-		}
-
-		// Check for errors during the scan
-		if err := scanner.Err(); err != nil {
-			slog.Warn("Error reading syftignore file", "path", ignorePath, "error", err)
-		} else {
-			slog.Info("Loaded syftignore file", "path", ignorePath, "rules", rules)
+			slog.Warn("failed to read syftignore file", "path", ignorePath, "error", err)
+		} else if len(customRules) > 0 {
+			ignoreLines = append(ignoreLines, customRules...)
+			slog.Info("loaded syftignore file", "path", ignorePath, "rules", len(customRules))
 		}
 	}
 
@@ -81,4 +68,37 @@ func (s *SyncIgnoreList) Load() {
 
 func (s *SyncIgnoreList) ShouldIgnore(path string) bool {
 	return s.ignore.MatchesPath(path)
+}
+
+func readIgnoreFile(path string) ([]string, error) {
+	if path == "" {
+		return nil, fmt.Errorf("ignore file path is empty")
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open ignore file: %w", err)
+	}
+	defer file.Close()
+
+	ignoreLines := []string{}
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+
+		// comments, empty lines, and null bytes
+		if strings.HasPrefix(line, "#") || line == "" || strings.Contains(line, "\x00") {
+			continue
+		}
+
+		ignoreLines = append(ignoreLines, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading ignore file: %w", err)
+	}
+
+	return ignoreLines, nil
 }
