@@ -12,7 +12,7 @@ import (
 
 func TestLoadConfigEnv(t *testing.T) {
 	t.Setenv("SYFTBOX_EMAIL", "test@example.com")
-	t.Setenv("SYFTBOX_SERVER_URL", "https://test.openmined.org")
+	t.Setenv("SYFTBOX_SERVER_URL", "https://test.syftbox.net")
 	t.Setenv("SYFTBOX_CLIENT_URL", "http://localhost:7938")
 	t.Setenv("SYFTBOX_APPS_ENABLED", "true")
 	t.Setenv("SYFTBOX_REFRESH_TOKEN", "test-refresh-token")
@@ -34,7 +34,7 @@ func TestLoadConfigEnv(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "test@example.com", cfg.Email)
-	assert.Equal(t, "https://test.openmined.org", cfg.ServerURL)
+	assert.Equal(t, "https://test.syftbox.net", cfg.ServerURL)
 	assert.Equal(t, "http://localhost:7938", cfg.ClientURL)
 	assert.Equal(t, true, cfg.AppsEnabled)
 	assert.Equal(t, "test-refresh-token", cfg.RefreshToken)
@@ -55,7 +55,7 @@ func TestLoadConfigJSON(t *testing.T) {
 {
 	"email": "test@example.com",
 	"data_dir": "/tmp/syftbox-test-json",
-	"server_url": "https://test-json.openmined.org",
+	"server_url": "https://test-json.syftbox.net",
 	"client_url": "http://localhost:8080",
 	"refresh_token": "test-refresh-token-json",
 	"access_token": "test-access-token-json"
@@ -78,7 +78,7 @@ func TestLoadConfigJSON(t *testing.T) {
 	require.Equal(t, dummyConfigFile, cfg.Path)
 	assert.Equal(t, "test@example.com", cfg.Email)
 	assert.Equal(t, "/tmp/syftbox-test-json", cfg.DataDir)
-	assert.Equal(t, "https://test-json.openmined.org", cfg.ServerURL)
+	assert.Equal(t, "https://test-json.syftbox.net", cfg.ServerURL)
 	assert.Equal(t, "http://localhost:8080", cfg.ClientURL)
 	assert.Equal(t, "test-refresh-token-json", cfg.RefreshToken)
 	assert.Equal(t, "test-access-token-json", cfg.AccessToken) // can read, but not persist!
