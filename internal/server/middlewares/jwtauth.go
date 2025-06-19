@@ -20,7 +20,7 @@ const (
 
 // JWTAuth creates a Gin middleware function that validates access tokens.
 // It requires the AuthService to access token validation logic and configuration.
-func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
+func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 	if !authService.IsEnabled() {
 		slog.Info("auth middleware disabled")
 
@@ -46,6 +46,20 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 	slog.Info("auth middleware enabled")
 
 	return func(ctx *gin.Context) {
+		// Check for guest access first if allowed
+		if allowGuest {
+			user := ctx.Query("user")
+			if user == "" {
+				user = ctx.Query("x-syft-from")
+			}
+			if user == "guest@syft.org" {
+				ctx.Set("user", user)
+				ctx.Next()
+				return
+			}
+		}
+
+		// Proceed with normal JWT authentication
 		authHeaderValue := ctx.GetHeader(authHeader)
 		if authHeaderValue == "" {
 			api.AbortWithError(ctx, http.StatusUnauthorized, api.CodeAuthInvalidCredentials, fmt.Errorf("authorization header required"))
