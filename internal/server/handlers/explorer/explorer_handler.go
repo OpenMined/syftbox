@@ -100,6 +100,17 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	}
 
 	for _, blob := range blobs {
+
+		// check if public readable
+		if err := e.acl.CanAccess(
+			&acl.User{ID: aclspec.Everyone},
+			&acl.File{Path: blob.Key},
+			acl.AccessRead,
+		); err != nil {
+			// don't reveal if the file is private or not
+			continue
+		}
+
 		if strings.HasPrefix(blob.Key, prefix) {
 			relPath := strings.TrimPrefix(blob.Key, prefix)
 			if relPath == "" {
