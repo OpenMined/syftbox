@@ -102,5 +102,5 @@ type RPCMsgStore interface {
 
 // Message dispatch interface for dispatching messages to users
 type MessageDispatcher interface {
-	SendMsg(datasite string, msg *syftmsg.Message) bool
+	Dispatch(datasite string, msg *syftmsg.Message) bool
 }

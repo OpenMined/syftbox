@@ -59,7 +59,7 @@ type WSMsgDispatcher struct {
 	hub *ws.WebsocketHub
 }
 
-func (m *WSMsgDispatcher) SendMsg(datasite string, msg *syftmsg.Message) bool {
+func (m *WSMsgDispatcher) Dispatch(datasite string, msg *syftmsg.Message) bool {
 	return m.hub.SendMessageUser(datasite, msg)
 }
 
@@ -120,11 +120,12 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 	// TODO: Check if user has permission to send message to this application
 
 	// Dispatch the message to the user via websocket
-	if ok := s.dispatcher.SendMsg(req.SyftURL.Datasite, msg); !ok {
+	if ok := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg); !ok {
+		// If the message is not sent via websocket, handle it as an offline message
 		return s.handleOfflineMessage(ctx, req, httpMsg)
 	}
 
-	// If the message is not sent via websocket, handle it as an offline message
+	// If the message is sent via websocket, handle the response
 	return s.handleOnlineMessage(ctx, req, httpMsg)
 }
 
