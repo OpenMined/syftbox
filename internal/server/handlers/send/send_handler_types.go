@@ -1,7 +1,11 @@
 package send
 
 import (
+	"context"
+	"io"
+
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
@@ -87,4 +91,24 @@ type PollResult struct {
 	Status    int
 	RequestID string
 	Response  map[string]interface{}
+}
+
+// Message store interface for storing and retrieving messages
+type RPCMsgStore interface {
+	StoreMsg(ctx context.Context, path string, msg syftmsg.SyftRPCMessage) error
+	GetMsg(ctx context.Context, path string) (io.ReadCloser, error)
+	DeleteMsg(ctx context.Context, path string) error
+}
+
+// Message dispatch interface for dispatching messages to users
+type MessageDispatcher interface {
+	Dispatch(datasite string, msg *syftmsg.Message) bool
+}
+
+// SendServiceInterface defines the interface for the send service
+type SendServiceInterface interface {
+	SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error)
+	PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error)
+	constructPollURL(requestID string, syftURL utils.SyftBoxURL, from string, asRaw bool) string
+	GetConfig() *Config
 }
