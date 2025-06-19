@@ -74,7 +74,8 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 	v1 := r.Group("/api/v1")
 
-	v1.Use(middlewares.JWTAuth(svc.Auth))
+	// enable auth middleware with no guest access
+	v1.Use(middlewares.JWTAuth(svc.Auth, false))
 	// v1.Use(middlewares.RateLimiter("100-S")) // todo
 	{
 		// blob
@@ -96,6 +97,11 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 		// websocket events
 		v1.GET("/events", hub.WebsocketHandler)
 
+	}
+
+	// enable auth middleware with guest access
+	v1.Use(middlewares.JWTAuth(svc.Auth, true))
+	{
 		// send rpc routes
 		v1.Any("/send/msg", sendH.SendMsg)
 		v1.GET("/send/poll", sendH.PollForResponse)
