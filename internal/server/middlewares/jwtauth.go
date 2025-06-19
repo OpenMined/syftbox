@@ -43,15 +43,15 @@ func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 		}
 	}
 
-	slog.Info("auth middleware enabled")
-
 	return func(ctx *gin.Context) {
 		// Check for guest access first if allowed
+		slog.Debug("Checking for guest access", "allowGuest", allowGuest)
 		if allowGuest {
 			user := ctx.Query("user")
 			if user == "" {
 				user = ctx.Query("x-syft-from")
 			}
+			slog.Debug("Attempting to access with user", "user", user)
 			if user == "guest@syft.org" {
 				ctx.Set("user", user)
 				ctx.Next()

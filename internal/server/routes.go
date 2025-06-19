@@ -99,12 +99,12 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 
 	}
 
-	// enable auth middleware with guest access
-	v1.Use(middlewares.JWTAuth(svc.Auth, true))
+	// rpc group with guest access
+	sendG := r.Group("/api/v1/send")
+	sendG.Use(middlewares.JWTAuth(svc.Auth, true))
 	{
-		// send rpc routes
-		v1.Any("/send/msg", sendH.SendMsg)
-		v1.GET("/send/poll", sendH.PollForResponse)
+		sendG.Any("/msg", sendH.SendMsg)
+		sendG.GET("/poll", sendH.PollForResponse)
 	}
 
 	r.NoRoute(func(c *gin.Context) {
