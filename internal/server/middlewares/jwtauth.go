@@ -20,13 +20,20 @@ const (
 
 // JWTAuth creates a Gin middleware function that validates access tokens.
 // It requires the AuthService to access token validation logic and configuration.
-func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
+func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 	if !authService.IsEnabled() {
 		slog.Info("auth middleware disabled")
 
 		return func(ctx *gin.Context) {
 			// expect user to be an email address
 			user := ctx.Query("user")
+
+			// if user is not set, check if the request has a x-syft-from query parameter
+			if user == "" {
+				user = ctx.Query("x-syft-from")
+			}
+
+			// check if the user is a valid email address
 			if !utils.IsValidEmail(user) {
 				api.AbortWithError(ctx, http.StatusUnauthorized, api.CodeInvalidRequest, fmt.Errorf("invalid email"))
 				return
@@ -36,9 +43,23 @@ func JWTAuth(authService *auth.AuthService) gin.HandlerFunc {
 		}
 	}
 
-	slog.Info("auth middleware enabled")
-
 	return func(ctx *gin.Context) {
+		// Check for guest access first if allowed
+		slog.Debug("Checking for guest access", "allowGuest", allowGuest)
+		if allowGuest {
+			user := ctx.Query("user")
+			if user == "" {
+				user = ctx.Query("x-syft-from")
+			}
+			slog.Debug("Attempting to access with user", "user", user)
+			if user == "guest@syft.org" {
+				ctx.Set("user", user)
+				ctx.Next()
+				return
+			}
+		}
+
+		// Proceed with normal JWT authentication
 		authHeaderValue := ctx.GetHeader(authHeader)
 		if authHeaderValue == "" {
 			api.AbortWithError(ctx, http.StatusUnauthorized, api.CodeAuthInvalidCredentials, fmt.Errorf("authorization header required"))

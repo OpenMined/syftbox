@@ -11,6 +11,7 @@ const (
 	MsgFileDelete
 	MsgAck
 	MsgNack
+	MsgHttp
 )
 
 func (t MessageType) String() string {
@@ -27,6 +28,8 @@ func (t MessageType) String() string {
 		return "ACK"
 	case MsgNack:
 		return "NACK"
+	case MsgHttp:
+		return "HTTP"
 	default:
 		return fmt.Sprintf("???(%d)", t)
 	}
