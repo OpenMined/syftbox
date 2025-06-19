@@ -135,6 +135,7 @@ func (h *WebsocketHub) SendMessageUser(user string, msg *syftmsg.Message) bool {
 
 	for _, client := range h.clients {
 		if client.Info.User == user {
+			slog.Debug("sending message to client", "connId", client.ConnID, "user", user)
 			select {
 			case client.MsgTx <- msg:
 				sent = true
