@@ -343,3 +343,8 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 	// return the SyftRPCMessage as a different json representation
 	return map[string]interface{}{"message": rpcMsg.ToJsonMap()}, nil
 }
+
+// GetConfig returns the service configuration
+func (s *SendService) GetConfig() *Config {
+	return s.cfg
+}

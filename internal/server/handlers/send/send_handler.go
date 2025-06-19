@@ -13,7 +13,7 @@ import (
 
 // SendHandler handles HTTP requests for sending messages
 type SendHandler struct {
-	service *SendService
+	service SendServiceInterface
 }
 
 // New creates a new send handler
@@ -51,7 +51,7 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	req.BindHeaders(ctx)
 
 	// Read request body with size limit
-	bodyBytes, err := readRequestBody(ctx, h.service.cfg.MaxBodySize)
+	bodyBytes, err := readRequestBody(ctx, h.service.GetConfig().MaxBodySize)
 	if err != nil {
 		ctx.PureJSON(http.StatusBadRequest, APIError{
 			Error:   ErrorInvalidRequest,
@@ -64,9 +64,8 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 	if err != nil {
 		slog.Error("failed to send message", "error", err)
 		ctx.PureJSON(http.StatusInternalServerError, APIError{
-			Error:     ErrorInternal,
-			Message:   err.Error(),
-			RequestID: result.RequestID,
+			Error:   ErrorInternal,
+			Message: err.Error(),
 		})
 		return
 	}
@@ -133,7 +132,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			if req.Timeout > 0 {
 				refreshInterval = req.Timeout / 1000
 			} else {
-				refreshInterval = h.service.cfg.DefaultTimeoutMs / 1000
+				refreshInterval = h.service.GetConfig().DefaultTimeoutMs / 1000
 			}
 
 			// add poll url as location header and retry after header

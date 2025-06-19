@@ -104,3 +104,11 @@ type RPCMsgStore interface {
 type MessageDispatcher interface {
 	Dispatch(datasite string, msg *syftmsg.Message) bool
 }
+
+// SendServiceInterface defines the interface for the send service
+type SendServiceInterface interface {
+	SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error)
+	PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error)
+	constructPollURL(requestID string, syftURL utils.SyftBoxURL, from string, asRaw bool) string
+	GetConfig() *Config
+}
