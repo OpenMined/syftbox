@@ -48,3 +48,7 @@ just test
 ```
 
 See the [development guide](./DEVELOPMENT.md) for more details
+
+
+#GCP script
+https://docs.google.com/document/d/1u2IQ3EdGzs2FT8MYqPxez447_Sp3RL806M4lBFu5Gj0/edit?usp=sharing
