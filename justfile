@@ -212,6 +212,7 @@ build-all:
 
 [group('deploy')]
 deploy-client remote="syftbox-yash": build-all
+    #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
     rm -rf releases && mkdir releases
     cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
@@ -221,6 +222,7 @@ deploy-client remote="syftbox-yash": build-all
 
 [group('deploy')]
 deploy-server remote="syftbox-yash": build-server
+    #!/bin/bash
     echo "Deploying syftbox server to {{ _cyan }}{{ remote }}{{ _nc }}"
     scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
     ssh {{ remote }} "rm -fv /home/azureuser/syftbox_server && mv -fv /home/azureuser/syftbox_server_new /home/azureuser/syftbox_server"

@@ -1,0 +1,109 @@
+name: Syftbox Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - stage
+        #   - prod
+      deploy_type:
+        description: 'What to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - client
+          - server
+
+jobs:
+  deploy:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          
+      - name: Install just
+        uses: taiki-e/install-action@just
+        
+      - name: Install goreleaser
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          version: latest
+          args: --version
+        
+      - name: Setup toolchain
+        run: just setup-toolchain
+        
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          
+          # Use environment-specific SSH private key
+          case "${{ inputs.environment }}" in
+            "dev")
+              echo "${{ secrets.SSH_PRIVATE_KEY_DEV }}" > ~/.ssh/id_rsa
+              ssh-keyscan -H ${{ secrets.SSH_HOST_DEV }} >> ~/.ssh/known_hosts
+              ;;
+            "stage")
+              echo "${{ secrets.SSH_PRIVATE_KEY_STAGE }}" > ~/.ssh/id_rsa
+              ssh-keyscan -H ${{ secrets.SSH_HOST_STAGE }} >> ~/.ssh/known_hosts
+              ;;
+            "prod")
+              echo "${{ secrets.SSH_PRIVATE_KEY_PROD }}" > ~/.ssh/id_rsa
+              ssh-keyscan -H ${{ secrets.SSH_HOST_PROD }} >> ~/.ssh/known_hosts
+              ;;
+            *)
+              echo "Unknown environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+          
+          chmod 600 ~/.ssh/id_rsa
+          
+      - name: Deploy to ${{ inputs.environment }}
+        run: |
+          case "${{ inputs.environment }}" in
+            "dev")
+              REMOTE="${{ secrets.SSH_USER_DEV }}@${{ secrets.SSH_HOST_DEV }}"
+              ;;
+            "stage")
+              REMOTE="${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }}"
+              ;;
+            "prod")
+              REMOTE="${{ secrets.SSH_USER_PROD }}@${{ secrets.SSH_HOST_PROD }}"
+              ;;
+            *)
+              echo "Unknown environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+          
+          case "${{ inputs.deploy_type }}" in
+            "all")
+              just deploy remote="$REMOTE"
+              ;;
+            "client")
+              just deploy-client remote="$REMOTE"
+              ;;
+            "server")
+              just deploy-server remote="$REMOTE"
+              ;;
+            *)
+              echo "Unknown deploy type: ${{ inputs.deploy_type }}"
+              exit 1
+              ;;
+          esac
+
