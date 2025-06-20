@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -47,8 +48,16 @@ func (s *SyftBoxURL) String() string {
 
 	// Add query parameters if they exist
 	if len(s.QueryParams) > 0 {
+		// Sort query params by key lexicographically to ensure consistent ordering
+		sortedKeys := make([]string, 0, len(s.QueryParams))
+		for key := range s.QueryParams {
+			sortedKeys = append(sortedKeys, key)
+		}
+		sort.Strings(sortedKeys)
+
 		queryParams := make([]string, 0, len(s.QueryParams))
-		for key, value := range s.QueryParams {
+		for _, key := range sortedKeys {
+			value := s.QueryParams[key]
 			queryParams = append(queryParams, fmt.Sprintf("%s=%s", key, url.QueryEscape(value)))
 		}
 		baseURL += "?" + strings.Join(queryParams, "&")

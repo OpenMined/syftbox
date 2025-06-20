@@ -41,7 +41,7 @@ func (m *BlobMsgStore) DeleteMsg(ctx context.Context, path string) error {
 }
 
 func (m *BlobMsgStore) StoreMsg(ctx context.Context, path string, msg syftmsg.SyftRPCMessage) error {
-	msgBytes, err := json.Marshal(msg)
+	msgBytes, err := msg.MarshalJSON()
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
