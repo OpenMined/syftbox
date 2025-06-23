@@ -214,55 +214,24 @@ build-all:
     goreleaser release --snapshot --clean
 
 [group('deploy')]
-deploy-client remote: # build-all
+deploy-client remote: build-all
     #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
     
-    # Debug the remote parameter
-    echo "=== Remote parameter debug ==="
-    echo "Remote value: '{{ remote }}'"
-    echo "Remote type: $(echo '{{ remote }}' | wc -c) characters"
-    
-    # Debug SSH setup
-    echo "=== SSH Debug in just ==="
-    ls -la ~/.ssh/
-    echo "=== Testing SSH connection from just ==="
-    ssh -v -o ConnectTimeout=10 {{ remote }} "echo 'SSH test from just successful'"
-    
-    echo "test" > test.txt
-    scp test.txt {{ remote }}:/home/azureuser/test.txt
-    ssh {{ remote }} "cat /home/azureuser/test.txt"
-    ssh {{ remote }} "rm -fv /home/azureuser/test.txt"
-    ssh {{ remote }} "touch /home/azureuser/test.txt"
-    ssh {{ remote }} "cat /home/azureuser/test.txt"
-    ssh {{ remote }} "rm -fv /home/azureuser/test.txt"
-    
-    # rm -rf releases && mkdir releases
-    # cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
-    # ssh {{ remote }} "rm -rfv /home/azureuser/releases.new && mkdir -p /home/azureuser/releases.new"
-    # scp -r ./releases/* {{ remote }}:/home/azureuser/releases.new/
-    # ssh {{ remote }} "rm -rfv /home/azureuser/releases/ && mv -fv /home/azureuser/releases.new/ /home/azureuser/releases/"
+    rm -rf releases && mkdir releases
+    cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
+    ssh {{ remote }} "rm -rfv /home/azureuser/releases.new && mkdir -p /home/azureuser/releases.new"
+    scp -r ./releases/* {{ remote }}:/home/azureuser/releases.new/
+    ssh {{ remote }} "rm -rfv /home/azureuser/releases/ && mv -fv /home/azureuser/releases.new/ /home/azureuser/releases/"
 
 [group('deploy')]
 deploy-server remote: build-server
     #!/bin/bash
-
-    echo "=== Remote parameter debug ==="
-    echo "Remote value: '{{ remote }}'"
-    echo "Remote type: $(echo '{{ remote }}' | wc -c) characters"
-
     echo "Deploying syftbox server to {{ _cyan }}{{ remote }}{{ _nc }}"
-    echo "Hello" > test-server.txt
-    scp test-server.txt {{ remote }}:/home/azureuser/test-server.txt
-    ssh {{ remote }} "cat /home/azureuser/test-server.txt"
-    ssh {{ remote }} "rm -fv /home/azureuser/test-server.txt"
-    ssh {{ remote }} "touch /home/azureuser/test-server.txt"
-    ssh {{ remote }} "cat /home/azureuser/test-server.txt"
-    ssh {{ remote }} "rm -fv /home/azureuser/test-server.txt"
 
-    # scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
-    # ssh {{ remote }} "rm -fv /home/azureuser/syftbox_server && mv -fv /home/azureuser/syftbox_server_new /home/azureuser/syftbox_server"
-    # ssh {{ remote }} "sudo systemctl restart syftbox"
+    scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
+    ssh {{ remote }} "rm -fv /home/azureuser/syftbox_server && mv -fv /home/azureuser/syftbox_server_new /home/azureuser/syftbox_server"
+    ssh {{ remote }} "sudo systemctl restart syftbox"
 
 [group('deploy')]
 deploy remote: (deploy-client remote) (deploy-server remote)
