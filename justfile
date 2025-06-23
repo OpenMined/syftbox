@@ -327,10 +327,19 @@ show-version:
     #!/bin/bash
     set -eou pipefail
     echo -e "{{ _cyan }}Current version information:{{ _nc }}"
-    echo "  SVU current: $(svu current | sed 's/^v//')"
-    echo "  SVU next patch: $(svu patch | sed 's/^v//')"
-    echo "  SVU next minor: $(svu minor | sed 's/^v//')"
-    echo "  SVU next major: $(svu major | sed 's/^v//')"
+    
+    # Try to get current version, handle errors gracefully
+    current_version=$(svu current 2>/dev/null || echo "No valid version tags found")
+    echo "  SVU current: $current_version"
+    
+    # Try to get next versions, handle errors gracefully
+    next_patch=$(svu patch 2>/dev/null || echo "Error")
+    next_minor=$(svu minor 2>/dev/null || echo "Error")
+    next_major=$(svu major 2>/dev/null || echo "Error")
+    
+    echo "  SVU next patch: $next_patch"
+    echo "  SVU next minor: $next_minor"
+    echo "  SVU next major: $next_major"
     echo "  Git tags:"
     git tag --sort=-version:refname | head -5
 
@@ -339,46 +348,58 @@ commit-and-tag version:
     #!/bin/bash
     set -eou pipefail
     
-    if [ -z "{{ version }}" ]; then
+    # Extract version from parameter (handle both "version=0.5.1" and "0.5.1" formats)
+    version_value="{{ version }}"
+    if [[ "$version_value" == version=* ]]; then
+        version_value="${version_value#version=}"
+    fi
+    
+    if [ -z "$version_value" ]; then
         echo -e "{{ _red }}Error: version parameter is required{{ _nc }}"
         echo "Usage: just commit-and-tag version=1.2.3"
         exit 1
     fi
     
-    echo -e "{{ _cyan }}Committing and tagging version {{ version }}...{{ _nc }}"
+    echo -e "{{ _cyan }}Committing and tagging version $version_value...{{ _nc }}"
     
     # Check if there are changes to commit
     if git diff --quiet && git diff --cached --quiet; then
         echo -e "{{ _yellow }}No changes to commit{{ _nc }}"
     else
         git add .
-        git commit -m "chore: bump version to {{ version }}"
+        git commit -m "chore: bump version to $version_value"
         echo -e "{{ _green }}✓ Committed changes{{ _nc }}"
     fi
     
     # Create tag
-    git tag v{{ version }}
-    echo -e "{{ _green }}✓ Tagged v{{ version }}{{ _nc }}"
+    git tag v$version_value
+    echo -e "{{ _green }}✓ Tagged v$version_value{{ _nc }}"
     
-    echo -e "{{ _green }}Version {{ version }} has been committed and tagged!{{ _nc }}"
+    echo -e "{{ _green }}Version $version_value has been committed and tagged!{{ _nc }}"
 
 [group('version')]
 update-version-files version:
     #!/bin/bash
     set -eou pipefail
     
-    if [ -z "{{ version }}" ]; then
+    # Extract version from parameter (handle both "version=0.5.1" and "0.5.1" formats)
+    version_value="{{ version }}"
+    if [[ "$version_value" == version=* ]]; then
+        version_value="${version_value#version=}"
+    fi
+    
+    if [ -z "$version_value" ]; then
         echo -e "{{ _red }}Error: version parameter is required{{ _nc }}"
         echo "Usage: just update-version-files version=1.2.3"
         exit 1
     fi
     
-    echo -e "{{ _cyan }}Updating version to {{ version }} in all files...{{ _nc }}"
+    echo -e "{{ _cyan }}Updating version to $version_value in all files...{{ _nc }}"
     
     # Update goreleaser.yaml
-    sed -i "s/-X github.com\/openmined\/syftbox\/internal\/version.Version=.*/-X github.com\/openmined\/syftbox\/internal\/version.Version={{ version }}/g" .goreleaser.yaml
+    sed -i "s/-X github.com\/openmined\/syftbox\/internal\/version.Version=.*/-X github.com\/openmined\/syftbox\/internal\/version.Version=$version_value/g" .goreleaser.yaml
     echo -e "{{ _green }}✓ Updated .goreleaser.yaml{{ _nc }}"
     
     # Update version.go
-    sed -i "s/Version = \".*\"/Version = \"{{ version }}\"/" internal/version/version.go
+    sed -i "s/Version = \".*\"/Version = \"$version_value\"/" internal/version/version.go
     echo -e "{{ _green }}✓ Updated internal/version/version.go{{ _nc }}"
