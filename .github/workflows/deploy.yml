@@ -63,19 +63,15 @@ jobs:
           chmod 700 ~/.ssh
           chmod 600 ~/.ssh/id_rsa
 
-          # Debug: Check if key file exists and has correct format
-          ls -la ~/.ssh/
-          head -3 ~/.ssh/id_rsa
-
       - name: Deploy to ${{ inputs.environment }}
         run: |
           case "${{ inputs.environment }}" in
             "dev")
               ssh -v -o ConnectTimeout=10 ${{ secrets.SSH_USER_DEV }}@${{ secrets.SSH_HOST_DEV }} "echo 'SSH test successful'"
-              ;;
               REMOTE="${{ secrets.SSH_USER_DEV }}@${{ secrets.SSH_HOST_DEV }}"
               ;;
             "stage")
+              ssh -v -o ConnectTimeout=10 ${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }} "echo 'SSH test successful'"
               REMOTE="${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }}"
               ;;
             *)
@@ -84,4 +80,4 @@ jobs:
               ;;
           esac
           
-          just deploy remote="$REMOTE"
+          # just deploy remote="$REMOTE"
