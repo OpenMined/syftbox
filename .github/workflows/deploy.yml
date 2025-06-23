@@ -92,4 +92,4 @@ jobs:
               ;;
           esac
           
-          just deploy remote="$REMOTE"
+          just deploy $REMOTE
