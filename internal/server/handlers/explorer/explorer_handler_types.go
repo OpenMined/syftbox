@@ -4,9 +4,11 @@ import "github.com/openmined/syftbox/internal/server/blob"
 
 // indexData contains data for the index template
 type indexData struct {
-	Path    string
-	Folders []string
-	Files   []*blob.BlobInfo
+	Path        string
+	Folders     []string
+	Files       []*blob.BlobInfo
+	IsSubdomain bool   // Whether this is served via subdomain
+	BasePath    string // Base path for links (empty for subdomain, "/datasites" for direct)
 }
 
 // directoryContents holds the result of listing a directory

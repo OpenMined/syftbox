@@ -3,6 +3,7 @@ package blob
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/server/acl"
@@ -52,4 +53,29 @@ func (h *BlobHandler) checkPermissions(key string, user string, access acl.Acces
 	}
 
 	return nil
+}
+
+// IsReservedPath checks if a path contains reserved system paths
+func IsReservedPath(path string) bool {
+	// Clean the path
+	path = datasite.CleanPath(path)
+	
+	// Extract the part after the datasite name
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		return false
+	}
+	
+	// Skip the datasite name (email) and check subsequent parts
+	for i := 1; i < len(parts); i++ {
+		part := strings.ToLower(parts[i])
+		// Check for reserved paths
+		if part == "api" || strings.HasPrefix(part, "api/") ||
+		   part == ".well-known" || strings.HasPrefix(part, ".well-known/") ||
+		   part == "_internal" || strings.HasPrefix(part, "_internal/") {
+			return true
+		}
+	}
+	
+	return false
 }

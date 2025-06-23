@@ -33,6 +33,18 @@ func (h *BlobHandler) UploadPresigned(ctx *gin.Context) {
 			continue
 		}
 
+		// Check for reserved paths
+		if IsReservedPath(key) {
+			errors = append(errors, &BlobAPIError{
+				SyftAPIError: api.SyftAPIError{
+					Code:    api.CodeDatasiteInvalidPath,
+					Message: "reserved path",
+				},
+				Key: key,
+			})
+			continue
+		}
+
 		if err := h.checkPermissions(key, user, acl.AccessWrite); err != nil {
 			errors = append(errors, &BlobAPIError{
 				SyftAPIError: api.SyftAPIError{

@@ -30,7 +30,10 @@ func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 
 	aclSvc := acl.NewACLService()
 
-	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc)
+	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc, config.HTTP.Domain)
+
+	// Set up blob change callback for dynamic vanity domain reloading
+	blobSvc.SetOnBlobChangeCallback(datasiteSvc.HandleBlobChange)
 
 	authSvc := auth.NewAuthService(&config.Auth, emailSvc)
 

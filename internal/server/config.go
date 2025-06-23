@@ -62,6 +62,7 @@ type HTTPConfig struct {
 	Addr         string `mapstructure:"addr"`
 	CertFilePath string `mapstructure:"cert_file"`
 	KeyFilePath  string `mapstructure:"key_file"`
+	Domain       string `mapstructure:"domain"` // Main domain for subdomain routing (e.g., "syftbox.net")
 }
 
 // LogValue for HTTPConfig
@@ -70,6 +71,7 @@ func (hc HTTPConfig) LogValue() slog.Value {
 		slog.String("address", hc.Addr),
 		slog.String("cert_file", hc.CertFilePath),
 		slog.String("key_file", hc.KeyFilePath),
+		slog.String("domain", hc.Domain),
 	)
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
+	"github.com/openmined/syftbox/internal/server/middlewares"
 )
 
 //go:embed index.html.tmpl
@@ -56,9 +57,51 @@ func New(svc *blob.BlobService, acl *acl.ACLService) *ExplorerHandler {
 }
 
 func (e *ExplorerHandler) Handler(c *gin.Context) {
-	path := strings.TrimPrefix(c.Param("filepath"), "/")
+	// For subdomain requests that were rewritten, use the full request path
+	// Otherwise use the filepath parameter from the route
+	path := ""
+	if middlewares.IsSubdomainRequest(c) {
+		// Use the rewritten path, removing the leading /datasites/
+		path = strings.TrimPrefix(c.Request.URL.Path, "/datasites/")
+	} else {
+		path = strings.TrimPrefix(c.Param("filepath"), "/")
+	}
+	
+	// For subdomain requests, we need to handle the path differently
+	// The middleware has already rewritten the path to /datasites/{email}/public/*
+	// but we need to be aware of this for proper display and navigation
+	if middlewares.IsSubdomainRequest(c) {
+		// The path already includes the datasite prefix from the middleware rewrite
+		// We need to store this information for proper link generation in templates
+		c.Set("subdomain_mode", true)
+		if email, exists := middlewares.GetSubdomainEmail(c); exists {
+			c.Set("datasite_email", email)
+		}
+	}
+	
 	contents := e.listContents(path)
 	if contents.IsDir || contents.EmptyDir() {
+		// Check if index.html exists in this directory
+		indexPath := path
+		if !strings.HasSuffix(indexPath, "/") {
+			indexPath += "/"
+		}
+		indexPath += "index.html"
+		
+		// Try to find index.html in the directory
+		if _, exists := e.blob.Index().Get(indexPath); exists {
+			// Check if user has access to the index.html
+			if err := e.acl.CanAccess(
+				&acl.User{ID: aclspec.Everyone},
+				&acl.File{Path: indexPath},
+				acl.AccessRead,
+			); err == nil {
+				// Serve index.html instead of directory listing
+				e.serveFile(c, indexPath)
+				return
+			}
+		}
+		// Show directory listing
 		e.serveDir(c, path, contents)
 	} else {
 		e.serveFile(c, path)
@@ -80,12 +123,10 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 
 	var filterPrefix string
 	if datasite == "" {
-		// root index
-		filterPrefix = "*/public/" + aclspec.AclFileName
-	} else if !strings.HasPrefix(prefix, datasite+"/public/") {
-		// force public dirs
-		filterPrefix = datasite + "/public/"
+		// root index - show all datasites with ACL files
+		filterPrefix = "*/" + aclspec.AclFileName
 	} else {
+		// Show content based on the actual path, let ACL system control access
 		filterPrefix = prefix
 	}
 
@@ -152,10 +193,19 @@ func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *direct
 		path = "/" + path
 	}
 
+	// Check if this is a subdomain request
+	isSubdomain := middlewares.IsSubdomainRequest(c)
+	basePath := "/datasites"
+	if isSubdomain {
+		basePath = ""
+	}
+
 	data := indexData{
-		Path:    path,
-		Folders: contents.Folders,
-		Files:   contents.Files,
+		Path:        path,
+		Folders:     contents.Folders,
+		Files:       contents.Files,
+		IsSubdomain: isSubdomain,
+		BasePath:    basePath,
 	}
 
 	// Generate an HTML response

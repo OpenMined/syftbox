@@ -237,5 +237,33 @@ setup-toolchain:
     go install filippo.io/mkcert@latest
 
 [group('utils')]
+email-hash email domain="":
+    #!/bin/bash
+    set -eou pipefail
+    
+    if [ -z "{{ email }}" ]; then
+        echo "Usage: just email-hash <email> [domain]"
+        echo "Examples:"
+        echo "  just email-hash alice@example.com"
+        echo "  just email-hash alice@example.com syftbox.com"
+        exit 1
+    fi
+    
+    # Generate the hash (first 16 chars of sha256)
+    hash=$(echo -n "{{ email }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]' | shasum -a 256 | cut -c1-16)
+    
+    echo "Email: {{ email }}"
+    echo "Hash: $hash"
+    echo ""
+    
+    if [ -z "{{ domain }}" ]; then
+        # No domain provided, use local development URL
+        echo "URL: http://$hash.syftbox.local:8080/"
+    else
+        # Domain provided, use HTTPS
+        echo "URL: https://$hash.{{ domain }}/"
+    fi
+
+[group('utils')]
 clean:
     rm -rf .data .out releases certs cover.out

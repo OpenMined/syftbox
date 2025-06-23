@@ -77,6 +77,18 @@ func (b *BlobService) Index() *BlobIndex {
 	return b.index
 }
 
+// getHooks returns the backend hooks (assumes S3Backend for now)
+func (b *BlobService) getHooks() *blobBackendHooks {
+	return b.backend.hooks
+}
+
+// SetOnBlobChangeCallback sets the callback function for blob changes
+func (b *BlobService) SetOnBlobChangeCallback(callback func(key string)) {
+	if hooks := b.getHooks(); hooks != nil {
+		hooks.OnBlobChange = callback
+	}
+}
+
 func (b *BlobService) afterPutObject(_ *PutObjectParams, resp *PutObjectResponse) {
 	if err := b.index.Set(&BlobInfo{
 		Key:          resp.Key,
@@ -87,6 +99,11 @@ func (b *BlobService) afterPutObject(_ *PutObjectParams, resp *PutObjectResponse
 		slog.Error("update index", "hook", "PutObject", "key", resp.Key, "error", err)
 	} else {
 		slog.Info("update index", "hook", "PutObject", "key", resp.Key)
+	}
+	
+	// Call blob change callback if set
+	if hooks := b.getHooks(); hooks != nil && hooks.OnBlobChange != nil {
+		hooks.OnBlobChange(resp.Key)
 	}
 }
 
