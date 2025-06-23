@@ -62,21 +62,7 @@ jobs:
           
           chmod 700 ~/.ssh
           chmod 600 ~/.ssh/id_rsa
-          
-          # Start SSH agent and add the key
-          eval "$(ssh-agent -s)"
-          ssh-add ~/.ssh/id_rsa
-          
-          # Test SSH connection
-          case "${{ inputs.environment }}" in
-            "dev")
-              ssh -v -o ConnectTimeout=10 ${{ secrets.SSH_USER_DEV }}@${{ secrets.SSH_HOST_DEV }} "echo 'SSH test successful'"
-              ;;
-            "stage")
-              ssh -v -o ConnectTimeout=10 ${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }} "echo 'SSH test successful'"
-              ;;
-          esac
-
+            
       - name: Deploy to ${{ inputs.environment }}
         run: |
           case "${{ inputs.environment }}" in
