@@ -214,9 +214,10 @@ build-all:
     goreleaser release --snapshot --clean
 
 [group('deploy')]
-deploy-client remote="syftbox-yash": build-all
+deploy-client remote: build-all
     #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
+    
     rm -rf releases && mkdir releases
     cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
     ssh {{ remote }} "rm -rfv /home/azureuser/releases.new && mkdir -p /home/azureuser/releases.new"
@@ -224,15 +225,16 @@ deploy-client remote="syftbox-yash": build-all
     ssh {{ remote }} "rm -rfv /home/azureuser/releases/ && mv -fv /home/azureuser/releases.new/ /home/azureuser/releases/"
 
 [group('deploy')]
-deploy-server remote="syftbox-yash": build-server
+deploy-server remote: build-server
     #!/bin/bash
     echo "Deploying syftbox server to {{ _cyan }}{{ remote }}{{ _nc }}"
+
     scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
     ssh {{ remote }} "rm -fv /home/azureuser/syftbox_server && mv -fv /home/azureuser/syftbox_server_new /home/azureuser/syftbox_server"
     ssh {{ remote }} "sudo systemctl restart syftbox"
 
 [group('deploy')]
-deploy remote="syftbox-yash": (deploy-client remote) (deploy-server remote)
+deploy remote: (deploy-client remote) (deploy-server remote)
     echo "Deployed syftbox client & server to {{ _cyan }}{{ remote }}{{ _nc }}"
 
 [group('utils')]
