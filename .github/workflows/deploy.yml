@@ -1,5 +1,11 @@
 name: Syftbox Deploy
 
+# This workflow deploys Syftbox to different environments and optionally manages versioning.
+# Version management options:
+# - none: Deploy without version changes
+# - release: Update version files, commit, and tag automatically
+# Version types: patch, minor, major (semantic versioning)
+
 on:
   workflow_dispatch:
     inputs:
@@ -21,6 +27,22 @@ on:
           - all
           - client
           - server
+      version_action:
+        description: 'Version management action'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - release
+      version_type:
+        description: 'Version type (required if version_action is release)'
+        required: false
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 jobs:
   deploy:
@@ -29,6 +51,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for svu to work properly with git history
         
       - name: Setup Go
         uses: actions/setup-go@v4
@@ -46,6 +70,50 @@ jobs:
         
       - name: Setup toolchain
         run: just setup-toolchain
+        
+      - name: Install jq
+        run: brew install jq
+        
+      - name: Setup git config
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git config user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
+        
+      - name: Show current version
+        if: inputs.version_action != 'none'
+        run: |
+          echo "Current version information:"
+          just show-version
+        
+      - name: Handle version management
+        if: inputs.version_action != 'none'
+        run: |
+          # Validate that version_type is provided when version_action is release
+          if [ "${{ inputs.version_action }}" = "release" ]; then
+            if [ -z "${{ inputs.version_type }}" ]; then
+              echo "Error: version_type is required when version_action is release"
+              exit 1
+            fi
+          fi
+          
+          if [ "${{ inputs.version_action }}" = "release" ]; then
+            echo "Releasing version..."
+            just release ${{ inputs.version_type }}
+          fi
+        
+      - name: Push version changes
+        if: inputs.version_action != 'none'
+        run: |
+          git push origin main
+          git push origin --tags
+        
+      - name: Show new version
+        if: inputs.version_action != 'none'
+        run: |
+          echo "New version information:"
+          just show-version
         
       - name: Setup SSH
         run: |
