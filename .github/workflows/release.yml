@@ -97,7 +97,7 @@ jobs:
         
       - name: Install GoReleaser
         run: |
-          brew install goreleaser/tap/goreleaser
+          brew install --cask goreleaser/tap/goreleaser
           goreleaser --version
         
       - name: Setup toolchain
@@ -109,11 +109,12 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY_PROD }}" > ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.SSH_HOST_PROD }} >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_rsa
+          chmod 700 ~/.ssh
           
       - name: Deploy to production
         run: |
           REMOTE="${{ secrets.SSH_USER_PROD }}@${{ secrets.SSH_HOST_PROD }}"
-          just deploy remote="$REMOTE"
+          just deploy $REMOTE
         
       - name: Create release
         uses: ncipollo/release-action@v1

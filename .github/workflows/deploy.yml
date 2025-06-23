@@ -34,7 +34,7 @@ jobs:
         
       - name: Install GoReleaser
         run: |
-          brew install goreleaser/tap/goreleaser
+          brew install --cask goreleaser/tap/goreleaser
           goreleaser --version
 
       - name: Setup toolchain
@@ -60,6 +60,7 @@ jobs:
               ;;
           esac
           
+          chmod 700 ~/.ssh
           chmod 600 ~/.ssh/id_rsa
 
       - name: Deploy to ${{ inputs.environment }}
@@ -77,4 +78,4 @@ jobs:
               ;;
           esac
           
-          just deploy remote="$REMOTE"
+          just deploy $REMOTE
