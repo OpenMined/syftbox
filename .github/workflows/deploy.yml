@@ -1,9 +1,7 @@
 name: Syftbox Deploy
 
-# This workflow deploys Syftbox to different environments and optionally manages versioning.
-# Version management:
-# - Automatically releases version when deploying to production (requires version_type input)
-# - Version types: patch, minor, major (semantic versioning)
+# This workflow deploys Syftbox to development and staging environments.
+# For production releases, use the release.yml workflow instead.
 
 on:
   workflow_dispatch:
@@ -16,34 +14,15 @@ on:
         options:
           - dev
           - stage
-          - prod
-      deploy_type:
-        description: 'What to deploy'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - client
-          - server
-      version_type:
-        description: 'Version type for production releases (patch/minor/major)'
-        required: false
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
 
 jobs:
-  deploy:
+  build-and-deploy:
+    # Build and deploy to target environment
     runs-on: macos-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Required for svu to work properly with git history
         
       - name: Setup Go
         uses: actions/setup-go@v4
@@ -62,51 +41,6 @@ jobs:
       - name: Setup toolchain
         run: just setup-toolchain
         
-      - name: Install jq
-        run: brew install jq
-        
-      - name: Setup git config
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
-          git config user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
-        
-      - name: Show current version
-        run: |
-          echo "Current version information:"
-          just show-version
-        
-      - name: Handle version management (production only)
-        if: inputs.environment == 'prod'
-        run: |
-          # Validate that version_type is provided for production deployments
-          if [ -z "${{ inputs.version_type }}" ]; then
-            echo "Error: version_type is required when deploying to production"
-            exit 1
-          fi
-          
-          echo "Releasing version for production deployment..."
-          just release ${{ inputs.version_type }}
-        
-      - name: Push version changes (production only)
-        if: inputs.environment == 'prod'
-        run: |
-          # Set a new remote URL using HTTPS with the github token
-          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
-
-          # Push the current branch to the remote repo
-          git push origin
-
-          # Push the tag to the remote repo
-          git push origin --tags
-        
-      - name: Show new version (production only)
-        if: inputs.environment == 'prod'
-        run: |
-          echo "New version information:"
-          just show-version
-        
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
@@ -121,10 +55,6 @@ jobs:
               echo "${{ secrets.SSH_PRIVATE_KEY_STAGE }}" > ~/.ssh/id_rsa
               ssh-keyscan -H ${{ secrets.SSH_HOST_STAGE }} >> ~/.ssh/known_hosts
               ;;
-            "prod")
-              echo "${{ secrets.SSH_PRIVATE_KEY_PROD }}" > ~/.ssh/id_rsa
-              ssh-keyscan -H ${{ secrets.SSH_HOST_PROD }} >> ~/.ssh/known_hosts
-              ;;
             *)
               echo "Unknown environment: ${{ inputs.environment }}"
               exit 1
@@ -132,7 +62,7 @@ jobs:
           esac
           
           chmod 600 ~/.ssh/id_rsa
-          
+ 
       - name: Deploy to ${{ inputs.environment }}
         run: |
           case "${{ inputs.environment }}" in
@@ -142,28 +72,10 @@ jobs:
             "stage")
               REMOTE="${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }}"
               ;;
-            "prod")
-              REMOTE="${{ secrets.SSH_USER_PROD }}@${{ secrets.SSH_HOST_PROD }}"
-              ;;
             *)
               echo "Unknown environment: ${{ inputs.environment }}"
               exit 1
               ;;
           esac
           
-          case "${{ inputs.deploy_type }}" in
-            "all")
-              just deploy remote="$REMOTE"
-              ;;
-            "client")
-              just deploy-client remote="$REMOTE"
-              ;;
-            "server")
-              just deploy-server remote="$REMOTE"
-              ;;
-            *)
-              echo "Unknown deploy type: ${{ inputs.deploy_type }}"
-              exit 1
-              ;;
-          esac
-
+          just deploy remote="$REMOTE"
