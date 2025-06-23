@@ -62,7 +62,7 @@ jobs:
           
           chmod 700 ~/.ssh
           chmod 600 ~/.ssh/id_rsa
-            
+
       - name: Deploy to ${{ inputs.environment }}
         run: |
           case "${{ inputs.environment }}" in
