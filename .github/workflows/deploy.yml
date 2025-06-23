@@ -92,7 +92,13 @@ jobs:
       - name: Push version changes (production only)
         if: inputs.environment == 'prod'
         run: |
-          git push origin main
+          # Set a new remote URL using HTTPS with the github token
+          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+
+          # Push the current branch to the remote repo
+          git push origin
+
+          # Push the tag to the remote repo
           git push origin --tags
         
       - name: Show new version (production only)
