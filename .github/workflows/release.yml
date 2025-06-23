@@ -97,7 +97,7 @@ jobs:
         
       - name: Install GoReleaser
         run: |
-          brew install goreleaser/tap/goreleaser
+          brew install --cask goreleaser/tap/goreleaser
           goreleaser --version
         
       - name: Setup toolchain
