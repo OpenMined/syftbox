@@ -214,7 +214,7 @@ build-all:
     goreleaser release --snapshot --clean
 
 [group('deploy')]
-deploy-client remote="syftbox-yash": build-all
+deploy-client remote="syftbox-yash": # build-all
     #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
     
@@ -224,11 +224,19 @@ deploy-client remote="syftbox-yash": build-all
     echo "=== Testing SSH connection from just ==="
     ssh -v -o ConnectTimeout=10 {{ remote }} "echo 'SSH test from just successful'"
     
-    rm -rf releases && mkdir releases
-    cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
-    ssh {{ remote }} "rm -rfv /home/azureuser/releases.new && mkdir -p /home/azureuser/releases.new"
-    scp -r ./releases/* {{ remote }}:/home/azureuser/releases.new/
-    ssh {{ remote }} "rm -rfv /home/azureuser/releases/ && mv -fv /home/azureuser/releases.new/ /home/azureuser/releases/"
+    echo "test" > test.txt
+    scp test.txt {{ remote }}:/home/azureuser/test.txt
+    ssh {{ remote }} "cat /home/azureuser/test.txt"
+    ssh {{ remote }} "rm -fv /home/azureuser/test.txt"
+    ssh {{ remote }} "touch /home/azureuser/test.txt"
+    ssh {{ remote }} "cat /home/azureuser/test.txt"
+    ssh {{ remote }} "rm -fv /home/azureuser/test.txt"
+    
+    # rm -rf releases && mkdir releases
+    # cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
+    # ssh {{ remote }} "rm -rfv /home/azureuser/releases.new && mkdir -p /home/azureuser/releases.new"
+    # scp -r ./releases/* {{ remote }}:/home/azureuser/releases.new/
+    # ssh {{ remote }} "rm -rfv /home/azureuser/releases/ && mv -fv /home/azureuser/releases.new/ /home/azureuser/releases/"
 
 [group('deploy')]
 deploy-server remote="syftbox-yash": build-server
