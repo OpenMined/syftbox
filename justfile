@@ -1,7 +1,3 @@
-SYFTBOX_VERSION := `svu current`
-BUILD_COMMIT := `git rev-parse --short HEAD`
-BUILD_DATE := `date -u +%Y-%m-%dT%H:%M:%SZ`
-BUILD_LD_FLAGS := "-s -w" + " -X github.com/openmined/syftbox/internal/version.Version=" + SYFTBOX_VERSION + " -X github.com/openmined/syftbox/internal/version.Revision=" + BUILD_COMMIT + " -X github.com/openmined/syftbox/internal/version.BuildDate=" + BUILD_DATE
 CLIENT_BUILD_TAGS := "go_json nomsgpack"
 SERVER_BUILD_TAGS := "sonic avx nomsgpack"
 
@@ -179,14 +175,21 @@ test:
 
 [doc('Needs a platform specific compiler. Example: CC="aarch64-linux-musl-gcc" just build-client-target goos=linux goarch=arm64')]
 [group('build')]
-build-client-target goos=`go env GOOS` goarch=`go env GOARCH`:
+build-client-target goos=`go env GOOS` goarch=`go env GOARCH`: version-utils
     #!/bin/bash
     set -eou pipefail
+
+    # Calculate build variables locally
+    SYFTBOX_VERSION=$(svu current 2>/dev/null)
+    echo "SYFTBOX_VERSION: $SYFTBOX_VERSION"
+    BUILD_COMMIT=$(git rev-parse --short HEAD)
+    BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    BUILD_LD_FLAGS="-s -w -X github.com/openmined/syftbox/internal/version.Version=$SYFTBOX_VERSION -X github.com/openmined/syftbox/internal/version.Revision=$BUILD_COMMIT -X github.com/openmined/syftbox/internal/version.BuildDate=$BUILD_DATE"
 
     export GOOS="{{ goos }}"
     export GOARCH="{{ goarch }}"
     export CGO_ENABLED=0
-    export GO_LDFLAGS="$([ '{{ goos }}' = 'windows' ] && echo '-H windowsgui '){{ BUILD_LD_FLAGS }}"
+    export GO_LDFLAGS="$([ '{{ goos }}' = 'windows' ] && echo '-H windowsgui ')$BUILD_LD_FLAGS"
 
     if [ "{{ goos }}" = "darwin" ]; then
         echo "Building for darwin. CGO_ENABLED=1"
@@ -237,14 +240,13 @@ setup-toolchain:
     go install github.com/swaggo/swag/v2/cmd/swag@latest
     go install github.com/bokwoon95/wgo@latest
     go install filippo.io/mkcert@latest
-    go install github.com/caarlos0/svu@latest
 
 [group('utils')]
 clean:
     rm -rf .data .out releases certs cover.out
 
 [group('version')]
-bump type:
+bump type: version-utils
     #!/bin/bash
     set -eou pipefail
 
@@ -294,7 +296,7 @@ bump type:
     echo "  git commit -m \"chore: bump version to $new_version\""
     echo "  git tag v$new_version"
 
-release type:
+release type: version-utils
     #!/bin/bash
     set -eou pipefail
     
@@ -323,7 +325,7 @@ release type:
     echo -e "{{ _green }}✓ Released {{ type }} version $new_version{{ _nc }}"
 
 [group('version')]
-show-version:
+show-version: version-utils
     #!/bin/bash
     set -eou pipefail
     echo -e "{{ _cyan }}Current version information:{{ _nc }}"
@@ -403,3 +405,7 @@ update-version-files version:
     # Update version.go
     sed -i "s/Version = \".*\"/Version = \"$version_value\"/" internal/version/version.go
     echo -e "{{ _green }}✓ Updated internal/version/version.go{{ _nc }}"
+
+[group('version')]
+version-utils:
+    go install github.com/caarlos0/svu@latest
