@@ -1,0 +1,81 @@
+name: Syftbox Deploy
+
+# This workflow deploys Syftbox to development and staging environments.
+# For production releases, use the release.yml workflow instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - stage
+
+jobs:
+  build-and-deploy:
+    # Build and deploy to target environment
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          
+      - name: Install just
+        uses: taiki-e/install-action@just
+        
+      - name: Install goreleaser
+        uses: goreleaser/goreleaser-action@v4
+        with:
+          version: latest
+          args: --version
+        
+      - name: Setup toolchain
+        run: just setup-toolchain
+        
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          
+          # Use environment-specific SSH private key
+          case "${{ inputs.environment }}" in
+            "dev")
+              echo "${{ secrets.SSH_PRIVATE_KEY_DEV }}" > ~/.ssh/id_rsa
+              ssh-keyscan -H ${{ secrets.SSH_HOST_DEV }} >> ~/.ssh/known_hosts
+              ;;
+            "stage")
+              echo "${{ secrets.SSH_PRIVATE_KEY_STAGE }}" > ~/.ssh/id_rsa
+              ssh-keyscan -H ${{ secrets.SSH_HOST_STAGE }} >> ~/.ssh/known_hosts
+              ;;
+            *)
+              echo "Unknown environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+          
+          chmod 600 ~/.ssh/id_rsa
+ 
+      - name: Deploy to ${{ inputs.environment }}
+        run: |
+          case "${{ inputs.environment }}" in
+            "dev")
+              REMOTE="${{ secrets.SSH_USER_DEV }}@${{ secrets.SSH_HOST_DEV }}"
+              ;;
+            "stage")
+              REMOTE="${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }}"
+              ;;
+            *)
+              echo "Unknown environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+          
+          just deploy remote="$REMOTE"
