@@ -1,4 +1,4 @@
-SYFTBOX_VERSION := "0.5.0"
+SYFTBOX_VERSION := `svu current`
 BUILD_COMMIT := `git rev-parse --short HEAD`
 BUILD_DATE := `date -u +%Y-%m-%dT%H:%M:%SZ`
 BUILD_LD_FLAGS := "-s -w" + " -X github.com/openmined/syftbox/internal/version.Version=" + SYFTBOX_VERSION + " -X github.com/openmined/syftbox/internal/version.Revision=" + BUILD_COMMIT + " -X github.com/openmined/syftbox/internal/version.BuildDate=" + BUILD_DATE
@@ -237,7 +237,148 @@ setup-toolchain:
     go install github.com/swaggo/swag/v2/cmd/swag@latest
     go install github.com/bokwoon95/wgo@latest
     go install filippo.io/mkcert@latest
+    go install github.com/caarlos0/svu@latest
 
 [group('utils')]
 clean:
     rm -rf .data .out releases certs cover.out
+
+[group('version')]
+bump type:
+    #!/bin/bash
+    set -eou pipefail
+
+    # Version Management Commands
+    #
+    # This project uses semantic versioning with svu (https://github.com/caarlos0/svu)
+    # for automatic version calculation based on git tags.
+    #
+    # Workflow:
+    # 1. Use `just show-version` to see current version and next versions
+    # 2. Use `just bump type` to update files only (manual commit/tag)
+    # 3. Use `just release type` to update files, commit, and tag automatically
+    # 4. Use `just update-version-files version=X.Y.Z` for custom versions
+    #
+    # Examples:
+    #   just show-version                    # Show current and next versions
+    #   just bump patch                      # Update files to next patch version
+    #   just bump minor                      # Update files to next minor version
+    #   just bump major                      # Update files to next major version
+    #   just release patch                   # Bump, commit, and tag patch version
+    #   just update-version-files version=1.2.3  # Set specific version
+    
+    if [ -z "{{ type }}" ]; then
+        echo -e "{{ _red }}Error: bump type is required{{ _nc }}"
+        echo "Usage: just bump <patch|minor|major>"
+        echo "Examples:"
+        echo "  just bump patch"
+        echo "  just bump minor"
+        echo "  just bump major"
+        exit 1
+    fi
+    
+    # Validate bump type
+    if [[ ! "{{ type }}" =~ ^(patch|minor|major)$ ]]; then
+        echo -e "{{ _red }}Error: Invalid bump type '{{ type }}'{{ _nc }}"
+        echo "Valid types: patch, minor, major"
+        exit 1
+    fi
+    
+    echo -e "{{ _cyan }}Bumping {{ type }} version...{{ _nc }}"
+    new_version=$(svu {{ type }} | sed 's/^v//')
+    echo -e "{{ _green }}New version: $new_version{{ _nc }}"
+    just update-version-files version="$new_version"
+    echo -e "{{ _green }}Version bumped to $new_version{{ _nc }}"
+    echo -e "{{ _yellow }}Don't forget to commit and tag:{{ _nc }}"
+    echo "  git add ."
+    echo "  git commit -m \"chore: bump version to $new_version\""
+    echo "  git tag v$new_version"
+
+release type:
+    #!/bin/bash
+    set -eou pipefail
+    
+    if [ -z "{{ type }}" ]; then
+        echo -e "{{ _red }}Error: release type is required{{ _nc }}"
+        echo "Usage: just release <patch|minor|major>"
+        echo "Examples:"
+        echo "  just release patch"
+        echo "  just release minor"
+        echo "  just release major"
+        exit 1
+    fi
+    
+    # Validate release type
+    if [[ ! "{{ type }}" =~ ^(patch|minor|major)$ ]]; then
+        echo -e "{{ _red }}Error: Invalid release type '{{ type }}'{{ _nc }}"
+        echo "Valid types: patch, minor, major"
+        exit 1
+    fi
+    
+    echo -e "{{ _cyan }}Releasing {{ type }} version...{{ _nc }}"
+    new_version=$(svu {{ type }} | sed 's/^v//')
+    echo -e "{{ _green }}New version: $new_version{{ _nc }}"
+    just update-version-files version="$new_version"
+    just commit-and-tag version="$new_version"
+    echo -e "{{ _green }}✓ Released {{ type }} version $new_version{{ _nc }}"
+
+[group('version')]
+show-version:
+    #!/bin/bash
+    set -eou pipefail
+    echo -e "{{ _cyan }}Current version information:{{ _nc }}"
+    echo "  SVU current: $(svu current | sed 's/^v//')"
+    echo "  SVU next patch: $(svu patch | sed 's/^v//')"
+    echo "  SVU next minor: $(svu minor | sed 's/^v//')"
+    echo "  SVU next major: $(svu major | sed 's/^v//')"
+    echo "  Git tags:"
+    git tag --sort=-version:refname | head -5
+
+[group('version')]
+commit-and-tag version:
+    #!/bin/bash
+    set -eou pipefail
+    
+    if [ -z "{{ version }}" ]; then
+        echo -e "{{ _red }}Error: version parameter is required{{ _nc }}"
+        echo "Usage: just commit-and-tag version=1.2.3"
+        exit 1
+    fi
+    
+    echo -e "{{ _cyan }}Committing and tagging version {{ version }}...{{ _nc }}"
+    
+    # Check if there are changes to commit
+    if git diff --quiet && git diff --cached --quiet; then
+        echo -e "{{ _yellow }}No changes to commit{{ _nc }}"
+    else
+        git add .
+        git commit -m "chore: bump version to {{ version }}"
+        echo -e "{{ _green }}✓ Committed changes{{ _nc }}"
+    fi
+    
+    # Create tag
+    git tag v{{ version }}
+    echo -e "{{ _green }}✓ Tagged v{{ version }}{{ _nc }}"
+    
+    echo -e "{{ _green }}Version {{ version }} has been committed and tagged!{{ _nc }}"
+
+[group('version')]
+update-version-files version:
+    #!/bin/bash
+    set -eou pipefail
+    
+    if [ -z "{{ version }}" ]; then
+        echo -e "{{ _red }}Error: version parameter is required{{ _nc }}"
+        echo "Usage: just update-version-files version=1.2.3"
+        exit 1
+    fi
+    
+    echo -e "{{ _cyan }}Updating version to {{ version }} in all files...{{ _nc }}"
+    
+    # Update goreleaser.yaml
+    sed -i "s/-X github.com\/openmined\/syftbox\/internal\/version.Version=.*/-X github.com\/openmined\/syftbox\/internal\/version.Version={{ version }}/g" .goreleaser.yaml
+    echo -e "{{ _green }}✓ Updated .goreleaser.yaml{{ _nc }}"
+    
+    # Update version.go
+    sed -i "s/Version = \".*\"/Version = \"{{ version }}\"/" internal/version/version.go
+    echo -e "{{ _green }}✓ Updated internal/version/version.go{{ _nc }}"
