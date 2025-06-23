@@ -217,6 +217,13 @@ build-all:
 deploy-client remote="syftbox-yash": build-all
     #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
+    
+    # Debug SSH setup
+    echo "=== SSH Debug in just ==="
+    ls -la ~/.ssh/
+    echo "=== Testing SSH connection from just ==="
+    ssh -v -o ConnectTimeout=10 {{ remote }} "echo 'SSH test from just successful'"
+    
     rm -rf releases && mkdir releases
     cp -r .out/syftbox_client_*.{tar.gz,zip} releases/
     ssh {{ remote }} "rm -rfv /home/azureuser/releases.new && mkdir -p /home/azureuser/releases.new"
