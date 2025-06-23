@@ -32,12 +32,11 @@ jobs:
       - name: Install just
         uses: taiki-e/install-action@just
         
-      - name: Install goreleaser
-        uses: goreleaser/goreleaser-action@v4
-        with:
-          version: latest
-          args: --version
-        
+      - name: Install GoReleaser
+        run: |
+          brew install goreleaser/tap/goreleaser
+          goreleaser --version
+
       - name: Setup toolchain
         run: just setup-toolchain
         
@@ -62,7 +61,7 @@ jobs:
           esac
           
           chmod 600 ~/.ssh/id_rsa
- 
+
       - name: Deploy to ${{ inputs.environment }}
         run: |
           case "${{ inputs.environment }}" in
