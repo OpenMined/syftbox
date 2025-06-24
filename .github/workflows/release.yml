@@ -29,9 +29,9 @@ jobs:
           fetch-depth: 0  # Required for svu to work properly with git history
         
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.24.3'
           
       - name: Install just
         uses: taiki-e/install-action@just
