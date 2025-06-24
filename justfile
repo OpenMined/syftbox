@@ -375,9 +375,16 @@ commit-and-tag version:
         echo -e "{{ _green }}✓ Committed changes{{ _nc }}"
     fi
     
-    # Create tag
-    git tag v$version_value
-    echo -e "{{ _green }}✓ Tagged v$version_value{{ _nc }}"
+    # Check if tag already exists and force update it
+    if git tag -l "v$version_value" | grep -q "v$version_value"; then
+        echo -e "{{ _yellow }}Tag v$version_value already exists. Force updating...{{ _nc }}"
+        git tag -f v$version_value
+        echo -e "{{ _green }}✓ Force updated tag v$version_value{{ _nc }}"
+    else
+        # Create new tag
+        git tag v$version_value
+        echo -e "{{ _green }}✓ Created tag v$version_value{{ _nc }}"
+    fi
     
     echo -e "{{ _green }}Version $version_value has been committed and tagged!{{ _nc }}"
 
