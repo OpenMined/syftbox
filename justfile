@@ -408,7 +408,7 @@ update-version-files version:
     echo -e "{{ _cyan }}Updating version to $version_value in all files...{{ _nc }}"
     
     # Update version.go
-    sed -i "s/Version = \".*\"/Version = \"$version_value\"/" internal/version/version.go
+    sed -i "s/Version = \".*\"/Version = \"$version_value-dev\"/" internal/version/version.go
     echo -e "{{ _green }}✓ Updated internal/version/version.go{{ _nc }}"
 
 [group('version')]
