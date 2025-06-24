@@ -61,7 +61,7 @@ func IsReservedPath(path string) bool {
 	path = datasite.CleanPath(path)
 	
 	// Extract the part after the datasite name
-	parts := strings.Split(path, "/")
+	parts := strings.Split(path, datasite.PathSep)
 	if len(parts) < 2 {
 		return false
 	}
@@ -70,9 +70,7 @@ func IsReservedPath(path string) bool {
 	for i := 1; i < len(parts); i++ {
 		part := strings.ToLower(parts[i])
 		// Check for reserved paths
-		if part == "api" || strings.HasPrefix(part, "api/") ||
-		   part == ".well-known" || strings.HasPrefix(part, ".well-known/") ||
-		   part == "_internal" || strings.HasPrefix(part, "_internal/") {
+		if part == "api" || part == ".well-known" || part == "_internal" {
 			return true
 		}
 	}
