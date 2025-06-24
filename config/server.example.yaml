@@ -24,7 +24,7 @@ auth:
   # whether to enable auth
   enabled: true
   # issuer of the JWT tokens (required)
-  token_issuer: https://example.com
+  token_issuer: https://test.syftbox.net
   # secret for the refresh token (required)
   # recommended to use SYFTBOX_AUTH_REFRESH_TOKEN_SECRET env var
   refresh_token_secret: refresh_token_secret

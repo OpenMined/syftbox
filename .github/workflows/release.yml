@@ -1,0 +1,148 @@
+name: Syftbox Release
+
+# This workflow creates a new release and deploys to production.
+# For dev/stage deployments, use the deploy.yml workflow instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version type for the release'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  version:
+    # Handle version bumping and tagging
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.bump-version.outputs.version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for svu to work properly with git history
+          fetch-tags: true
+      - name: Show git tags
+        run: |
+          git tag --sort=-version:refname | head -5
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          
+      - name: Install just
+        uses: taiki-e/install-action@just
+        
+      - name: Install svu
+        run: go install github.com/caarlos0/svu@latest
+                
+      - name: Install jq
+        run: brew install jq
+        
+      - name: Setup git config
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git config user.name "$(gh api /users/${GITHUB_ACTOR} | jq .name -r)"
+        
+      - name: Show current version
+        run: |
+          echo "Current version information:"
+          just show-version
+        
+      - name: Bump version
+        id: bump-version
+        run: |
+          echo "Releasing version for production deployment..."
+          just release ${{ inputs.version_type }}
+          version=$(git describe --tags --abbrev=0)
+          echo "version=${version}" >> $GITHUB_OUTPUT
+      - name: Push version changes
+        run: |
+          # Set a new remote URL using HTTPS with the github token
+          git remote set-url origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+
+          # Push the current branch to the remote repo
+          git push origin
+
+          # Push the tag to the remote repo
+          git push origin --tags
+        
+      - name: Show new version
+        run: |
+          echo "New version information:"
+          just show-version
+
+  build-and-deploy:
+    needs: version
+    # Build and deploy to production
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for git describe to work properly with git history
+          fetch-tags: true
+
+      - name: Validate git tags
+        run: |
+          # if not, the version in the output of needs.version.outputs.version is not a tag
+          # and the release should fail.
+          if [ "${{ needs.version.outputs.version }}" != "$(git describe --tags --abbrev=0)" ]; then
+            echo "Error: The version in the output of needs.version.outputs.version is not a tag"
+            echo "Expected: ${{ needs.version.outputs.version }}"
+            echo "Actual: $(git describe --tags --abbrev=0)"
+            exit 1
+          fi
+        
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.3'
+          
+      - name: Install just
+        uses: taiki-e/install-action@just
+        
+      - name: Install GoReleaser
+        run: |
+          brew install --cask goreleaser/tap/goreleaser
+          goreleaser --version
+        
+      - name: Setup toolchain
+        run: just setup-toolchain
+        
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY_PROD }}" > ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SSH_HOST_PROD }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_rsa
+          chmod 700 ~/.ssh
+          
+      - name: Deploy to production
+        run: |
+          REMOTE="${{ secrets.SSH_USER_PROD }}@${{ secrets.SSH_HOST_PROD }}"
+          just deploy $REMOTE
+        
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.version.outputs.version }}
+          name: ${{ needs.version.outputs.version }}
+          draft: true
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          makeLatest: true
+          generateReleaseNotes: true
+          artifacts: |
+            releases/*.tar.gz
+            releases/*.zip

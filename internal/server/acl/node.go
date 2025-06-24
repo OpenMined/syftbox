@@ -71,6 +71,13 @@ func (n *ACLNode) SetChild(key string, child *ACLNode) {
 	n.version++
 }
 
+// GetChildCount returns the number of children for the node.
+func (n *ACLNode) GetChildCount() int {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return len(n.children)
+}
+
 // DeleteChild deletes the child for the node.
 func (n *ACLNode) DeleteChild(key string) {
 	n.mu.Lock()
@@ -106,9 +113,12 @@ func (n *ACLNode) SetRules(rules []*aclspec.Rule, terminal bool) {
 			})
 		}
 		n.rules = aclRules
+	} else {
+		// Clear rules if empty
+		n.rules = nil
 	}
 
-	// set the rules and terminal flag
+	// set the terminal flag
 	n.terminal = terminal
 
 	// increment the version
@@ -129,17 +139,17 @@ func (n *ACLNode) FindBestRule(path string) (*ACLRule, error) {
 	defer n.mu.RUnlock()
 
 	if n.rules == nil {
-		return nil, ErrNoRuleFound
+		return nil, ErrNoRule
 	}
 
-	// find the best matching rule
+	// find the best matching rule (rules are already sorted by specificity)
 	for _, aclRule := range n.rules {
 		if ok, _ := doublestar.Match(aclRule.fullPattern, path); ok {
 			return aclRule, nil
 		}
 	}
 
-	return nil, ErrNoRuleFound
+	return nil, ErrNoRule
 }
 
 // GetOwner returns the owner of the node.
