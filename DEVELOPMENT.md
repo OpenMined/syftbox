@@ -144,3 +144,62 @@ just build-client-target linux amd64
 # Or directly (non-prod build for current platform):
 go build -o .out/syftbox_client ./cmd/client
 ```
+
+### Release and Deployment
+
+#### Production Release
+
+**Prerequisites:**
+- Repository write access
+- SSH keys configured for production
+
+**Steps:**
+1. **Prepare**
+   ```bash
+   just show-version
+   git status  # ensure clean
+   git pull origin main
+   ```
+
+2. **Release**
+   - Go to [GitHub Actions](https://github.com/OpenMined/syftbox/actions)
+   - Select "Syftbox Release" workflow
+   - Choose version type: `patch`, `minor`, or `major`
+   - Click "Run workflow"
+
+3. **Verify**
+   - Check [releases page](https://github.com/OpenMined/syftbox/releases)
+   - Monitor production environment
+
+#### Development/Staging Deployment
+
+**Steps:**
+1. **Prepare**
+   ```bash
+   just test
+   ```
+
+2. **Deploy**
+   - Go to [GitHub Actions](https://github.com/OpenMined/syftbox/actions)
+   - Select "Syftbox Deploy" workflow
+   - Choose environment: `dev` or `stage`
+   - Click "Run workflow"
+
+#### Version Management
+
+**Version Types:**
+- **Patch**: Bug fixes (1.2.3 → 1.2.4)
+- **Minor**: New features (1.2.3 → 1.3.0)
+- **Major**: Breaking changes (1.2.3 → 2.0.0)
+
+**Local Commands:**
+```bash
+just show-version          # Show current version
+just bump patch|minor|major # Update version files
+just release patch|minor|major # Bump, commit, and tag
+```
+
+**Manual Deployment:**
+```bash
+just deploy user@hostname
+```
