@@ -47,4 +47,6 @@ Verify your setup by running the tests:
 just test
 ```
 
-See the [development guide](./DEVELOPMENT.md) for more details
+## Documentation
+
+- [Development Guide](./DEVELOPMENT.md) - Guide for developers contributing to SyftBox
