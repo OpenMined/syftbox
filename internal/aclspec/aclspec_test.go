@@ -81,13 +81,13 @@ func TestAsACLPath(t *testing.T) {
 		desc     string
 	}{
 		{
-			input:    "/home/user",
-			expected: "/home/user/syft.pub.yaml",
+			input:    filepath.Join("home", "user"),
+			expected: filepath.Join("home", "user", "syft.pub.yaml"),
 			desc:     "Directory path should get ACL filename appended",
 		},
 		{
-			input:    "/home/user/syft.pub.yaml",
-			expected: "/home/user/syft.pub.yaml",
+			input:    filepath.Join("home", "user", "syft.pub.yaml"),
+			expected: filepath.Join("home", "user", "syft.pub.yaml"),
 			desc:     "ACL file path should remain unchanged",
 		},
 		{
@@ -96,18 +96,18 @@ func TestAsACLPath(t *testing.T) {
 			desc:     "Empty path should result in just the ACL filename",
 		},
 		{
-			input:    "relative/path",
-			expected: "relative/path/syft.pub.yaml",
+			input:    filepath.Join("relative", "path"),
+			expected: filepath.Join("relative", "path", "syft.pub.yaml"),
 			desc:     "Relative path should get ACL filename appended",
 		},
 		{
-			input:    "/",
-			expected: "/syft.pub.yaml",
+			input:    string(filepath.Separator),
+			expected: string(filepath.Separator) + "syft.pub.yaml",
 			desc:     "Root directory should get ACL filename appended",
 		},
 		{
-			input:    "folder/syft.pub.yaml",
-			expected: "folder/syft.pub.yaml",
+			input:    filepath.Join("folder", "syft.pub.yaml"),
+			expected: filepath.Join("folder", "syft.pub.yaml"),
 			desc:     "Path already ending with ACL filename should be unchanged",
 		},
 	}
@@ -129,8 +129,8 @@ func TestWithoutACLPath(t *testing.T) {
 		desc     string
 	}{
 		{
-			input:    "/home/user/syft.pub.yaml",
-			expected: "/home/user/",
+			input:    filepath.Join("home", "user", "syft.pub.yaml"),
+			expected: filepath.Join("home", "user") + string(filepath.Separator),
 			desc:     "ACL file path should have filename removed",
 		},
 		{
@@ -139,13 +139,13 @@ func TestWithoutACLPath(t *testing.T) {
 			desc:     "Bare ACL filename should result in empty string",
 		},
 		{
-			input:    "/home/user/other.yaml",
-			expected: "/home/user/other.yaml",
+			input:    filepath.Join("home", "user", "other.yaml"),
+			expected: filepath.Join("home", "user", "other.yaml"),
 			desc:     "Non-ACL file path should remain unchanged",
 		},
 		{
-			input:    "/home/user/",
-			expected: "/home/user/",
+			input:    filepath.Join("home", "user") + string(filepath.Separator),
+			expected: filepath.Join("home", "user") + string(filepath.Separator),
 			desc:     "Directory path without ACL filename should remain unchanged",
 		},
 		{
@@ -154,8 +154,8 @@ func TestWithoutACLPath(t *testing.T) {
 			desc:     "Empty path should remain empty",
 		},
 		{
-			input:    "folder/subfolder/syft.pub.yaml",
-			expected: "folder/subfolder/",
+			input:    filepath.Join("folder", "subfolder", "syft.pub.yaml"),
+			expected: filepath.Join("folder", "subfolder") + string(filepath.Separator),
 			desc:     "Nested ACL file path should have filename removed",
 		},
 	}
@@ -339,19 +339,29 @@ func TestPathEdgeCases(t *testing.T) {
 	// This ensures robust handling of unusual but valid path scenarios
 	
 	// Test with paths containing special characters
-	specialPath := "/home/user with spaces/syft.pub.yaml"
+	specialPath := filepath.Join("home", "user with spaces", "syft.pub.yaml")
 	assert.True(t, IsACLFile(specialPath), "Paths with spaces should be handled correctly")
 	
 	// Test with Unicode characters
-	unicodePath := "/home/用户/syft.pub.yaml"
+	unicodePath := filepath.Join("home", "用户", "syft.pub.yaml")
 	assert.True(t, IsACLFile(unicodePath), "Unicode paths should be handled correctly")
 	
-	// Test with multiple slashes
-	multiSlashPath := "/home//user///syft.pub.yaml"
-	expected := "/home//user///syft.pub.yaml"
-	assert.Equal(t, expected, AsACLPath(multiSlashPath), "Multiple slashes should be preserved")
+	// Test with multiple path separators - this behavior is platform-specific
+	// On Unix: "/home//user///syft.pub.yaml" 
+	// On Windows: "home\\\\user\\\\\\syft.pub.yaml"
+	sep := string(filepath.Separator)
+	multiSlashPath := "home" + sep + sep + "user" + sep + sep + sep + "syft.pub.yaml"
+	// AsACLPath should preserve the input when it already ends with the ACL filename
+	assert.Equal(t, multiSlashPath, AsACLPath(multiSlashPath), "Multiple separators should be preserved")
 	
-	// Test with backslashes (Windows-style paths)
-	windowsPath := "C:\\Users\\user\\syft.pub.yaml"
-	assert.True(t, IsACLFile(windowsPath), "Windows-style paths should be detected")
+	// Test with platform-appropriate absolute paths
+	if filepath.Separator == '\\' {
+		// Windows-style paths
+		windowsPath := "C:\\Users\\user\\syft.pub.yaml"
+		assert.True(t, IsACLFile(windowsPath), "Windows-style paths should be detected")
+	} else {
+		// Unix-style paths
+		unixPath := "/home/user/syft.pub.yaml"
+		assert.True(t, IsACLFile(unixPath), "Unix-style paths should be detected")
+	}
 }
