@@ -17,7 +17,7 @@ builds:
   - -w
   - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
-  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
+  - -X github.com/openmined/syftbox/internal/version.Version={{.RawVersion}}
   tags:
   - go_json # gin: use goccy/go-json
   - nomsgpack # gin: disable msgpack
@@ -40,7 +40,7 @@ builds:
   - -w
   - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
-  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
+  - -X github.com/openmined/syftbox/internal/version.Version={{.RawVersion}}
   tags:
   - go_json # gin: use goccy/go-json
   - nomsgpack # gin: disable msgpack
@@ -62,7 +62,7 @@ builds:
   - -w
   - -X github.com/openmined/syftbox/internal/version.Revision={{.ShortCommit}}
   - -X github.com/openmined/syftbox/internal/version.BuildDate={{.Date}}
-  - -X github.com/openmined/syftbox/internal/version.Version=0.5.0
+  - -X github.com/openmined/syftbox/internal/version.Version={{.RawVersion}}
   tags:
   - sonic # gin: use bytedance/sonic
   - avx # gin: required to enable sonic
