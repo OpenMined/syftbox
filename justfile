@@ -400,10 +400,6 @@ update-version-files version:
     
     echo -e "{{ _cyan }}Updating version to $version_value in all files...{{ _nc }}"
     
-    # Update goreleaser.yaml
-    sed -i "s/-X github.com\/openmined\/syftbox\/internal\/version.Version=.*/-X github.com\/openmined\/syftbox\/internal\/version.Version=$version_value/g" .goreleaser.yaml
-    echo -e "{{ _green }}✓ Updated .goreleaser.yaml{{ _nc }}"
-    
     # Update version.go
     sed -i "s/Version = \".*\"/Version = \"$version_value\"/" internal/version/version.go
     echo -e "{{ _green }}✓ Updated internal/version/version.go{{ _nc }}"
