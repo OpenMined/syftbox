@@ -1,6 +1,7 @@
 name: Go Tests
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
   pull_request:
@@ -22,7 +23,11 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24.3'
-        cache: true
+        cache: ${{ matrix.os != 'windows-latest' }}
+
+    - name: Download dependencies (Windows only)
+      if: matrix.os == 'windows-latest'
+      run: go mod download
 
     - name: Run Tests
       run: go test -v -cover ./...
