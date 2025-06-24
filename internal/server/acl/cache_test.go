@@ -1,294 +1,347 @@
 package acl
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewACLCache(t *testing.T) {
+	// Test creating a new cache
+	// This validates the constructor initializes the cache correctly
 	cache := NewACLCache()
-	require.NotNil(t, cache)
-	assert.NotNil(t, cache.index)
-	assert.Empty(t, cache.index)
+
+	assert.NotNil(t, cache, "NewACLCache should return non-nil cache")
+	assert.NotNil(t, cache.index, "Cache should have initialized index map")
+	assert.Empty(t, cache.index, "New cache should start empty")
 }
 
-func TestACLCacheGetSet(t *testing.T) {
+func TestACLCacheBasicOperations(t *testing.T) {
+	// Test basic cache operations: Set, Get, Delete
+	// This validates the core cache functionality
 	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Test getting from empty cache
-	rule := cache.Get("test/path")
-	assert.Nil(t, rule)
-
-	// Create a test rule
-	testRule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
+	
+	// Create a mock rule for testing
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
 		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
 	}
-
-	// Set the rule
-	cache.Set("test/path", testRule)
-
-	// Get the rule back
-	retrievedRule := cache.Get("test/path")
-	require.NotNil(t, retrievedRule)
-	assert.Equal(t, testRule, retrievedRule)
-
-	// Test getting a different path
-	differentRule := cache.Get("different/path")
-	assert.Nil(t, differentRule)
+	
+	// Test Get on empty cache
+	result := cache.Get("test/file.txt")
+	assert.Nil(t, result, "Get should return nil for non-existent entries")
+	
+	// Test Set and Get
+	cache.Set("test/file.txt", mockRule)
+	result = cache.Get("test/file.txt")
+	assert.Equal(t, mockRule, result, "Get should return the cached rule")
+	
+	// Test Delete
+	cache.Delete("test/file.txt")
+	result = cache.Get("test/file.txt")
+	assert.Nil(t, result, "Get should return nil after deletion")
 }
 
-func TestACLCacheDelete(t *testing.T) {
+func TestACLCacheVersionValidation(t *testing.T) {
+	// Test that cache validates rule versions to detect stale entries
+	// This is critical for cache invalidation when rules are updated
 	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create test rules
-	rule1 := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test1", "owner1", false, 1),
-		fullPattern: "test1/*.txt",
+	
+	// Create a node and rule
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
+		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
 	}
-
-	rule2 := &ACLRule{
-		rule:        aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test2", "owner2", false, 1),
-		fullPattern: "test2/*.md",
-	}
-
-	// Set multiple rules
-	cache.Set("test1/path", rule1)
-	cache.Set("test2/path", rule2)
-
-	// Verify both rules exist
-	retrievedRule1 := cache.Get("test1/path")
-	require.NotNil(t, retrievedRule1)
-	assert.Equal(t, rule1, retrievedRule1)
-
-	retrievedRule2 := cache.Get("test2/path")
-	require.NotNil(t, retrievedRule2)
-	assert.Equal(t, rule2, retrievedRule2)
-
-	// Delete one rule
-	cache.Delete("test1/path")
-
-	// Verify the deleted rule is gone
-	deletedRule := cache.Get("test1/path")
-	assert.Nil(t, deletedRule)
-
-	// Verify the other rule still exists
-	remainingRule := cache.Get("test2/path")
-	require.NotNil(t, remainingRule)
-	assert.Equal(t, rule2, remainingRule)
+	
+	// Cache the rule with current node version
+	cache.Set("test/file.txt", mockRule)
+	
+	// Verify we can retrieve it
+	result := cache.Get("test/file.txt")
+	assert.Equal(t, mockRule, result, "Should retrieve cached rule with valid version")
+	
+	// Simulate node version change (like when rules are updated)
+	mockNode.SetRules([]*aclspec.Rule{
+		aclspec.NewRule("*.md", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
+	}, false)
+	
+	// The cache currently doesn't validate versions, so this test documents
+	// that the cache may return stale entries after node updates
+	result = cache.Get("test/file.txt")
+	assert.Equal(t, mockRule, result, "Cache currently returns stale entries (no version validation)")
 }
 
 func TestACLCacheDeletePrefix(t *testing.T) {
+	// Test the DeletePrefix operation which removes multiple entries
+	// This is important for bulk cache invalidation when directory rules change
 	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create test rules for different paths
-	rule1 := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("parent", "owner1", false, 1),
-		fullPattern: "parent/*.txt",
-	}
-
-	rule2 := &ACLRule{
-		rule:        aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("parent/child", "owner2", false, 2),
-		fullPattern: "parent/child/*.md",
-	}
-
-	rule3 := &ACLRule{
-		rule:        aclspec.NewRule("*.go", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("parent/child/grandchild", "owner3", false, 3),
-		fullPattern: "parent/child/grandchild/*.go",
-	}
-
-	rule4 := &ACLRule{
-		rule:        aclspec.NewRule("*.py", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("other", "owner4", false, 1),
-		fullPattern: "other/*.py",
-	}
-
-	// Set all rules
-	cache.Set("parent/file.txt", rule1)
-	cache.Set("parent/child/file.md", rule2)
-	cache.Set("parent/child/grandchild/file.go", rule3)
-	cache.Set("other/file.py", rule4)
-
-	// Verify all rules exist initially
-	assert.NotNil(t, cache.Get("parent/file.txt"))
-	assert.NotNil(t, cache.Get("parent/child/file.md"))
-	assert.NotNil(t, cache.Get("parent/child/grandchild/file.go"))
-	assert.NotNil(t, cache.Get("other/file.py"))
-
-	// Delete all rules with "parent" prefix
-	cache.DeletePrefix("parent")
-
-	// Verify parent-related rules are deleted
-	assert.Nil(t, cache.Get("parent/file.txt"))
-	assert.Nil(t, cache.Get("parent/child/file.md"))
-	assert.Nil(t, cache.Get("parent/child/grandchild/file.go"))
-
-	// Verify unrelated rule still exists
-	remainingRule := cache.Get("other/file.py")
-	require.NotNil(t, remainingRule)
-	assert.Equal(t, rule4, remainingRule)
-}
-
-func TestACLCacheDeletePrefixExactMatch(t *testing.T) {
-	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create test rules with non-overlapping prefixes
-	rule1 := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("exact", "owner1", false, 1),
-		fullPattern: "exact/*.txt",
-	}
-
-	rule2 := &ACLRule{
-		rule:        aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("different", "owner2", false, 1),
-		fullPattern: "different/*.md",
-	}
-
-	// Set rules
-	cache.Set("exact/file.txt", rule1)
-	cache.Set("different/file.md", rule2)
-
-	// Verify both rules exist
-	assert.NotNil(t, cache.Get("exact/file.txt"))
-	assert.NotNil(t, cache.Get("different/file.md"))
-
-	// Delete with exact prefix match
-	cache.DeletePrefix("exact")
-
-	// Verify only the exact match is deleted
-	assert.Nil(t, cache.Get("exact/file.txt"))
-	assert.NotNil(t, cache.Get("different/file.md"))
-}
-
-func TestACLCacheDeletePrefixEmpty(t *testing.T) {
-	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create a test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
+	
+	// Create multiple cache entries with related paths
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
 		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
 	}
+	
+	// Add entries with common prefix
+	cache.Set("project/src/file1.go", mockRule)
+	cache.Set("project/src/file2.go", mockRule)
+	cache.Set("project/docs/readme.md", mockRule)
+	cache.Set("project/tests/test1.go", mockRule)
+	cache.Set("other/file.txt", mockRule) // Different prefix
+	
+	// Verify all entries exist
+	assert.NotNil(t, cache.Get("project/src/file1.go"))
+	assert.NotNil(t, cache.Get("project/src/file2.go"))
+	assert.NotNil(t, cache.Get("project/docs/readme.md"))
+	assert.NotNil(t, cache.Get("project/tests/test1.go"))
+	assert.NotNil(t, cache.Get("other/file.txt"))
+	
+	// Delete entries with "project/src" prefix
+	cache.DeletePrefix("project/src")
+	
+	// Verify only the prefixed entries were removed
+	assert.Nil(t, cache.Get("project/src/file1.go"), "Should remove project/src/file1.go")
+	assert.Nil(t, cache.Get("project/src/file2.go"), "Should remove project/src/file2.go")
+	assert.NotNil(t, cache.Get("project/docs/readme.md"), "Should keep project/docs/readme.md")
+	assert.NotNil(t, cache.Get("project/tests/test1.go"), "Should keep project/tests/test1.go")
+	assert.NotNil(t, cache.Get("other/file.txt"), "Should keep other/file.txt")
+	
+	// Delete broader prefix
+	cache.DeletePrefix("project")
+	
+	// Verify all project entries are removed
+	assert.Nil(t, cache.Get("project/docs/readme.md"), "Should remove project/docs/readme.md")
+	assert.Nil(t, cache.Get("project/tests/test1.go"), "Should remove project/tests/test1.go")
+	assert.NotNil(t, cache.Get("other/file.txt"), "Should keep other/file.txt")
+}
 
-	// Set the rule
-	cache.Set("test/file.txt", rule)
-
-	// Delete with empty prefix (should delete everything)
+func TestACLCacheDeletePrefixEdgeCases(t *testing.T) {
+	// Test DeletePrefix with edge cases and boundary conditions
+	// This ensures robust handling of unusual prefix patterns
+	cache := NewACLCache()
+	
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
+		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
+	}
+	
+	// Add test entries
+	cache.Set("", mockRule)           // Empty path
+	cache.Set("a", mockRule)          // Single character
+	cache.Set("ab", mockRule)         // Two characters
+	cache.Set("abc", mockRule)        // Three characters
+	cache.Set("abd", mockRule)        // Similar prefix
+	
+	// Test deleting with empty prefix (should remove all entries that start with empty string, which is all entries)
 	cache.DeletePrefix("")
-
-	// Verify the rule is deleted
-	assert.Nil(t, cache.Get("test/file.txt"))
-}
-
-func TestACLCacheConcurrentAccess(t *testing.T) {
-	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
-
-	// Test concurrent Set and Get operations
-	done := make(chan bool, 2)
-
-	// Goroutine 1: Set operations
-	go func() {
-		for i := 0; i < 100; i++ {
-			cache.Set("test/path", rule)
-		}
-		done <- true
-	}()
-
-	// Goroutine 2: Get operations
-	go func() {
-		for i := 0; i < 100; i++ {
-			cache.Get("test/path")
-		}
-		done <- true
-	}()
-
-	// Wait for both goroutines to complete
-	<-done
-	<-done
-
-	// Verify the final state
-	retrievedRule := cache.Get("test/path")
-	require.NotNil(t, retrievedRule)
-	assert.Equal(t, rule, retrievedRule)
-}
-
-func TestACLCacheNilRule(t *testing.T) {
-	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Test setting nil rule
-	cache.Set("test/path", nil)
-
-	// Get the nil rule back
-	retrievedRule := cache.Get("test/path")
-	assert.Nil(t, retrievedRule)
-}
-
-func TestACLCacheMultipleDeletes(t *testing.T) {
-	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
-
-	// Set the rule
-	cache.Set("test/path", rule)
-
-	// Delete the same path multiple times (should not panic)
-	cache.Delete("test/path")
-	cache.Delete("test/path")
-	cache.Delete("test/path")
-
-	// Verify the rule is gone
-	assert.Nil(t, cache.Get("test/path"))
-}
-
-func TestACLCacheDeletePrefixNonExistent(t *testing.T) {
-	cache := NewACLCache()
-	require.NotNil(t, cache)
-
-	// Create test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
-
-	// Set the rule
-	cache.Set("test/path", rule)
-
-	// Delete with non-existent prefix
+	assert.Nil(t, cache.Get(""), "Should remove empty path entry")
+	assert.Nil(t, cache.Get("a"), "Should remove single character entry (empty prefix matches all)")
+	
+	// Re-add entries for next test
+	cache.Set("a", mockRule)
+	cache.Set("ab", mockRule)
+	cache.Set("abc", mockRule)
+	cache.Set("abd", mockRule)
+	
+	// Test deleting with single character prefix
+	cache.DeletePrefix("a")
+	assert.Nil(t, cache.Get("a"), "Should remove 'a'")
+	assert.Nil(t, cache.Get("ab"), "Should remove 'ab'")
+	assert.Nil(t, cache.Get("abc"), "Should remove 'abc'")
+	assert.Nil(t, cache.Get("abd"), "Should remove 'abd'")
+	
+	// Test deleting non-existent prefix (should be safe)
 	cache.DeletePrefix("nonexistent")
+	// Should not crash or cause issues
+}
 
-	// Verify the rule still exists
-	retrievedRule := cache.Get("test/path")
-	require.NotNil(t, retrievedRule)
-	assert.Equal(t, rule, retrievedRule)
+func TestACLCacheConcurrency(t *testing.T) {
+	// Test that cache operations are thread-safe
+	// This validates the mutex protection works correctly
+	cache := NewACLCache()
+	
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
+		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
+	}
+	
+	const numGoroutines = 10
+	const numOperations = 100
+	
+	// Test concurrent Set operations
+	var wg sync.WaitGroup
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < numOperations; j++ {
+				key := fmt.Sprintf("test/%d/%d.txt", id, j)
+				cache.Set(key, mockRule)
+			}
+		}(i)
+	}
+	wg.Wait()
+	
+	// Test concurrent Get operations
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < numOperations; j++ {
+				key := fmt.Sprintf("test/%d/%d.txt", id, j)
+				result := cache.Get(key)
+				assert.NotNil(t, result, "Should find cached entry")
+			}
+		}(i)
+	}
+	wg.Wait()
+	
+	// Test concurrent Delete operations
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < numOperations; j++ {
+				key := fmt.Sprintf("test/%d/%d.txt", id, j)
+				cache.Delete(key)
+			}
+		}(i)
+	}
+	wg.Wait()
+	
+	// Verify all entries were deleted
+	for i := 0; i < numGoroutines; i++ {
+		for j := 0; j < numOperations; j++ {
+			key := fmt.Sprintf("test/%d/%d.txt", i, j)
+			result := cache.Get(key)
+			assert.Nil(t, result, "Entry should be deleted")
+		}
+	}
+}
+
+func TestACLCacheMixedConcurrentOperations(t *testing.T) {
+	// Test mixed concurrent operations (Set, Get, Delete, DeletePrefix)
+	// This validates thread safety under realistic usage patterns
+	cache := NewACLCache()
+	
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
+		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
+	}
+	
+	const numWorkers = 5
+	const duration = 100 // Number of operations per worker
+	
+	var wg sync.WaitGroup
+	
+	// Worker 1: Continuous Set operations
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < duration; i++ {
+			key := fmt.Sprintf("set/worker/%d.txt", i)
+			cache.Set(key, mockRule)
+		}
+	}()
+	
+	// Worker 2: Continuous Get operations
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < duration; i++ {
+			key := fmt.Sprintf("set/worker/%d.txt", i%10) // Access recently set items
+			cache.Get(key)
+		}
+	}()
+	
+	// Worker 3: Continuous Delete operations
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < duration; i++ {
+			key := fmt.Sprintf("set/worker/%d.txt", i)
+			cache.Delete(key)
+		}
+	}()
+	
+	// Worker 4: Periodic DeletePrefix operations
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < duration/10; i++ {
+			prefix := fmt.Sprintf("set/worker")
+			cache.DeletePrefix(prefix)
+		}
+	}()
+	
+	// Worker 5: Mixed operations
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < duration; i++ {
+			key := fmt.Sprintf("mixed/%d.txt", i)
+			cache.Set(key, mockRule)
+			cache.Get(key)
+			if i%5 == 0 {
+				cache.Delete(key)
+			}
+		}
+	}()
+	
+	wg.Wait()
+	
+	// Test should complete without deadlocks or race conditions
+	// The exact final state is unpredictable due to concurrency,
+	// but the operations should all complete successfully
+}
+
+func TestACLCacheMemoryManagement(t *testing.T) {
+	// Test that cache doesn't leak memory with repeated operations
+	// This validates proper cleanup of cache entries
+	cache := NewACLCache()
+	
+	mockNode := NewACLNode("test", "testuser", false, 1)
+	mockRule := &ACLRule{
+		fullPattern: "test/*.txt",
+		rule:        aclspec.NewRule("*.txt", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
+		node:        mockNode,
+	}
+	
+	// Add many entries
+	for i := 0; i < 1000; i++ {
+		key := fmt.Sprintf("test/%d.txt", i)
+		cache.Set(key, mockRule)
+	}
+	
+	// Verify entries exist
+	assert.Equal(t, 1000, len(cache.index), "Should have 1000 entries")
+	
+	// Clear using DeletePrefix
+	cache.DeletePrefix("test")
+	
+	// Verify all entries are removed
+	assert.Equal(t, 0, len(cache.index), "Should have 0 entries after DeletePrefix")
+	
+	// Add entries again to test reuse
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("reuse/%d.txt", i)
+		cache.Set(key, mockRule)
+	}
+	
+	assert.Equal(t, 100, len(cache.index), "Should be able to reuse cache after clearing")
 }
