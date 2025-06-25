@@ -33,11 +33,18 @@ func WithoutACLPath(path string) string {
 }
 
 // Exists checks if the ACL file exists at the given path
+// For security reasons, symlinks are not allowed as ACL files
 func Exists(path string) bool {
 	aclPath := AsACLPath(path)
-	stat, err := os.Stat(aclPath)
+	stat, err := os.Lstat(aclPath) // Use Lstat to not follow symlinks
 	if os.IsNotExist(err) {
 		return false
 	}
+	
+	// Reject symlinks for security reasons
+	if stat.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	
 	return stat.Size() > 0
 }
