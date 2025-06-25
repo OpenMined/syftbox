@@ -45,6 +45,27 @@ run-server-reload *ARGS:
 run-client *ARGS: gen-swagger
     go run -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
 
+# Starts a client against localhost:8080 with sensible defaults
+[group('dev')]
+run-client-simple user_email server_url="http://localhost:8080" base_clients_dir="~/.syftbox/clients" *ARGS="":
+    #!/bin/bash
+    set -eou pipefail
+
+    CLIENT_DIR="{{ base_clients_dir }}/{{ user_email }}"
+    CONFIG_PATH="${CLIENT_DIR}/config.json"
+    DATA_DIR="${CLIENT_DIR}/SyftBox"
+
+    mkdir -p "{{ base_clients_dir }}"
+    mkdir -p "$CLIENT_DIR"
+
+    echo "Running client:"
+    echo "  Email: {{ user_email }}"
+    echo "  Server: {{ server_url }}"
+    echo "  Data dir: $DATA_DIR"
+    echo "  Config path: $CONFIG_PATH"
+
+    just run-client -e "{{ user_email }}" -s "{{ server_url }}" -d "$DATA_DIR" -c "$CONFIG_PATH" {{ ARGS }}
+
 [group('dev')]
 run-client-reload *ARGS:
     wgo run -file 'cmd/.*' -file 'internal/.*' -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
@@ -261,15 +282,15 @@ bump type: version-utils
     # 1. Use `just show-version` to see current version and next versions
     # 2. Use `just bump type` to update files only (manual commit/tag)
     # 3. Use `just release type` to update files, commit, and tag automatically
-    # 4. Use `just update-version-files version=X.Y.Z` for custom versions
-    #
+    # 4. The version.go file is updated automatically with the new version 
+    #    from the git tag using the goreleaser.yaml file.
+
     # Examples:
     #   just show-version                    # Show current and next versions
     #   just bump patch                      # Update files to next patch version
     #   just bump minor                      # Update files to next minor version
     #   just bump major                      # Update files to next major version
     #   just release patch                   # Bump, commit, and tag patch version
-    #   just update-version-files version=1.2.3  # Set specific version
     
     if [ -z "{{ type }}" ]; then
         echo -e "{{ _red }}Error: bump type is required{{ _nc }}"
@@ -291,7 +312,6 @@ bump type: version-utils
     echo -e "{{ _cyan }}Bumping {{ type }} version...{{ _nc }}"
     new_version=$(svu {{ type }} | sed 's/^v//')
     echo -e "{{ _green }}New version: $new_version{{ _nc }}"
-    just update-version-files version="$new_version"
     echo -e "{{ _green }}Version bumped to $new_version{{ _nc }}"
     echo -e "{{ _yellow }}Don't forget to commit and tag:{{ _nc }}"
     echo "  git add ."
@@ -322,7 +342,6 @@ release type: version-utils
     echo -e "{{ _cyan }}Releasing {{ type }} version...{{ _nc }}"
     new_version=$(svu {{ type }} | sed 's/^v//')
     echo -e "{{ _green }}New version: $new_version{{ _nc }}"
-    just update-version-files version="$new_version"
     just commit-and-tag version="$new_version"
     echo -e "{{ _green }}✓ Released {{ type }} version $new_version{{ _nc }}"
 
@@ -375,38 +394,18 @@ commit-and-tag version:
         echo -e "{{ _green }}✓ Committed changes{{ _nc }}"
     fi
     
-    # Create tag
-    git tag v$version_value
-    echo -e "{{ _green }}✓ Tagged v$version_value{{ _nc }}"
+    # Check if tag already exists and force update it
+    if git tag -l "v$version_value" | grep -q "v$version_value"; then
+        echo -e "{{ _yellow }}Tag v$version_value already exists. Force updating...{{ _nc }}"
+        git tag -f v$version_value
+        echo -e "{{ _green }}✓ Force updated tag v$version_value{{ _nc }}"
+    else
+        # Create new tag
+        git tag v$version_value
+        echo -e "{{ _green }}✓ Created tag v$version_value{{ _nc }}"
+    fi
     
     echo -e "{{ _green }}Version $version_value has been committed and tagged!{{ _nc }}"
-
-[group('version')]
-update-version-files version:
-    #!/bin/bash
-    set -eou pipefail
-    
-    # Extract version from parameter (handle both "version=0.5.1" and "0.5.1" formats)
-    version_value="{{ version }}"
-    if [[ "$version_value" == version=* ]]; then
-        version_value="${version_value#version=}"
-    fi
-    
-    if [ -z "$version_value" ]; then
-        echo -e "{{ _red }}Error: version parameter is required{{ _nc }}"
-        echo "Usage: just update-version-files version=1.2.3"
-        exit 1
-    fi
-    
-    echo -e "{{ _cyan }}Updating version to $version_value in all files...{{ _nc }}"
-    
-    # Update goreleaser.yaml
-    sed -i "s/-X github.com\/openmined\/syftbox\/internal\/version.Version=.*/-X github.com\/openmined\/syftbox\/internal\/version.Version=$version_value/g" .goreleaser.yaml
-    echo -e "{{ _green }}✓ Updated .goreleaser.yaml{{ _nc }}"
-    
-    # Update version.go
-    sed -i "s/Version = \".*\"/Version = \"$version_value\"/" internal/version/version.go
-    echo -e "{{ _green }}✓ Updated internal/version/version.go{{ _nc }}"
 
 [group('version')]
 version-utils:
