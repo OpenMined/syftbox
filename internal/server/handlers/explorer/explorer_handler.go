@@ -210,6 +210,7 @@ func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *direct
 
 	// Generate an HTML response
 	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Status(http.StatusOK)
 	if err := e.tplIndex.Execute(c.Writer, data); err != nil {
 		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to execute template: %w", err))
 	}
@@ -237,6 +238,7 @@ func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	// resp.ContentType may not have the correct MIME type
 	contentType := e.detectContentType(key)
 	c.Header("Content-Type", contentType)
+	c.Status(http.StatusOK)
 
 	// Stream response body directly
 	_, err = io.Copy(c.Writer, resp.Body)
@@ -257,8 +259,11 @@ func (e *ExplorerHandler) detectContentType(key string) string {
 
 func (e *ExplorerHandler) serve404(c *gin.Context, key string) {
 	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.Status(http.StatusNotFound)
+	// Even if template execution fails, we've already set 404 status which is what we want
 	if err := e.tpl404.Execute(c.Writer, map[string]any{"Key": key}); err != nil {
-		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to execute template: %w", err))
+		// Log the error but don't try to change status since headers are already sent
+		slog.Error("Failed to execute 404 template", "error", err, "key", key)
 	}
 }
 
