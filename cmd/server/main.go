@@ -184,6 +184,7 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.SetDefault("http.addr", DefaultBindAddr)
 	v.SetDefault("http.cert_file", "")
 	v.SetDefault("http.key_file", "")
+	v.SetDefault("http.domain", "")
 	// Blob section (config file/env vars only)
 	v.SetDefault("blob.bucket_name", "")
 	v.SetDefault("blob.region", "")

@@ -34,6 +34,12 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		return
 	}
 
+	// Prevent creation of /api paths in datasites to avoid conflicts with system API endpoints
+	if IsReservedPath(req.Key) {
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeDatasiteInvalidPath, fmt.Errorf("reserved path: %s", req.Key))
+		return
+	}
+
 	if err := h.checkPermissions(req.Key, user, acl.AccessWrite); err != nil {
 		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
 		return

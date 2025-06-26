@@ -45,6 +45,27 @@ run-server-reload *ARGS:
 run-client *ARGS: gen-swagger
     go run -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
 
+# Starts a client against localhost:8080 with sensible defaults
+[group('dev')]
+run-client-simple user_email server_url="http://localhost:8080" base_clients_dir="~/.syftbox/clients" *ARGS="":
+    #!/bin/bash
+    set -eou pipefail
+
+    CLIENT_DIR="{{ base_clients_dir }}/{{ user_email }}"
+    CONFIG_PATH="${CLIENT_DIR}/config.json"
+    DATA_DIR="${CLIENT_DIR}/SyftBox"
+
+    mkdir -p "{{ base_clients_dir }}"
+    mkdir -p "$CLIENT_DIR"
+
+    echo "Running client:"
+    echo "  Email: {{ user_email }}"
+    echo "  Server: {{ server_url }}"
+    echo "  Data dir: $DATA_DIR"
+    echo "  Config path: $CONFIG_PATH"
+
+    just run-client -e "{{ user_email }}" -s "{{ server_url }}" -d "$DATA_DIR" -c "$CONFIG_PATH" {{ ARGS }}
+
 [group('dev')]
 run-client-reload *ARGS:
     wgo run -file 'cmd/.*' -file 'internal/.*' -tags="{{ CLIENT_BUILD_TAGS }}" ./cmd/client {{ ARGS }}
@@ -242,6 +263,34 @@ setup-toolchain:
     go install github.com/swaggo/swag/v2/cmd/swag@latest
     go install github.com/bokwoon95/wgo@latest
     go install filippo.io/mkcert@latest
+
+[group('utils')]
+email-hash email domain="":
+    #!/bin/bash
+    set -eou pipefail
+    
+    if [ -z "{{ email }}" ]; then
+        echo "Usage: just email-hash <email> [domain]"
+        echo "Examples:"
+        echo "  just email-hash alice@example.com"
+        echo "  just email-hash alice@example.com syftbox.com"
+        exit 1
+    fi
+    
+    # Generate the hash (first 16 chars of sha256)
+    hash=$(echo -n "{{ email }}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]' | shasum -a 256 | cut -c1-16)
+    
+    echo "Email: {{ email }}"
+    echo "Hash: $hash"
+    echo ""
+    
+    if [ -z "{{ domain }}" ]; then
+        # No domain provided, use local development URL
+        echo "URL: http://$hash.syftbox.local:8080/"
+    else
+        # Domain provided, use HTTPS
+        echo "URL: https://$hash.{{ domain }}/"
+    fi
 
 [group('utils')]
 clean:

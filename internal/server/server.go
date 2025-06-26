@@ -52,7 +52,7 @@ func New(config *Config) (*Server, error) {
 	}
 
 	hub := ws.NewHub()
-	httpHandler := SetupRoutes(services, hub, config.HTTP.HTTPSEnabled())
+	httpHandler := SetupRoutes(config, services, hub)
 
 	return &Server{
 		config: config,

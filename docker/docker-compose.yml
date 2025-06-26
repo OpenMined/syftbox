@@ -37,6 +37,7 @@ services:
       - SYFTBOX_BLOB_ACCESS_KEY=ptSLdKiwOi2LYQFZYEZ6
       - SYFTBOX_BLOB_SECRET_KEY=GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8
       - SYFTBOX_HTTP_ADDR=0.0.0.0:8080
+      - SYFTBOX_HTTP_DOMAIN=syftbox.local
     networks:
       - syftbox-network
     depends_on:
