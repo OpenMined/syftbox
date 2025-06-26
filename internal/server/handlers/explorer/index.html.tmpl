@@ -150,14 +150,14 @@
       </tr>
       {{range .Folders}}
       <tr>
-        <td><a href="/datasites{{$.Path}}{{.}}/"><span class="icon">📁</span>{{.}}/</a></td>
+        <td><a href="{{if $.IsSubdomain}}./{{.}}/{{else}}/datasites{{$.Path}}{{.}}/{{end}}"><span class="icon">📁</span>{{.}}/</a></td>
         <td class="size-column">Directory</td>
         <td class="date-column">-</td>
       </tr>
       {{end}}
       {{range .Files}}
       <tr>
-        <td><a href="/datasites/{{.Key}}"><span class="icon">📄</span>{{basename .Key}}</a></td>
+        <td><a href="{{if $.IsSubdomain}}./{{basename .Key}}{{else}}/datasites/{{.Key}}{{end}}"><span class="icon">📄</span>{{basename .Key}}</a></td>
         <td class="size-column">{{humanizeSize .Size}}</td>
         <td class="date-column">{{.LastModified}}</td>
       </tr>

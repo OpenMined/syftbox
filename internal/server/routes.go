@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -25,16 +26,45 @@ import (
 //go:embed handlers/send/*.html
 var templateFS embed.FS
 
-func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Handler {
+func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler {
 	r := gin.New()
 
 	// --------------------------- middlewares ---------------------------
 
 	r.Use(gin.Recovery())
 	r.Use(middlewares.Logger())
+	
+	// Add subdomain middleware if domain is configured
+	if cfg.HTTP.Domain != "" {
+		subdomainMapping := svc.Datasite.GetSubdomainMapping()
+		subdomainConfig := middlewares.SubdomainConfig{
+			MainDomain: cfg.HTTP.Domain,
+			GetVanityDomainFunc: func(domain string) (email string, path string, exists bool) {
+				// First check if it's a vanity domain
+				if config, ok := subdomainMapping.GetVanityDomain(domain); ok {
+					return config.Email, config.Path, true
+				}
+				
+				// Check if it's a hash subdomain (e.g., ff8d9819fc0e12bf.syftbox.local)
+				if idx := strings.Index(domain, "."); idx > 0 && idx == 16 {
+					hash := domain[:idx]
+					// Check if this is a valid hash subdomain
+					if email, err := subdomainMapping.GetEmailByHash(hash); err == nil {
+						// Hash subdomains default to /public path
+						return email, "/public", true
+					}
+				}
+				
+				return "", "", false
+			},
+		}
+		r.Use(middlewares.SubdomainMiddleware(subdomainConfig))
+	}
+	
 	r.Use(middlewares.CORS())
+	r.Use(middlewares.SetSubdomainSecurityHeaders)
 	r.Use(middlewares.GZIP())
-	if httpsEnabled {
+	if cfg.HTTP.HTTPSEnabled() {
 		r.Use(middlewares.HSTS())
 	}
 
@@ -56,7 +86,15 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	if os.Getenv("SYFTBOX_REDIRECT_WWW") == "1" {
 		r.GET("/", IndexRedirectHandler)
 	} else {
-		r.GET("/", IndexHandler)
+		r.GET("/", func(c *gin.Context) {
+			// Check if this is a subdomain request
+			if isSubdomain, _ := c.Get(middlewares.IsSubdomainRequestKey); isSubdomain == true {
+				// Serve the explorer for subdomain root
+				explorerH.Handler(c)
+				return
+			}
+			IndexHandler(c)
+		})
 	}
 	r.GET("/healthz", HealthHandler)
 	r.GET("/install.sh", install.ServeSH)
@@ -108,6 +146,14 @@ func SetupRoutes(svc *Services, hub *ws.WebsocketHub, httpsEnabled bool) http.Ha
 	}
 
 	r.NoRoute(func(c *gin.Context) {
+		// Check if this is a subdomain request that got rewritten
+		if isSubdomain, _ := c.Get(middlewares.IsSubdomainRequestKey); isSubdomain == true {
+			// The path was already rewritten by middleware, serve it with explorer
+			explorerH.Handler(c)
+			return
+		}
+		
+		// Not a subdomain request, return 404
 		c.JSON(http.StatusNotFound, api.SyftAPIError{
 			Code:    api.CodeInvalidRequest,
 			Message: "not found",

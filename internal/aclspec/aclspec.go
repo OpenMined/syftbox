@@ -16,7 +16,9 @@ const (
 
 // IsACLFile checks if the path is an syft.pub.yaml file
 func IsACLFile(path string) bool {
-	return strings.HasSuffix(path, AclFileName)
+	// Extract the base name from the path
+	base := filepath.Base(path)
+	return base == AclFileName
 }
 
 // AsACLPath converts any path to exact acl file path

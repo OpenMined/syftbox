@@ -41,6 +41,7 @@ func NewS3Backend(s3Client *s3.Client, config *S3Config) *S3Backend {
 			AfterPutObject:    nil,
 			AfterDeleteObject: nil,
 			AfterCopyObject:   nil,
+			OnBlobChange:      nil,
 		},
 	}
 }

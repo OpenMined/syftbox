@@ -10,6 +10,7 @@ type blobBackendHooks struct {
 	AfterPutObject    func(req *PutObjectParams, resp *PutObjectResponse)
 	AfterCopyObject   func(req *CopyObjectParams, resp *CopyObjectResponse)
 	AfterDeleteObject func(req string, resp bool)
+	OnBlobChange      func(key string) // New callback for blob changes
 }
 
 // not enforced yet
