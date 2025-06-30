@@ -9,11 +9,18 @@ import (
 )
 
 var (
-	PathSep           = string(filepath.Separator)
+	PathSep = string(filepath.Separator)
+
+	// regexDatasitePath matches datasite paths that start with a valid email address followed by a slash
+	// Valid: "user@example.com/path", "test.user@domain.co.uk/file.txt"
+	// Invalid: "notanemail/path", "user@domain", "user@domain.", "user@.domain", "user@domain/path" (no slash)
 	regexDatasitePath = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+/`)
+
+	// regexBadPaths matches paths that contain ".." "~" or backslashes
+	regexBadPaths = regexp.MustCompile(`\.\.|^~|\\`)
 )
 
-// GetOwner returns the owner of the path
+// GetOwner extracts the owner from the datasite path
 func GetOwner(path string) string {
 	// clean path
 	path = CleanPath(path)
@@ -45,12 +52,21 @@ func CleanPath(path string) string {
 }
 
 // IsValidPath checks if the path is a valid datasite path
+// i.e. must start with a datasite email followed by a slash
 func IsValidPath(path string) bool {
 	return regexDatasitePath.MatchString(path)
 }
 
+func IsValidRelPath(path string) bool {
+	return !regexBadPaths.MatchString(path)
+}
+
 func IsValidDatasite(user string) bool {
 	return utils.IsValidEmail(user)
+}
+
+func isValidVanityDomainPath(path string) bool {
+	return !regexBadPaths.MatchString(path)
 }
 
 // isHexString checks if a string contains only hex characters

@@ -225,3 +225,5 @@ func isOwner(path string, user string) bool {
 	path = ACLNormPath(path)
 	return strings.HasPrefix(path, user)
 }
+
+var _ Service = (*ACLService)(nil)

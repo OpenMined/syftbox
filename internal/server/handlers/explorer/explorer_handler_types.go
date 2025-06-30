@@ -13,9 +13,10 @@ type indexData struct {
 
 // directoryContents holds the result of listing a directory
 type directoryContents struct {
-	IsDir   bool
-	Files   []*blob.BlobInfo
-	Folders []string
+	IsDir    bool
+	HasIndex bool
+	Files    []*blob.BlobInfo
+	Folders  []string
 }
 
 func (d *directoryContents) EmptyDir() bool {

@@ -6,6 +6,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	SettingsFileName = "settings.yaml"
+)
+
 // SettingsYAML represents the structure of a settings.yaml file
 type SettingsYAML struct {
 	VanityDomains map[string]string `yaml:"domains"`

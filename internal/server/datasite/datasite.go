@@ -2,12 +2,19 @@ package datasite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
+	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
+)
+
+var (
+	ErrNoSettingsYAML = errors.New("no settings.yaml found")
 )
 
 type DatasiteService struct {
@@ -72,7 +79,7 @@ func (d *DatasiteService) GetSubdomainMapping() *SubdomainMapping {
 func (d *DatasiteService) loadDatasiteSubdomains() error {
 	// perhaps maintain a list of datasites in a separate table/db
 	// Get all datasites by listing their acls
-	blobs, err := d.blob.Index().FilterBySuffix("syft.pub.yaml")
+	blobs, err := d.blob.Index().FilterBySuffix(aclspec.ACLFileName)
 	if err != nil {
 		return fmt.Errorf("error listing blobs: %w", err)
 	}
@@ -97,73 +104,65 @@ func (d *DatasiteService) loadDatasiteSubdomains() error {
 
 	// Also add default hash mappings for each datasite
 	for _, datasite := range datasites {
+		// First, add the default hash-based mapping
 		d.addDefaultHashMapping(datasite)
+
+		// Then, load the vanity domain configurations
+		if err := d.loadVanityDomain(datasite); err != nil {
+			slog.Warn("failed to load vanity domain", "datasite", datasite, "error", err)
+		}
 	}
 
 	slog.Info("loaded datasite subdomain mappings", "datasites", len(datasites))
 
-	// Load vanity domain configurations
-	if err := d.loadVanityDomains(datasites); err != nil {
-		slog.Warn("failed to load vanity domains", "error", err)
-		// Continue anyway - vanity domains are optional
-	}
-
 	return nil
 }
 
-// loadVanityDomains loads vanity domain configurations from settings.yaml files
-func (d *DatasiteService) loadVanityDomains(datasites []string) error {
-	for _, email := range datasites {
-		// First, add the default hash-based mapping
-		d.addDefaultHashMapping(email)
+// loadVanityDomain loads vanity domain configurations from settings.yaml files
+func (d *DatasiteService) loadVanityDomain(datasite string) error {
+	settingsPath := filepath.Join(datasite, SettingsFileName)
 
-		settingsPath := email + "/settings.yaml"
+	if _, exists := d.blob.Index().Get(settingsPath); !exists {
+		return ErrNoSettingsYAML
+	}
 
-		// Try to read settings.yaml
-		resp, err := d.blob.Backend().GetObject(context.Background(), settingsPath)
-		if err != nil {
-			// File might not exist, which is fine
-			slog.Debug("no settings.yaml found", "path", settingsPath)
+	// Try to read settings.yaml
+	resp, err := d.blob.Backend().GetObject(context.Background(), settingsPath)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Parse vanity domains
+	settings, err := ParseSettingsYAML(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to parse settings.yaml: %w", err)
+	}
+
+	// Add vanity domains to mapping
+	for domain, path := range settings.VanityDomains {
+		if !isValidVanityDomainPath(path) {
+			slog.Error("invalid vanity domain path", "datasite", datasite, "path", path)
 			continue
 		}
-		defer resp.Body.Close()
 
-		// Parse vanity domains
-		settings, err := ParseSettingsYAML(resp.Body)
-		if err != nil {
-			slog.Error("failed to parse settings.yaml",
-				"path", settingsPath,
-				"error", err,
-				"action", "skipping vanity domain configuration")
+		// Replace {email-hash} with actual hash
+		if domain == "{email-hash}" || domain == "default" {
+			hash := EmailToSubdomainHash(datasite)
+			domain = hash + "." + d.domain
+		}
+
+		// Security check: validate domain ownership
+		if !d.isAllowedDomain(domain, datasite) {
+			slog.Warn("user tried to claim unauthorized domain",
+				"datasite", datasite,
+				"domain", domain,
+				"action", "rejected")
 			continue
 		}
 
-		// Log parsed domains for debugging
-		slog.Debug("parsed vanity domains from settings.yaml",
-			"path", settingsPath,
-			"domains_count", len(settings.VanityDomains),
-			"domains", settings.VanityDomains)
-
-		// Add vanity domains to mapping
-		for domain, path := range settings.VanityDomains {
-			// Replace {email-hash} with actual hash
-			if domain == "{email-hash}" {
-				hash := EmailToSubdomainHash(email)
-				domain = hash + "." + d.domain
-			}
-
-			// Security check: validate domain ownership
-			if !d.isAllowedDomain(domain, email) {
-				slog.Warn("user tried to claim unauthorized domain",
-					"email", email,
-					"domain", domain,
-					"action", "rejected")
-				continue
-			}
-
-			d.subdomainMapping.AddVanityDomain(domain, email, path)
-			slog.Info("loaded vanity domain", "domain", domain, "email", email, "path", path)
-		}
+		d.subdomainMapping.AddVanityDomain(domain, datasite, path)
+		slog.Info("added vanity domain", "datasite", datasite, "domain", domain, "path", path)
 	}
 
 	return nil
@@ -179,94 +178,45 @@ func (d *DatasiteService) ReloadVanityDomains(email string) error {
 	// Re-add the default hash mapping
 	d.addDefaultHashMapping(email)
 
-	settingsPath := email + "/settings.yaml"
-
-	// Try to read settings.yaml
-	resp, err := d.blob.Backend().GetObject(context.Background(), settingsPath)
-	if err != nil {
-		// File might not exist, which is fine
-		slog.Debug("no settings.yaml found", "path", settingsPath)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	// Parse vanity domains
-	settings, err := ParseSettingsYAML(resp.Body)
-	if err != nil {
-		slog.Error("failed to parse settings.yaml during reload",
-			"path", settingsPath,
-			"error", err,
-			"action", "aborting vanity domain reload")
-		return err
-	}
-
-	// Log parsed domains for debugging
-	slog.Debug("parsed vanity domains from settings.yaml during reload",
-		"path", settingsPath,
-		"domains_count", len(settings.VanityDomains),
-		"domains", settings.VanityDomains)
-
-	// Add vanity domains to mapping
-	for domain, path := range settings.VanityDomains {
-		// Replace {email-hash} with actual hash
-		if domain == "{email-hash}" {
-			hash := EmailToSubdomainHash(email)
-			domain = hash + "." + d.domain
-		}
-
-		// Security check: validate domain ownership
-		if !d.isAllowedDomain(domain, email) {
-			slog.Warn("user tried to claim unauthorized domain",
-				"email", email,
-				"domain", domain,
-				"action", "rejected")
-			continue
-		}
-
-		d.subdomainMapping.AddVanityDomain(domain, email, path)
-		slog.Info("reloaded vanity domain", "domain", domain, "email", email, "path", path)
-	}
-
-	return nil
+	return d.loadVanityDomain(email)
 }
 
 // handleBlobChange handles blob change notifications and reloads settings if needed
 func (d *DatasiteService) handleBlobChange(key string, eventType blob.BlobEventType) {
-	// ignore events other than put
-	if eventType != blob.BlobEventPut {
+	// ignore events other than put and delete
+	if eventType&(blob.BlobEventPut|blob.BlobEventDelete) == 0 {
 		return
 	}
 
 	// Extract the datasite name from the key
-	datasiteName := GetOwner(key)
-	if datasiteName == "" {
+	datasite := GetOwner(key)
+	if datasite == "" {
 		slog.Debug("blob change event for non-datasite key", "key", key)
 		return
 	}
 
 	// Check if this datasite is already in our mapping
-	if !d.subdomainMapping.HasDatasite(datasiteName) {
+	if !d.subdomainMapping.HasDatasite(datasite) {
 		// New datasite detected! Add it to the subdomain mapping
-		slog.Info("new datasite detected, adding to subdomain mapping", "datasite", datasiteName, "key", key)
+		slog.Info("new datasite detected, adding to subdomain mapping", "datasite", datasite, "key", key)
 
-		// Add the default hash mapping for this new datasite
-		d.addDefaultHashMapping(datasiteName)
-
-		// Also check if there's already a settings.yaml file for vanity domains
-		if err := d.ReloadVanityDomains(datasiteName); err != nil {
-			slog.Debug("no vanity domains found for new datasite", "datasite", datasiteName, "error", err)
+		if err := d.ReloadVanityDomains(datasite); err != nil {
+			if !errors.Is(err, ErrNoSettingsYAML) {
+				slog.Warn("failed to reload vanity domain", "datasite", datasite, "error", err)
+			}
 		}
-
-		slog.Info("added new datasite to subdomain mapping", "datasite", datasiteName)
+		return
 	}
 
 	// Check if this is a settings.yaml file change
-	if strings.HasSuffix(key, "/settings.yaml") {
-		slog.Info("settings.yaml changed, reloading vanity domains", "email", datasiteName, "key", key)
+	if key == filepath.Join(datasite, SettingsFileName) {
+		slog.Info("settings.yaml changed", "datasite", datasite, "event", eventType)
 
 		// Reload vanity domains for this email
-		if err := d.ReloadVanityDomains(datasiteName); err != nil {
-			slog.Warn("failed to reload vanity domains", "email", datasiteName, "error", err)
+		if err := d.ReloadVanityDomains(datasite); err != nil {
+			if !errors.Is(err, ErrNoSettingsYAML) {
+				slog.Warn("failed to reload vanity domain", "datasite", datasite, "error", err)
+			}
 		}
 	}
 }
@@ -286,7 +236,7 @@ func (d *DatasiteService) addDefaultHashMapping(email string) {
 
 	// Map it to /public by default
 	d.subdomainMapping.AddVanityDomain(hashDomain, email, "/public")
-	slog.Debug("added default hash mapping", "domain", hashDomain, "email", email, "path", "/public")
+	slog.Debug("added default domain", "datasite", email, "domain", hashDomain, "path", "/public")
 }
 
 // isAllowedDomain checks if a user is allowed to claim a domain
