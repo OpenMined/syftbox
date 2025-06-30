@@ -87,13 +87,13 @@ func (b *BlobService) OnBlobChange(callback BlobChangeCallback) {
 	b.callbacks = append(b.callbacks, callback)
 }
 
-// callBlobChangeCallbacks invokes all registered callbacks with the given key and event type
-func (b *BlobService) callBlobChangeCallbacks(key string, eventType BlobEventType) {
+// invokeBlobChangeCallbacks invokes all registered callbacks with the given key and event type
+func (b *BlobService) invokeBlobChangeCallbacks(key string, eventType BlobEventType) {
 	b.callbacksMu.RLock()
 	defer b.callbacksMu.RUnlock()
 
 	for _, callback := range b.callbacks {
-		callback(key, eventType)
+		go callback(key, eventType)
 	}
 }
 
@@ -109,7 +109,7 @@ func (b *BlobService) afterPutObject(_ *PutObjectParams, resp *PutObjectResponse
 	} else {
 		slog.Info("update index", "hook", "PutObject", "key", resp.Key)
 		// Call all blob change callbacks
-		b.callBlobChangeCallbacks(resp.Key, BlobEventPut)
+		b.invokeBlobChangeCallbacks(resp.Key, BlobEventPut)
 	}
 }
 
@@ -120,7 +120,7 @@ func (b *BlobService) afterDeleteObjects(req string, _ bool) {
 	} else {
 		slog.Info("update index", "hook", "DeleteObject", "key", req)
 		// Call all blob change callbacks
-		// b.callBlobChangeCallbacks(req, BlobEventDelete)
+		b.invokeBlobChangeCallbacks(req, BlobEventDelete)
 	}
 }
 
@@ -136,7 +136,7 @@ func (b *BlobService) afterCopyObject(req *CopyObjectParams, resp *CopyObjectRes
 	} else {
 		slog.Info("update index", "hook", "CopyObject", "src", req.SourceKey, "dest", req.DestinationKey)
 		// Call all blob change callbacks
-		// b.callBlobChangeCallbacks(req.DestinationKey, BlobEventCopy)
+		b.invokeBlobChangeCallbacks(req.DestinationKey, BlobEventCopy)
 	}
 
 }

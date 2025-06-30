@@ -147,7 +147,7 @@ func (s *S3Backend) PutObject(ctx context.Context, params *PutObjectParams) (*Pu
 	}
 
 	if s.hooks.AfterPutObject != nil {
-		go s.hooks.AfterPutObject(params, result)
+		s.hooks.AfterPutObject(params, result)
 	}
 
 	return result, nil
@@ -256,7 +256,7 @@ func (s *S3Backend) CopyObject(ctx context.Context, params *CopyObjectParams) (*
 	}
 
 	if s.hooks.AfterCopyObject != nil {
-		go s.hooks.AfterCopyObject(params, result)
+		s.hooks.AfterCopyObject(params, result)
 	}
 
 	return result, nil
@@ -273,7 +273,7 @@ func (s *S3Backend) DeleteObject(ctx context.Context, key string) (bool, error) 
 		return false, err
 	}
 	if s.hooks.AfterDeleteObject != nil {
-		go s.hooks.AfterDeleteObject(key, true)
+		s.hooks.AfterDeleteObject(key, true)
 	}
 	return true, nil
 }

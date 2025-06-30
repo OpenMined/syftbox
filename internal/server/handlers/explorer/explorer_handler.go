@@ -66,7 +66,7 @@ func (e *ExplorerHandler) Handler(c *gin.Context) {
 	} else {
 		path = strings.TrimPrefix(c.Param("filepath"), "/")
 	}
-	
+
 	// For subdomain requests, we need to handle the path differently
 	// The middleware has already rewritten the path to /datasites/{email}/public/*
 	// but we need to be aware of this for proper display and navigation
@@ -78,7 +78,7 @@ func (e *ExplorerHandler) Handler(c *gin.Context) {
 			c.Set("datasite_email", email)
 		}
 	}
-	
+
 	contents := e.listContents(path)
 	if contents.IsDir || contents.EmptyDir() {
 		// Check if index.html exists in this directory
@@ -87,7 +87,7 @@ func (e *ExplorerHandler) Handler(c *gin.Context) {
 			indexPath += "/"
 		}
 		indexPath += "index.html"
-		
+
 		// Try to find index.html in the directory
 		if _, exists := e.blob.Index().Get(indexPath); exists {
 			// Check if user has access to the index.html
@@ -124,7 +124,7 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	var filterPrefix string
 	if datasite == "" {
 		// root index - show all datasites with ACL files
-		filterPrefix = "*/" + aclspec.AclFileName
+		filterPrefix = "*/" + aclspec.ACLFileName
 	} else {
 		// Show content based on the actual path, let ACL system control access
 		filterPrefix = prefix
