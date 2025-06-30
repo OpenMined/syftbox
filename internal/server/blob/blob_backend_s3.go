@@ -222,12 +222,34 @@ func (s *S3Backend) CompleteMultipartUpload(ctx context.Context, params *Complet
 		return nil, err
 	}
 
-	return &PutObjectResponse{
+	// Get the object metadata to retrieve the actual size
+	headResp, err := s.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: &s.config.BucketName,
+		Key:    &params.Key,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := &PutObjectResponse{
 		Key:          params.Key,
 		Version:      aws.ToString(res.VersionId),
 		ETag:         strings.ReplaceAll(aws.ToString(res.ETag), "\"", ""),
-		LastModified: time.Now().UTC(),
-	}, nil
+		Size:         aws.ToInt64(headResp.ContentLength),
+		LastModified: aws.ToTime(headResp.LastModified),
+	}
+
+	// Call the afterPutObject hook to update the index
+	if s.hooks != nil && s.hooks.AfterPutObject != nil {
+		putParams := &PutObjectParams{
+			Key:  params.Key,
+			ETag: result.ETag,
+			Size: result.Size,
+		}
+		s.hooks.AfterPutObject(putParams, result)
+	}
+
+	return result, nil
 }
 
 // ===================================================================================================
