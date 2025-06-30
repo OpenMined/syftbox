@@ -1,6 +1,6 @@
 package datasite
 
-type BlobUrl struct {
+type BlobURL struct {
 	Key string `json:"key"`
 	Url string `json:"url"`
 }

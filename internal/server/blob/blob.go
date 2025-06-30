@@ -3,15 +3,18 @@ package blob
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
 type BlobService struct {
-	backend *S3Backend
-	index   *BlobIndex
-	indexer *blobIndexer
+	backend     *S3Backend
+	index       *BlobIndex
+	indexer     *blobIndexer
+	callbacks   []BlobChangeCallback
+	callbacksMu sync.RWMutex
 }
 
 func NewBlobService(cfg *S3Config, db *sqlx.DB) (*BlobService, error) {
@@ -68,27 +71,33 @@ func (b *BlobService) Shutdown(ctx context.Context) error {
 }
 
 // Backend returns the underlying blob backend instance
-func (b *BlobService) Backend() BlobBackend {
+func (b *BlobService) Backend() IBlobBackend {
 	return b.backend
 }
 
 // Index returns the blob index
-func (b *BlobService) Index() *BlobIndex {
+func (b *BlobService) Index() IBlobIndex {
 	return b.index
 }
 
-// getHooks returns the backend hooks (assumes S3Backend for now)
-func (b *BlobService) getHooks() *blobBackendHooks {
-	return b.backend.hooks
+// SetOnBlobChangeCallback sets the callback function for blob changes
+func (b *BlobService) OnBlobChange(callback BlobChangeCallback) {
+	b.callbacksMu.Lock()
+	defer b.callbacksMu.Unlock()
+	b.callbacks = append(b.callbacks, callback)
 }
 
-// SetOnBlobChangeCallback sets the callback function for blob changes
-func (b *BlobService) SetOnBlobChangeCallback(callback func(key string)) {
-	if hooks := b.getHooks(); hooks != nil {
-		hooks.OnBlobChange = callback
+// callBlobChangeCallbacks invokes all registered callbacks with the given key and event type
+func (b *BlobService) callBlobChangeCallbacks(key string, eventType BlobEventType) {
+	b.callbacksMu.RLock()
+	defer b.callbacksMu.RUnlock()
+
+	for _, callback := range b.callbacks {
+		callback(key, eventType)
 	}
 }
 
+// implements the AfterPutObjectHook
 func (b *BlobService) afterPutObject(_ *PutObjectParams, resp *PutObjectResponse) {
 	if err := b.index.Set(&BlobInfo{
 		Key:          resp.Key,
@@ -99,22 +108,23 @@ func (b *BlobService) afterPutObject(_ *PutObjectParams, resp *PutObjectResponse
 		slog.Error("update index", "hook", "PutObject", "key", resp.Key, "error", err)
 	} else {
 		slog.Info("update index", "hook", "PutObject", "key", resp.Key)
-	}
-	
-	// Call blob change callback if set
-	if hooks := b.getHooks(); hooks != nil && hooks.OnBlobChange != nil {
-		hooks.OnBlobChange(resp.Key)
+		// Call all blob change callbacks
+		b.callBlobChangeCallbacks(resp.Key, BlobEventPut)
 	}
 }
 
+// implements the AfterDeleteObjectHook
 func (b *BlobService) afterDeleteObjects(req string, _ bool) {
 	if err := b.index.Remove(req); err != nil {
 		slog.Error("update index", "hook", "DeleteObject", "key", req, "error", err)
 	} else {
 		slog.Info("update index", "hook", "DeleteObject", "key", req)
+		// Call all blob change callbacks
+		// b.callBlobChangeCallbacks(req, BlobEventDelete)
 	}
 }
 
+// implements the AfterCopyObjectHook
 func (b *BlobService) afterCopyObject(req *CopyObjectParams, resp *CopyObjectResponse) {
 	if err := b.index.Set(&BlobInfo{
 		Key:          req.DestinationKey,
@@ -125,5 +135,11 @@ func (b *BlobService) afterCopyObject(req *CopyObjectParams, resp *CopyObjectRes
 		slog.Error("update index", "hook", "CopyObject", "src", req.SourceKey, "dest", req.DestinationKey, "error", err)
 	} else {
 		slog.Info("update index", "hook", "CopyObject", "src", req.SourceKey, "dest", req.DestinationKey)
+		// Call all blob change callbacks
+		// b.callBlobChangeCallbacks(req.DestinationKey, BlobEventCopy)
 	}
+
 }
+
+// soft check interface, incase we want to add a different implementation
+var _ Service = (*BlobService)(nil)

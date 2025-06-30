@@ -1,8 +1,6 @@
 package middlewares
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -29,15 +27,15 @@ type SubdomainConfig struct {
 func SubdomainMiddleware(config SubdomainConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		host := c.Request.Host
-		
+
 		// Debug logging
 		c.Set("debug_original_host", host)
-		
+
 		// Remove port if present
 		if idx := strings.LastIndex(host, ":"); idx != -1 {
 			host = host[:idx]
 		}
-		
+
 		// Debug logging
 		c.Set("debug_host_no_port", host)
 		c.Set("debug_main_domain", config.MainDomain)
@@ -52,7 +50,7 @@ func SubdomainMiddleware(config SubdomainConfig) gin.HandlerFunc {
 
 				// Rewrite the path
 				originalPath := c.Request.URL.Path
-				
+
 				// If accessing API endpoints, don't rewrite
 				if strings.HasPrefix(originalPath, "/api/") {
 					c.Next()
@@ -95,7 +93,7 @@ func SubdomainMiddleware(config SubdomainConfig) gin.HandlerFunc {
 				// Store original path for logging/debugging
 				c.Set("original_path", originalPath)
 				c.Set("rewritten_path", newPath)
-				
+
 				c.Next()
 				return
 			}
@@ -104,11 +102,11 @@ func SubdomainMiddleware(config SubdomainConfig) gin.HandlerFunc {
 		// Check if this is a hash-based subdomain
 		if config.MainDomain != "" && isSubdomainRequest(host, config.MainDomain) {
 			subdomain := extractSubdomain(host, config.MainDomain)
-			
+
 			// Debug logging
 			c.Set("debug_is_subdomain", true)
 			c.Set("debug_extracted_subdomain", subdomain)
-			
+
 			// Check if the subdomain is a valid hash (16 character hex)
 			if len(subdomain) == 16 && isHexString(subdomain) {
 				// Debug logging
@@ -121,28 +119,28 @@ func SubdomainMiddleware(config SubdomainConfig) gin.HandlerFunc {
 						c.Set(SubdomainEmailKey, email)
 						c.Set(SubdomainHashKey, subdomain)
 						c.Set("is_hash_subdomain", true)
-						
+
 						// Rewrite the path
 						originalPath := c.Request.URL.Path
-						
+
 						// If accessing API endpoints, don't rewrite
 						if strings.HasPrefix(originalPath, "/api/") {
 							c.Next()
 							return
 						}
-						
+
 						// Remove leading slash from original path
 						if originalPath == "/" {
 							originalPath = ""
 						} else if strings.HasPrefix(originalPath, "/") {
 							originalPath = originalPath[1:]
 						}
-						
+
 						// Ensure path starts with /
 						if !strings.HasPrefix(path, "/") {
 							path = "/" + path
 						}
-						
+
 						// Construct new path
 						var newPath string
 						if path == "/" || path == "/public" {
@@ -161,11 +159,11 @@ func SubdomainMiddleware(config SubdomainConfig) gin.HandlerFunc {
 							}
 						}
 						c.Request.URL.Path = newPath
-						
+
 						// Store original path for logging/debugging
 						c.Set("original_path", originalPath)
 						c.Set("rewritten_path", newPath)
-						
+
 						c.Next()
 						return
 					}
@@ -186,7 +184,7 @@ func isSubdomainRequest(host, mainDomain string) bool {
 	if colonIndex := strings.Index(host, ":"); colonIndex != -1 {
 		host = host[:colonIndex]
 	}
-	
+
 	// Check if host ends with main domain
 	if !strings.HasSuffix(host, mainDomain) {
 		return false
@@ -203,16 +201,16 @@ func extractSubdomain(host, mainDomain string) string {
 	if colonIndex := strings.Index(host, ":"); colonIndex != -1 {
 		host = host[:colonIndex]
 	}
-	
+
 	if !strings.HasSuffix(host, mainDomain) {
 		return ""
 	}
-	
+
 	prefix := strings.TrimSuffix(host, "."+mainDomain)
 	if prefix == host {
 		return ""
 	}
-	
+
 	return prefix
 }
 
@@ -224,19 +222,6 @@ func isHexString(s string) bool {
 		}
 	}
 	return true
-}
-
-// EmailToSubdomainHash generates a subdomain-safe hash from an email address
-func EmailToSubdomainHash(email string) string {
-	// Normalize email to lowercase
-	email = strings.ToLower(strings.TrimSpace(email))
-	
-	// Create SHA256 hash
-	hash := sha256.Sum256([]byte(email))
-	
-	// Convert to hex and take first 16 characters for subdomain
-	// This provides sufficient uniqueness while keeping subdomain length reasonable
-	return hex.EncodeToString(hash[:])[:16]
 }
 
 // IsSubdomainRequest checks if the current request is a subdomain request

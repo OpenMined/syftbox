@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/server/middlewares"
 )
 
@@ -71,7 +72,7 @@ func TestSubdomainPathRewriting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			
+
 			// Create subdomain middleware config
 			config := middlewares.SubdomainConfig{
 				MainDomain: "syftbox.net",
@@ -79,9 +80,9 @@ func TestSubdomainPathRewriting(t *testing.T) {
 					return tt.email, tt.vanityPath, true
 				},
 			}
-			
+
 			router.Use(middlewares.SubdomainMiddleware(config))
-			
+
 			// Test handler to capture the rewritten path
 			router.GET("/*path", func(c *gin.Context) {
 				actualPath := c.Request.URL.Path
@@ -92,11 +93,11 @@ func TestSubdomainPathRewriting(t *testing.T) {
 			// Create request with subdomain
 			req := httptest.NewRequest("GET", tt.originalPath, nil)
 			req.Host = "abc123.syftbox.net"
-			
+
 			// Perform request
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			require.Equal(t, http.StatusOK, w.Code)
 		})
 	}
@@ -104,9 +105,9 @@ func TestSubdomainPathRewriting(t *testing.T) {
 
 func TestSubdomainSecurityHeaders(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	router := gin.New()
-	
+
 	// Create subdomain middleware config
 	config := middlewares.SubdomainConfig{
 		MainDomain: "syftbox.net",
@@ -117,11 +118,11 @@ func TestSubdomainSecurityHeaders(t *testing.T) {
 			return "", "", false
 		},
 	}
-	
+
 	router.Use(middlewares.SubdomainMiddleware(config))
 	router.Use(middlewares.CORS())
 	router.Use(middlewares.SetSubdomainSecurityHeaders)
-	
+
 	// Test handler
 	router.GET("/*path", func(c *gin.Context) {
 		c.Status(http.StatusOK)
@@ -131,10 +132,10 @@ func TestSubdomainSecurityHeaders(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test.html", nil)
 	req.Host = "abc123.syftbox.net"
 	req.Header.Set("Origin", "https://abc123.syftbox.net")
-	
+
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	
+
 	// Check security headers
 	assert.Equal(t, "https://abc123.syftbox.net", w.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
@@ -143,14 +144,14 @@ func TestSubdomainSecurityHeaders(t *testing.T) {
 	assert.Equal(t, "1; mode=block", w.Header().Get("X-XSS-Protection"))
 	assert.Equal(t, "same-origin", w.Header().Get("Referrer-Policy"))
 	assert.NotEmpty(t, w.Header().Get("Content-Security-Policy"))
-	
+
 	// Test main domain request (no subdomain)
 	req2 := httptest.NewRequest("GET", "/test.html", nil)
 	req2.Host = "syftbox.net"
-	
+
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)
-	
+
 	// Should not have subdomain-specific headers
 	assert.Empty(t, w2.Header().Get("X-Frame-Options"))
 	assert.Empty(t, w2.Header().Get("X-XSS-Protection"))
@@ -159,7 +160,7 @@ func TestSubdomainSecurityHeaders(t *testing.T) {
 
 func TestEndToEndSubdomainRouting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	tests := []struct {
 		name               string
 		host               string
@@ -192,28 +193,28 @@ func TestEndToEndSubdomainRouting(t *testing.T) {
 			checkHeaders:       true,
 		},
 		{
-			name: "Unknown subdomain returns 404",
-			host: "unknown.syftbox.net",
-			path: "/test.txt",
-			vanityDomains: map[string]struct{ email, path string }{},
+			name:               "Unknown subdomain returns 404",
+			host:               "unknown.syftbox.net",
+			path:               "/test.txt",
+			vanityDomains:      map[string]struct{ email, path string }{},
 			expectedStatusCode: http.StatusNotFound,
 			checkHeaders:       false,
 		},
 		{
-			name: "Main domain serves normally",
-			host: "syftbox.net",
-			path: "/api/health",
-			vanityDomains: map[string]struct{ email, path string }{},
+			name:               "Main domain serves normally",
+			host:               "syftbox.net",
+			path:               "/api/health",
+			vanityDomains:      map[string]struct{ email, path string }{},
 			expectedStatusCode: http.StatusOK,
 			expectedContent:    "healthy",
 			checkHeaders:       false,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			
+
 			// Configure subdomain middleware
 			config := middlewares.SubdomainConfig{
 				MainDomain: "syftbox.net",
@@ -224,22 +225,22 @@ func TestEndToEndSubdomainRouting(t *testing.T) {
 					return "", "", false
 				},
 			}
-			
+
 			router.Use(middlewares.SubdomainMiddleware(config))
 			router.Use(middlewares.CORS())
 			router.Use(middlewares.SetSubdomainSecurityHeaders)
-			
+
 			// Debug middleware to see what's happening
 			router.Use(func(c *gin.Context) {
 				fmt.Printf("DEBUG: Request path: %s, Host: %s\n", c.Request.URL.Path, c.Request.Host)
 				c.Next()
 			})
-			
+
 			// Catch all handler for rewritten paths
 			router.NoRoute(func(c *gin.Context) {
 				path := c.Request.URL.Path
 				fmt.Printf("DEBUG: NoRoute handler received path: %s\n", path)
-				
+
 				// Route based on the exact rewritten path
 				switch path {
 				case "/datasites/alice@example.com/public/test.txt":
@@ -251,27 +252,27 @@ func TestEndToEndSubdomainRouting(t *testing.T) {
 					c.String(http.StatusNotFound, "404 page not found")
 				}
 			})
-			
+
 			router.GET("/api/health", func(c *gin.Context) {
 				c.String(http.StatusOK, "healthy")
 			})
-			
+
 			// Create request
 			req := httptest.NewRequest("GET", tt.path, nil)
 			req.Host = tt.host
-			
+
 			// Perform request
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			// Check status code
 			assert.Equal(t, tt.expectedStatusCode, w.Code)
-			
+
 			// Check content if expected
 			if tt.expectedContent != "" {
 				assert.Equal(t, tt.expectedContent, w.Body.String())
 			}
-			
+
 			// Check security headers for subdomain requests
 			if tt.checkHeaders && w.Code == http.StatusOK {
 				assert.NotEmpty(t, w.Header().Get("X-Frame-Options"))
@@ -283,9 +284,9 @@ func TestEndToEndSubdomainRouting(t *testing.T) {
 
 func TestIndexHTMLAutoServing(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	router := gin.New()
-	
+
 	// Configure subdomain middleware
 	config := middlewares.SubdomainConfig{
 		MainDomain: "syftbox.net",
@@ -296,24 +297,24 @@ func TestIndexHTMLAutoServing(t *testing.T) {
 			return "", "", false
 		},
 	}
-	
+
 	router.Use(middlewares.SubdomainMiddleware(config))
-	
+
 	// Debug middleware
 	router.Use(func(c *gin.Context) {
 		fmt.Printf("DEBUG Index: Request path: %s, Host: %s\n", c.Request.URL.Path, c.Request.Host)
 		c.Next()
 	})
-	
+
 	// NoRoute handler to catch rewritten paths
 	router.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
 		fmt.Printf("DEBUG Index NoRoute: %s\n", path)
-		
+
 		// Extract the path after /datasites/alice@example.com
 		if strings.HasPrefix(path, "/datasites/alice@example.com") {
 			relativePath := strings.TrimPrefix(path, "/datasites/alice@example.com")
-			
+
 			// If path ends with /, serve index.html
 			if strings.HasSuffix(relativePath, "/") {
 				c.String(http.StatusOK, fmt.Sprintf("index.html content for %s", relativePath))
@@ -329,7 +330,7 @@ func TestIndexHTMLAutoServing(t *testing.T) {
 			c.String(http.StatusNotFound, "404 page not found")
 		}
 	})
-	
+
 	tests := []struct {
 		name            string
 		path            string
@@ -356,15 +357,15 @@ func TestIndexHTMLAutoServing(t *testing.T) {
 			expectedContent: "file content for /public/readme.md",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", tt.path, nil)
 			req.Host = "ff8d9819fc0e12bf.syftbox.net"
-			
+
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			assert.Equal(t, http.StatusOK, w.Code)
 			assert.Equal(t, tt.expectedContent, w.Body.String())
 		})
@@ -373,9 +374,9 @@ func TestIndexHTMLAutoServing(t *testing.T) {
 
 func TestRelativeLinkGeneration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	router := gin.New()
-	
+
 	// Configure subdomain middleware
 	config := middlewares.SubdomainConfig{
 		MainDomain: "syftbox.net",
@@ -386,13 +387,13 @@ func TestRelativeLinkGeneration(t *testing.T) {
 			return "", "", false
 		},
 	}
-	
+
 	router.Use(middlewares.SubdomainMiddleware(config))
-	
+
 	// NoRoute handler for rewritten paths
 	router.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		
+
 		// Check if it's a datasite path
 		if strings.HasPrefix(path, "/datasites/alice@example.com/blog/") {
 			// Generate a simple directory listing with relative links
@@ -402,21 +403,21 @@ func TestRelativeLinkGeneration(t *testing.T) {
 			html += `<li><a href="images/">Images Directory</a></li>`
 			html += `<li><a href="../">Parent Directory</a></li>`
 			html += `</ul></body></html>`
-			
+
 			c.Header("Content-Type", "text/html")
 			c.String(http.StatusOK, html)
 		} else {
 			c.String(http.StatusNotFound, "404 page not found")
 		}
 	})
-	
+
 	// Request directory listing
 	req := httptest.NewRequest("GET", "/posts/", nil)
 	req.Host = "alice.blog"
-	
+
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	
+
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), `href="post1.html"`)
 	assert.Contains(t, w.Body.String(), `href="post2.html"`)
@@ -426,7 +427,7 @@ func TestRelativeLinkGeneration(t *testing.T) {
 
 func TestACLEnforcementForSubdomains(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	// Mock ACL checker
 	aclChecker := func(email, path, requester string) bool {
 		// Public files are accessible to everyone
@@ -443,9 +444,9 @@ func TestACLEnforcementForSubdomains(t *testing.T) {
 		}
 		return false
 	}
-	
+
 	router := gin.New()
-	
+
 	// Configure subdomain middleware
 	config := middlewares.SubdomainConfig{
 		MainDomain: "syftbox.net",
@@ -459,30 +460,30 @@ func TestACLEnforcementForSubdomains(t *testing.T) {
 			return "", "", false
 		},
 	}
-	
+
 	router.Use(middlewares.SubdomainMiddleware(config))
-	
+
 	// Mock ACL middleware
 	router.Use(func(c *gin.Context) {
 		// Extract subdomain email
 		email, _ := middlewares.GetSubdomainEmail(c)
 		path := c.Request.URL.Path
-		
+
 		// Get requester from header (in real app, from JWT)
 		requester := c.GetHeader("X-Requester")
-		
+
 		if email != "" && !aclChecker(email, path, requester) {
 			c.AbortWithStatus(http.StatusForbidden)
 			return
 		}
-		
+
 		c.Next()
 	})
-	
+
 	// NoRoute handler for rewritten paths (Gin can't handle @ in route parameters)
 	router.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		
+
 		// Check if it's a datasite path that should return content
 		if strings.HasPrefix(path, "/datasites/alice@example.com/") {
 			c.String(http.StatusOK, "File content")
@@ -490,7 +491,7 @@ func TestACLEnforcementForSubdomains(t *testing.T) {
 			c.String(http.StatusNotFound, "404 page not found")
 		}
 	})
-	
+
 	tests := []struct {
 		name               string
 		host               string
@@ -534,7 +535,7 @@ func TestACLEnforcementForSubdomains(t *testing.T) {
 			expectedStatusCode: http.StatusOK,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", tt.path, nil)
@@ -542,10 +543,10 @@ func TestACLEnforcementForSubdomains(t *testing.T) {
 			if tt.requester != "" {
 				req.Header.Set("X-Requester", tt.requester)
 			}
-			
+
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			assert.Equal(t, tt.expectedStatusCode, w.Code)
 		})
 	}
@@ -553,7 +554,7 @@ func TestACLEnforcementForSubdomains(t *testing.T) {
 
 func TestVanityDomainPathMapping(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	// Test different vanity domain configurations
 	vanityConfigs := map[string]struct{ email, path string }{
 		"alice.blog":         {"alice@example.com", "/blog"},
@@ -561,9 +562,9 @@ func TestVanityDomainPathMapping(t *testing.T) {
 		"projects.alice.dev": {"alice@example.com", "/projects/2024"},
 		"alice.site":         {"alice@example.com", "/"}, // Points to root
 	}
-	
+
 	router := gin.New()
-	
+
 	// Configure subdomain middleware
 	config := middlewares.SubdomainConfig{
 		MainDomain: "syftbox.net",
@@ -574,13 +575,13 @@ func TestVanityDomainPathMapping(t *testing.T) {
 			return "", "", false
 		},
 	}
-	
+
 	router.Use(middlewares.SubdomainMiddleware(config))
-	
+
 	// NoRoute handler that echoes the path (Gin can't handle @ in route parameters)
 	router.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		
+
 		// For vanity domain path mapping test, echo back the rewritten path
 		if strings.HasPrefix(path, "/datasites/alice@example.com/") {
 			c.String(http.StatusOK, path)
@@ -588,7 +589,7 @@ func TestVanityDomainPathMapping(t *testing.T) {
 			c.String(http.StatusNotFound, "404 page not found")
 		}
 	})
-	
+
 	tests := []struct {
 		name         string
 		host         string
@@ -626,15 +627,15 @@ func TestVanityDomainPathMapping(t *testing.T) {
 			expectedPath: "/datasites/alice@example.com/about.html",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", tt.requestPath, nil)
 			req.Host = tt.host
-			
+
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			assert.Equal(t, http.StatusOK, w.Code)
 			assert.Equal(t, tt.expectedPath, w.Body.String())
 		})
@@ -643,18 +644,18 @@ func TestVanityDomainPathMapping(t *testing.T) {
 
 func TestHashAndVanityDomainCoexistence(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	router := gin.New()
-	
-	aliceHash := middlewares.EmailToSubdomainHash("alice@example.com")
-	
+
+	aliceHash := datasite.EmailToSubdomainHash("alice@example.com")
+
 	// Configure both hash and vanity domains for same user
 	vanityConfigs := map[string]struct{ email, path string }{
 		aliceHash + ".syftbox.net": {"alice@example.com", "/public"},
 		"alice.blog":               {"alice@example.com", "/blog"},
 		"alice.dev":                {"alice@example.com", "/dev"},
 	}
-	
+
 	config := middlewares.SubdomainConfig{
 		MainDomain: "syftbox.net",
 		GetVanityDomainFunc: func(domain string) (string, string, bool) {
@@ -664,26 +665,26 @@ func TestHashAndVanityDomainCoexistence(t *testing.T) {
 			return "", "", false
 		},
 	}
-	
+
 	router.Use(middlewares.SubdomainMiddleware(config))
-	
+
 	// NoRoute handler that returns the domain type (Gin can't handle @ in route parameters)
 	router.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
-		
+
 		// Check if it's a datasite path
 		if strings.HasPrefix(path, "/datasites/alice@example.com/") {
 			isVanity, _ := c.Get("is_vanity_domain")
 			vanityDomain, _ := c.Get("vanity_domain")
-			
-			response := fmt.Sprintf("Path: %s, IsVanity: %v, Domain: %v", 
+
+			response := fmt.Sprintf("Path: %s, IsVanity: %v, Domain: %v",
 				path, isVanity, vanityDomain)
 			c.String(http.StatusOK, response)
 		} else {
 			c.String(http.StatusNotFound, "404 page not found")
 		}
 	})
-	
+
 	tests := []struct {
 		name           string
 		host           string
@@ -705,15 +706,15 @@ func TestHashAndVanityDomainCoexistence(t *testing.T) {
 			expectedDomain: "alice.dev",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", "/test.html", nil)
 			req.Host = tt.host
-			
+
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			assert.Equal(t, http.StatusOK, w.Code)
 			assert.Contains(t, w.Body.String(), "IsVanity: true")
 			assert.Contains(t, w.Body.String(), fmt.Sprintf("Domain: %s", tt.expectedDomain))

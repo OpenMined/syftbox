@@ -41,7 +41,6 @@ func NewS3Backend(s3Client *s3.Client, config *S3Config) *S3Backend {
 			AfterPutObject:    nil,
 			AfterDeleteObject: nil,
 			AfterCopyObject:   nil,
-			OnBlobChange:      nil,
 		},
 	}
 }
@@ -148,7 +147,7 @@ func (s *S3Backend) PutObject(ctx context.Context, params *PutObjectParams) (*Pu
 	}
 
 	if s.hooks.AfterPutObject != nil {
-		s.hooks.AfterPutObject(params, result)
+		go s.hooks.AfterPutObject(params, result)
 	}
 
 	return result, nil
@@ -257,7 +256,7 @@ func (s *S3Backend) CopyObject(ctx context.Context, params *CopyObjectParams) (*
 	}
 
 	if s.hooks.AfterCopyObject != nil {
-		s.hooks.AfterCopyObject(params, result)
+		go s.hooks.AfterCopyObject(params, result)
 	}
 
 	return result, nil
@@ -274,7 +273,7 @@ func (s *S3Backend) DeleteObject(ctx context.Context, key string) (bool, error) 
 		return false, err
 	}
 	if s.hooks.AfterDeleteObject != nil {
-		s.hooks.AfterDeleteObject(key, true)
+		go s.hooks.AfterDeleteObject(key, true)
 	}
 	return true, nil
 }
@@ -350,4 +349,4 @@ func (s *S3Backend) Delegate() any {
 }
 
 // check if BlobClient implements IBlobClient interface
-var _ BlobBackend = (*S3Backend)(nil)
+var _ IBlobBackend = (*S3Backend)(nil)

@@ -262,7 +262,7 @@ func TestSubdomainMiddleware(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			
+
 			// Mock vanity domain function
 			vanityDomainFunc := func(domain string) (string, string, bool) {
 				if config, exists := tt.vanityDomains[domain]; exists {
@@ -277,12 +277,12 @@ func TestSubdomainMiddleware(t *testing.T) {
 			}
 
 			router.Use(SubdomainMiddleware(config))
-			
+
 			// Test handler
 			router.GET("/*path", func(c *gin.Context) {
 				actualPath := c.Request.URL.Path
 				assert.Equal(t, tt.expectedPath, actualPath)
-				
+
 				if tt.isSubdomain {
 					assert.True(t, IsSubdomainRequest(c))
 					if tt.expectedEmail != "" {
@@ -290,7 +290,7 @@ func TestSubdomainMiddleware(t *testing.T) {
 						assert.True(t, exists)
 						assert.Equal(t, tt.expectedEmail, email)
 					}
-					
+
 					// Check vanity domain flag
 					isVanity, _ := c.Get("is_vanity_domain")
 					if tt.isVanity {
@@ -306,52 +306,20 @@ func TestSubdomainMiddleware(t *testing.T) {
 				} else {
 					assert.False(t, IsSubdomainRequest(c))
 				}
-				
+
 				c.Status(http.StatusOK)
 			})
 
 			// Create request
 			req := httptest.NewRequest("GET", tt.path, nil)
 			req.Host = tt.host
-			
+
 			// Perform request
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			// Check status
 			assert.Equal(t, tt.expectedStatus, w.Code)
-		})
-	}
-}
-
-func TestEmailToSubdomainHash(t *testing.T) {
-	tests := []struct {
-		email    string
-		expected string
-	}{
-		{
-			email:    "alice@example.com",
-			expected: "ff8d9819fc0e12bf", // First 16 chars of SHA256 hash
-		},
-		{
-			email:    "ALICE@EXAMPLE.COM", // Should be case-insensitive
-			expected: "ff8d9819fc0e12bf",
-		},
-		{
-			email:    "  alice@example.com  ", // Should trim spaces
-			expected: "ff8d9819fc0e12bf",
-		},
-		{
-			email:    "bob@example.com",
-			expected: "5ff860bf1190596c", // Different hash
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.email, func(t *testing.T) {
-			hash := EmailToSubdomainHash(tt.email)
-			assert.Equal(t, tt.expected, hash)
-			assert.Equal(t, 16, len(hash)) // Hash should always be 16 characters
 		})
 	}
 }
@@ -403,9 +371,9 @@ func TestIsSubdomainRequest(t *testing.T) {
 
 func TestSubdomainContextSetting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	router := gin.New()
-	
+
 	// Mock vanity domain function
 	vanityDomainFunc := func(domain string) (string, string, bool) {
 		if domain == "alice.blog" {
@@ -413,62 +381,62 @@ func TestSubdomainContextSetting(t *testing.T) {
 		}
 		return "", "", false
 	}
-	
+
 	config := SubdomainConfig{
 		MainDomain:          "syftbox.net",
 		GetVanityDomainFunc: vanityDomainFunc,
 	}
-	
+
 	router.Use(SubdomainMiddleware(config))
-	
+
 	// Test handler that checks context values
 	router.GET("/*path", func(c *gin.Context) {
 		// Check subdomain context
 		isSubdomain := IsSubdomainRequest(c)
 		assert.True(t, isSubdomain)
-		
+
 		// Check email
 		email, exists := GetSubdomainEmail(c)
 		assert.True(t, exists)
 		assert.Equal(t, "alice@example.com", email)
-		
+
 		// Check vanity domain flag
 		isVanity, exists := c.Get("is_vanity_domain")
 		assert.True(t, exists)
 		assert.True(t, isVanity.(bool))
-		
+
 		// Check vanity domain
 		vanityDomain, exists := c.Get("vanity_domain")
 		assert.True(t, exists)
 		assert.Equal(t, "alice.blog", vanityDomain)
-		
+
 		// Check path rewriting
 		originalPath, exists := c.Get("original_path")
 		assert.True(t, exists)
 		assert.Equal(t, "index.html", originalPath)
-		
+
 		rewrittenPath, exists := c.Get("rewritten_path")
 		assert.True(t, exists)
 		assert.Equal(t, "/datasites/alice@example.com/blog/index.html", rewrittenPath)
-		
+
 		c.Status(http.StatusOK)
 	})
-	
+
 	// Create request
 	req := httptest.NewRequest("GET", "/index.html", nil)
 	req.Host = "alice.blog"
-	
+
 	// Perform request
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	
+
 	// Check status
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestPathRewritingEdgeCases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	
+
 	tests := []struct {
 		name         string
 		host         string
@@ -533,11 +501,11 @@ func TestPathRewritingEdgeCases(t *testing.T) {
 			expectedPath: "/datasites/alice@example.com/blog/post.html",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			
+
 			// Mock vanity domain function
 			vanityDomainFunc := func(domain string) (string, string, bool) {
 				if domain == tt.host {
@@ -545,29 +513,29 @@ func TestPathRewritingEdgeCases(t *testing.T) {
 				}
 				return "", "", false
 			}
-			
+
 			config := SubdomainConfig{
 				MainDomain:          "syftbox.net",
 				GetVanityDomainFunc: vanityDomainFunc,
 			}
-			
+
 			router.Use(SubdomainMiddleware(config))
-			
+
 			// Test handler
 			router.GET("/*path", func(c *gin.Context) {
 				actualPath := c.Request.URL.Path
 				assert.Equal(t, tt.expectedPath, actualPath)
 				c.Status(http.StatusOK)
 			})
-			
+
 			// Create request
 			req := httptest.NewRequest("GET", tt.originalPath, nil)
 			req.Host = tt.host
-			
+
 			// Perform request
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
-			
+
 			// Check status
 			assert.Equal(t, http.StatusOK, w.Code)
 		})
