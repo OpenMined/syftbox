@@ -1,7 +1,6 @@
 package blob
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -19,16 +18,6 @@ type BlobHandler struct {
 
 func New(blob *blob.BlobService, acl *acl.ACLService) *BlobHandler {
 	return &BlobHandler{blob: blob, acl: acl}
-}
-
-func (h *BlobHandler) UploadMultipart(ctx *gin.Context) {
-	// todo
-	api.AbortWithError(ctx, http.StatusNotImplemented, api.CodeInvalidRequest, fmt.Errorf("not implemented"))
-}
-
-func (h *BlobHandler) UploadComplete(ctx *gin.Context) {
-	// todo
-	api.AbortWithError(ctx, http.StatusNotImplemented, api.CodeInvalidRequest, fmt.Errorf("not implemented"))
 }
 
 func (h *BlobHandler) ListObjects(ctx *gin.Context) {
