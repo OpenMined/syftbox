@@ -87,7 +87,8 @@
     }
 
     .size-column,
-    .date-column {
+    .date-column,
+    .link-column {
       color: var(--secondary-text);
       font-size: 0.875rem;
     }
@@ -122,6 +123,10 @@
       .date-column {
         display: none;
       }
+
+      .link-column {
+        display: none;
+      }
     }
   </style>
 </head>
@@ -138,6 +143,7 @@
         <th>Name</th>
         <th class="size-column">Size</th>
         <th class="date-column">Modified</th>
+        {{if .IsRootPage}}<th class="link-column">Link</th>{{end}}
       </tr>
     </thead>
     <tbody>
@@ -147,12 +153,14 @@
         </td>
         <td class="size-column"></td>
         <td class="date-column"></td>
+        {{if .IsRootPage}}<td class="link-column">{{/* Files don't get subdomain links on root page */}}</td>{{end}}
       </tr>
       {{range .Folders}}
       <tr>
         <td><a href="{{if $.IsSubdomain}}./{{.}}/{{else}}/datasites{{$.Path}}{{.}}/{{end}}"><span class="icon">📁</span>{{.}}/</a></td>
         <td class="size-column">Directory</td>
         <td class="date-column">-</td>
+        {{if $.IsRootPage}}<td class="link-column"><a href="{{subdomainURL . $.BaseURL $.Scheme}}" title="Subdomain for {{.}}">🔗</a></td>{{end}}
       </tr>
       {{end}}
       {{range .Files}}
@@ -160,6 +168,7 @@
         <td><a href="{{if $.IsSubdomain}}./{{basename .Key}}{{else}}/datasites/{{.Key}}{{end}}"><span class="icon">📄</span>{{basename .Key}}</a></td>
         <td class="size-column">{{humanizeSize .Size}}</td>
         <td class="date-column">{{.LastModified}}</td>
+        {{if $.IsRootPage}}<td class="link-column">{{/* Files don't get subdomain links on root page */}}</td>{{end}}
       </tr>
       {{end}}
     </tbody>
