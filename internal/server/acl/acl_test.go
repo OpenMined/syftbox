@@ -7,8 +7,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func aclSvc() *ACLService {
+	// todo mock blob service later
+	return NewACLService(nil)
+}
+
 func TestAclServiceGetRule(t *testing.T) {
-	service := NewACLService()
+	service := aclSvc()
 
 	// Add a ruleset
 	ruleset := aclspec.NewRuleSet(
@@ -43,7 +48,7 @@ func TestAclServiceGetRule(t *testing.T) {
 }
 
 func TestAclServiceRemoveRuleSet(t *testing.T) {
-	service := NewACLService()
+	service := aclSvc()
 
 	// Add two rulesets
 	ruleset1 := aclspec.NewRuleSet(
@@ -95,7 +100,7 @@ func TestAclServiceRemoveRuleSet(t *testing.T) {
 }
 
 func TestAclServiceCanAccess(t *testing.T) {
-	service := NewACLService()
+	service := aclSvc()
 
 	// Add a ruleset with different access levels
 	ruleset := aclspec.NewRuleSet(
@@ -144,7 +149,7 @@ func TestAclServiceCanAccess(t *testing.T) {
 }
 
 func TestAclServiceFileLimits(t *testing.T) {
-	service := NewACLService()
+	service := aclSvc()
 
 	owner := "user1@email.com"
 	someUser := "user2@email.com"
@@ -179,7 +184,7 @@ func TestAclServiceFileLimits(t *testing.T) {
 }
 
 func TestAclServiceLoadRuleSets(t *testing.T) {
-	service := NewACLService()
+	service := aclSvc()
 
 	// Create multiple rulesets
 	ruleset1 := aclspec.NewRuleSet(
@@ -217,7 +222,7 @@ func TestAclServiceLoadRuleSets(t *testing.T) {
 }
 
 func TestAclServiceCacheInvalidation(t *testing.T) {
-	service := NewACLService()
+	service := aclSvc()
 
 	// Add a ruleset
 	rulesetv1 := aclspec.NewRuleSet(

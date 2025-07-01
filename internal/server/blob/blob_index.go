@@ -1,6 +1,8 @@
 package blob
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -46,7 +48,9 @@ func (bi *BlobIndex) Get(key string) (*BlobInfo, bool) {
 	var blob BlobInfo
 	err := bi.db.Get(&blob, "SELECT key, etag, size, last_modified FROM blobs WHERE key = ?", key)
 	if err != nil {
-		slog.Error("sqlite error", "op", "Get", "key", key, "error", err)
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Error("sqlite error", "op", "Get", "key", key, "error", err)
+		}
 		return nil, false
 	}
 

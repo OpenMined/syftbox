@@ -6,27 +6,56 @@ import (
 	"time"
 )
 
+// Hook function signatures
+type AfterPutObjectHook func(req *PutObjectParams, resp *PutObjectResponse)
+type AfterCopyObjectHook func(req *CopyObjectParams, resp *CopyObjectResponse)
+type AfterDeleteObjectHook func(req string, resp bool)
+
+// blobBackendHooks provides notification hooks from blob backend operations (like S3) to the blob service
 type blobBackendHooks struct {
-	AfterPutObject    func(req *PutObjectParams, resp *PutObjectResponse)
-	AfterCopyObject   func(req *CopyObjectParams, resp *CopyObjectResponse)
-	AfterDeleteObject func(req string, resp bool)
-	OnBlobChange      func(key string) // New callback for blob changes
+	AfterPutObject    AfterPutObjectHook
+	AfterCopyObject   AfterCopyObjectHook
+	AfterDeleteObject AfterDeleteObjectHook
 }
 
-// not enforced yet
-type BlobBackend interface {
+// IBlobBackend defines the interface for blob storage backend operations.
+// It provides methods for basic CRUD operations on blob objects including
+// single-part uploads, multipart uploads, presigned URLs, and object management.
+// The interface is designed to be implemented by different storage backends
+// such as S3, local filesystem, or other cloud storage providers.
+type IBlobBackend interface {
+	// GetObject retrieves an object from storage by its key
 	GetObject(ctx context.Context, key string) (*GetObjectResponse, error)
+
+	// GetObjectPresigned generates a presigned URL for downloading an object
 	GetObjectPresigned(ctx context.Context, key string) (string, error)
+
+	// PutObject uploads a single object to storage
 	PutObject(ctx context.Context, params *PutObjectParams) (*PutObjectResponse, error)
+
+	// PutObjectPresigned generates a presigned URL for uploading an object
 	PutObjectPresigned(ctx context.Context, key string) (string, error)
+
+	// PutObjectMultipart initiates a multipart upload and returns upload URLs
 	PutObjectMultipart(ctx context.Context, params *PutObjectMultipartParams) (*PutObjectMultipartResponse, error)
+
+	// CompleteMultipartUpload finalizes a multipart upload
 	CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error)
+
+	// CopyObject copies an object from one location to another
 	CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error)
+
+	// DeleteObject removes an object from storage, returns true if successful
 	DeleteObject(ctx context.Context, key string) (bool, error)
+
+	// ListObjects returns a list of all objects in storage
 	ListObjects(ctx context.Context) ([]*BlobInfo, error)
+
+	// Delegate returns the underlying backend implementation
 	Delegate() any
 
-	// private
+	// setHooks sets the notification hooks for backend operations
+	// This is a private method used internally by the blob service
 	setHooks(hooks *blobBackendHooks)
 }
 

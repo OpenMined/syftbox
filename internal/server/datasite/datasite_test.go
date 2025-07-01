@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/openmined/syftbox/internal/server/middlewares"
 )
 
 func TestDomainOwnershipValidation(t *testing.T) {
@@ -70,7 +69,7 @@ func TestDomainOwnershipValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a minimal datasite service for testing
 			ds := &DatasiteService{domain: tt.mainDomain}
-			
+
 			result := ds.isAllowedDomain(tt.domain, tt.email)
 			assert.Equal(t, tt.expectedResult, result, tt.description)
 		})
@@ -88,7 +87,7 @@ func TestHelperFunctions(t *testing.T) {
 			{"ABCDEF1234567890", true},
 			{"not-hex-string!!", false},
 			{"gg8d9819fc0e12bf", false}, // 'g' is not hex
-			{"", true}, // Empty string technically contains only hex chars
+			{"", true},                  // Empty string technically contains only hex chars
 		}
 
 		for _, tt := range tests {
@@ -97,7 +96,7 @@ func TestHelperFunctions(t *testing.T) {
 		}
 	})
 
-	t.Run("ExtractDatasiteName", func(t *testing.T) {
+	t.Run("GetOwner", func(t *testing.T) {
 		tests := []struct {
 			path     string
 			expected string
@@ -110,27 +109,27 @@ func TestHelperFunctions(t *testing.T) {
 		}
 
 		for _, tt := range tests {
-			result := ExtractDatasiteName(tt.path)
-			assert.Equal(t, tt.expected, result, "ExtractDatasiteName(%q)", tt.path)
+			result := GetOwner(tt.path)
+			assert.Equal(t, tt.expected, result, "GetOwner(%q)", tt.path)
 		}
 	})
 }
 
 func TestEmailHashExpansion(t *testing.T) {
 	email := "alice@example.com"
-	expectedHash := middlewares.EmailToSubdomainHash(email)
+	expectedHash := EmailToSubdomainHash(email)
 	domain := "{email-hash}"
-	
+
 	// Create a minimal datasite service
 	ds := &DatasiteService{domain: "syftbox.local"}
-	
+
 	// Test the logic that would expand {email-hash}
 	// This is the same logic used in LoadVanityDomains
 	if domain == "{email-hash}" {
-		hash := middlewares.EmailToSubdomainHash(email)
+		hash := EmailToSubdomainHash(email)
 		domain = hash + "." + ds.domain
 	}
-	
+
 	expectedDomain := expectedHash + ".syftbox.local"
 	assert.Equal(t, expectedDomain, domain, "{email-hash} should expand to user's hash subdomain")
 }
@@ -220,30 +219,30 @@ func TestEmailHashConfigParsing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create subdomain mapping to simulate the vanity domain loading process
 			subdomainMapping := NewSubdomainMapping()
-			
+
 			// Simulate the LoadVanityDomains process for the specific user
 			mainDomain := "syftbox.local"
-			
+
 			// Process the config domains (this simulates what LoadVanityDomains does)
 			for domain, pathInterface := range tt.configDomains {
 				path, ok := pathInterface.(string)
 				if !ok {
 					path = "/public" // default
 				}
-				
+
 				// Expand {email-hash} if present (this is the key logic we're testing)
 				if domain == "{email-hash}" {
-					hash := middlewares.EmailToSubdomainHash(tt.email)
+					hash := EmailToSubdomainHash(tt.email)
 					domain = hash + "." + mainDomain
 				}
-				
+
 				// Add the vanity domain mapping
 				subdomainMapping.AddVanityDomain(domain, tt.email, path)
 			}
-			
+
 			// Test if the expanded domain exists and has correct configuration
 			vanityConfig := subdomainMapping.GetMapping(tt.expectedDomain)
-			
+
 			if tt.shouldExist {
 				assert.NotNil(t, vanityConfig, tt.description)
 				if vanityConfig != nil {
@@ -260,48 +259,48 @@ func TestEmailHashConfigParsing(t *testing.T) {
 func TestEmailHashConfigIntegration(t *testing.T) {
 	// Test that simulates a real settings.yaml config parsing scenario
 	email := "alice@example.com"
-	expectedHash := middlewares.EmailToSubdomainHash(email)
-	
+	expectedHash := EmailToSubdomainHash(email)
+
 	// Simulate YAML config structure
 	type MockSettings struct {
 		Domains map[string]interface{} `yaml:"domains"`
 	}
-	
+
 	mockSettings := MockSettings{
 		Domains: map[string]interface{}{
-			"{email-hash}":  "/blog",
-			"alice.dev":     "/portfolio", 
-			"alice.site":    "/",
+			"{email-hash}": "/blog",
+			"alice.dev":    "/portfolio",
+			"alice.site":   "/",
 		},
 	}
-	
+
 	// Create subdomain mapping and datasite service
 	subdomainMapping := NewSubdomainMapping()
 	mainDomain := "syftbox.local"
-	
+
 	// Process domains (simulate LoadVanityDomains logic)
 	for domain, pathInterface := range mockSettings.Domains {
 		path, ok := pathInterface.(string)
 		if !ok {
 			path = "/public"
 		}
-		
+
 		// This is the key expansion logic for {email-hash}
 		if domain == "{email-hash}" {
-			hash := middlewares.EmailToSubdomainHash(email)
+			hash := EmailToSubdomainHash(email)
 			domain = hash + "." + mainDomain
 		}
-		
+
 		subdomainMapping.AddVanityDomain(domain, email, path)
 	}
-	
+
 	// Verify all domains were created correctly
 	expectedDomains := map[string]string{
-		expectedHash + ".syftbox.local": "/blog",      // Expanded from {email-hash}
+		expectedHash + ".syftbox.local": "/blog", // Expanded from {email-hash}
 		"alice.dev":                     "/portfolio",
 		"alice.site":                    "/",
 	}
-	
+
 	for expectedDomain, expectedPath := range expectedDomains {
 		config := subdomainMapping.GetMapping(expectedDomain)
 		assert.NotNil(t, config, "Domain %s should exist", expectedDomain)
@@ -310,13 +309,13 @@ func TestEmailHashConfigIntegration(t *testing.T) {
 			assert.Equal(t, expectedPath, config.Path, "Path should match for domain %s", expectedDomain)
 		}
 	}
-	
+
 	// Verify the hash subdomain specifically
 	hashSubdomain := expectedHash + ".syftbox.local"
 	config := subdomainMapping.GetMapping(hashSubdomain)
 	assert.NotNil(t, config, "Hash subdomain should be created from {email-hash}")
 	assert.Equal(t, "/blog", config.Path, "Hash subdomain should have /blog path")
-	
+
 	// Verify GetVanityDomainFunc would work correctly
 	getVanityDomainFunc := func(domain string) (string, string, bool) {
 		if config := subdomainMapping.GetMapping(domain); config != nil {
@@ -324,7 +323,7 @@ func TestEmailHashConfigIntegration(t *testing.T) {
 		}
 		return "", "", false
 	}
-	
+
 	// Test the function with the expanded hash domain
 	returnedEmail, returnedPath, exists := getVanityDomainFunc(hashSubdomain)
 	assert.True(t, exists, "Hash subdomain should be found by GetVanityDomainFunc")

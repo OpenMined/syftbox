@@ -28,12 +28,9 @@ func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 		return nil, err
 	}
 
-	aclSvc := acl.NewACLService()
+	aclSvc := acl.NewACLService(blobSvc)
 
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc, config.HTTP.Domain)
-
-	// Set up blob change callback for dynamic vanity domain reloading
-	blobSvc.SetOnBlobChangeCallback(datasiteSvc.HandleBlobChange)
 
 	authSvc := auth.NewAuthService(&config.Auth, emailSvc)
 
@@ -50,6 +47,11 @@ func (s *Services) Start(ctx context.Context) error {
 	// first start blob service - it populates the blob index
 	if err := s.Blob.Start(ctx); err != nil {
 		return fmt.Errorf("start blob service: %w", err)
+	}
+
+	// then start acl service
+	if err := s.ACL.Start(ctx); err != nil {
+		return fmt.Errorf("start acl service: %w", err)
 	}
 
 	// then start datasite service

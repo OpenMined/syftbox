@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -26,18 +27,14 @@ import (
 //go:embed index.html.tmpl
 var indexOfTmpl string
 
-//go:embed not_found.html.tmpl
-var notFoundOfTmpl string
-
 type ExplorerHandler struct {
-	blob     *blob.BlobService
-	acl      *acl.ACLService
+	blob     blob.Service
+	acl      acl.Service
 	tplIndex *template.Template
-	tpl404   *template.Template
 }
 
 // New creates a new Explorer instance
-func New(svc *blob.BlobService, acl *acl.ACLService) *ExplorerHandler {
+func New(blobSvc blob.Service, aclSvc acl.Service) *ExplorerHandler {
 	funcMap := template.FuncMap{
 		"basename": filepath.Base,
 		"humanizeSize": func(size int64) string {
@@ -46,62 +43,27 @@ func New(svc *blob.BlobService, acl *acl.ACLService) *ExplorerHandler {
 	}
 
 	tplIndex := template.Must(template.New("index").Funcs(funcMap).Parse(indexOfTmpl))
-	tpl404 := template.Must(template.New("notfound").Funcs(funcMap).Parse(notFoundOfTmpl))
 
 	return &ExplorerHandler{
-		blob:     svc,
-		acl:      acl,
+		blob:     blobSvc,
+		acl:      aclSvc,
 		tplIndex: tplIndex,
-		tpl404:   tpl404,
 	}
 }
 
 func (e *ExplorerHandler) Handler(c *gin.Context) {
-	// For subdomain requests that were rewritten, use the full request path
-	// Otherwise use the filepath parameter from the route
-	path := ""
-	if middlewares.IsSubdomainRequest(c) {
-		// Use the rewritten path, removing the leading /datasites/
-		path = strings.TrimPrefix(c.Request.URL.Path, "/datasites/")
-	} else {
-		path = strings.TrimPrefix(c.Param("filepath"), "/")
+	// by default explorer will serve index.html if it exists
+	// but we can disable this by passing ?index=0
+	serveIndex, err := strconv.ParseBool(c.Query("serveIndex"))
+	if err != nil {
+		serveIndex = true
 	}
-	
-	// For subdomain requests, we need to handle the path differently
-	// The middleware has already rewritten the path to /datasites/{email}/public/*
-	// but we need to be aware of this for proper display and navigation
-	if middlewares.IsSubdomainRequest(c) {
-		// The path already includes the datasite prefix from the middleware rewrite
-		// We need to store this information for proper link generation in templates
-		c.Set("subdomain_mode", true)
-		if email, exists := middlewares.GetSubdomainEmail(c); exists {
-			c.Set("datasite_email", email)
-		}
-	}
-	
+
+	path := strings.TrimPrefix(c.Param("filepath"), "/")
 	contents := e.listContents(path)
-	if contents.IsDir || contents.EmptyDir() {
-		// Check if index.html exists in this directory
-		indexPath := path
-		if !strings.HasSuffix(indexPath, "/") {
-			indexPath += "/"
-		}
-		indexPath += "index.html"
-		
-		// Try to find index.html in the directory
-		if _, exists := e.blob.Index().Get(indexPath); exists {
-			// Check if user has access to the index.html
-			if err := e.acl.CanAccess(
-				&acl.User{ID: aclspec.Everyone},
-				&acl.File{Path: indexPath},
-				acl.AccessRead,
-			); err == nil {
-				// Serve index.html instead of directory listing
-				e.serveFile(c, indexPath)
-				return
-			}
-		}
-		// Show directory listing
+	if contents.HasIndex && serveIndex {
+		e.serveIndex(c, path)
+	} else if contents.IsDir || contents.EmptyDir() {
 		e.serveDir(c, path, contents)
 	} else {
 		e.serveFile(c, path)
@@ -112,7 +74,7 @@ func (e *ExplorerHandler) Handler(c *gin.Context) {
 func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	files := []*blob.BlobInfo{}
 	folders := map[string]bool{}
-	isDir := false
+	isDir := strings.HasSuffix(prefix, "/") || prefix == ""
 
 	// Normalize prefix to end with a slash if not empty
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -124,7 +86,7 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	var filterPrefix string
 	if datasite == "" {
 		// root index - show all datasites with ACL files
-		filterPrefix = "*/" + aclspec.AclFileName
+		filterPrefix = "*/" + aclspec.ACLFileName
 	} else {
 		// Show content based on the actual path, let ACL system control access
 		filterPrefix = prefix
@@ -134,14 +96,15 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	if err != nil {
 		slog.Error("Failed to filter blobs by prefix", "error", err)
 		return &directoryContents{
-			IsDir:   false,
-			Files:   []*blob.BlobInfo{},
-			Folders: []string{},
+			IsDir:    false,
+			HasIndex: false,
+			Files:    []*blob.BlobInfo{},
+			Folders:  []string{},
 		}
 	}
 
+	var hasIndex bool
 	for _, blob := range blobs {
-
 		// check if public readable
 		if err := e.acl.CanAccess(
 			&acl.User{ID: aclspec.Everyone},
@@ -168,6 +131,9 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 			} else {
 				// It's a file
 				files = append(files, blob)
+				if strings.HasSuffix(blob.Key, "/index.html") {
+					hasIndex = true
+				}
 			}
 		}
 	}
@@ -175,9 +141,10 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	// Get folder names from the map and sort them
 	folderNames := slices.Sorted(maps.Keys(folders))
 	return &directoryContents{
-		IsDir:   isDir,
-		Files:   files,
-		Folders: folderNames,
+		IsDir:    isDir,
+		HasIndex: hasIndex,
+		Files:    files,
+		Folders:  folderNames,
 	}
 }
 
@@ -212,25 +179,35 @@ func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *direct
 	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.Status(http.StatusOK)
 	if err := e.tplIndex.Execute(c.Writer, data); err != nil {
-		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to execute template: %w", err))
+		api.Serve500HTML(c, fmt.Errorf("failed to execute template: %w", err))
 	}
+}
+
+func (e *ExplorerHandler) serveIndex(c *gin.Context, path string) {
+	e.serveFile(c, filepath.Join(path, "index.html"))
 }
 
 // Serve a file from S3
 func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
+	_, exists := e.blob.Index().Get(key)
+	if !exists {
+		api.Serve404HTML(c)
+		return
+	}
+
 	if err := e.acl.CanAccess(
 		&acl.User{ID: aclspec.Everyone},
 		&acl.File{Path: key},
 		acl.AccessRead,
 	); err != nil {
 		// don't reveal if the file is private or not
-		e.serve404(c, key)
+		api.Serve403HTML(c)
 		return
 	}
 
 	resp, err := e.blob.Backend().GetObject(c.Request.Context(), key)
 	if err != nil {
-		e.serve404(c, key)
+		api.Serve404HTML(c)
 		return
 	}
 	defer resp.Body.Close()
@@ -243,7 +220,7 @@ func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	// Stream response body directly
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
-		api.AbortWithError(c, http.StatusInternalServerError, api.CodeInternalError, fmt.Errorf("failed to stream file: %w", err))
+		api.Serve500HTML(c, fmt.Errorf("failed to stream file: %w", err))
 		return
 	}
 }
@@ -255,16 +232,6 @@ func (e *ExplorerHandler) detectContentType(key string) string {
 		return mimeType
 	}
 	return "application/octet-stream"
-}
-
-func (e *ExplorerHandler) serve404(c *gin.Context, key string) {
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.Status(http.StatusNotFound)
-	// Even if template execution fails, we've already set 404 status which is what we want
-	if err := e.tpl404.Execute(c.Writer, map[string]any{"Key": key}); err != nil {
-		// Log the error but don't try to change status since headers are already sent
-		slog.Error("Failed to execute 404 template", "error", err, "key", key)
-	}
 }
 
 func datasiteFromPath(path string) string {

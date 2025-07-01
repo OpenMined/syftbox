@@ -45,7 +45,6 @@ func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 
 	return func(ctx *gin.Context) {
 		// Check for guest access first if allowed
-		slog.Debug("Checking for guest access", "allowGuest", allowGuest)
 		if allowGuest {
 			user := ctx.Query("user")
 			if user == "" {
