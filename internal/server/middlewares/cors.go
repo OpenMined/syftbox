@@ -2,7 +2,6 @@ package middlewares
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -17,29 +16,24 @@ var defaultCORSConfig = cors.Config{
 	AllowWebSockets:  true,
 }
 
-var strictCORSConfig = cors.Config{
-	AllowAllOrigins: false,
-	AllowOriginFunc: func(origin string) bool {
-		// todo perhaps should always have https?
-		return true
-	},
-	AllowHeaders:     []string{"Accept", "Content-Type", "Content-Length", "Accept-Encoding", "Authorization", "X-CSRF-Token"},
-	AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-	AllowCredentials: true,
-	AllowWebSockets:  false,
-	MaxAge:           24 * time.Hour,
-}
-
 var (
 	defaultCORS = cors.New(defaultCORSConfig)
-	strictCORS  = cors.New(strictCORSConfig)
 )
 
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if IsSubdomainRequest(c) {
-			// apply strict CORS
-			strictCORS(c)
+			origin := c.Request.Header.Get("Origin")
+
+			if len(origin) != 0 {
+				// For subdomain requests, apply strict CORS policy
+				// Only allow same-origin requests with credentials
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Credentials", "true")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, Authorization, X-CSRF-Token")
+				c.Header("Access-Control-Max-Age", "86400")
+			}
 
 			// Prevent clickjacking
 			c.Header("X-Frame-Options", "SAMEORIGIN")

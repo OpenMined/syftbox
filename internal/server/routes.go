@@ -39,7 +39,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	}
 
 	if cfg.HTTP.Domain != "" {
-		r.Use(middlewares.SubdomainRewrite(r, &middlewares.SubdomainRouterConfig{
+		r.Use(middlewares.SubdomainRewrite(r, &middlewares.SubdomainRewriteConfig{
 			Domain:  cfg.HTTP.Domain,
 			Mapping: svc.Datasite.GetSubdomainMapping(),
 		}))

@@ -3,14 +3,14 @@ package middlewares
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestSubdomainMiddleware(t *testing.T) {
+func TestSubdomainRewrite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
@@ -20,10 +20,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 		mainDomain     string
 		vanityDomains  map[string]struct{ email, path string }
 		expectedPath   string
-		expectedEmail  string
 		expectedStatus int
 		isSubdomain    bool
-		isVanity       bool
 	}{
 		// Hash subdomain tests
 		{
@@ -35,10 +33,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"ff8d9819fc0e12bf.syftbox.net": {"alice@example.com", "/public"},
 			},
 			expectedPath:   "/datasites/alice@example.com/public/index.html",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		{
 			name:       "Hash subdomain with root path",
@@ -49,10 +45,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"ff8d9819fc0e12bf.syftbox.net": {"alice@example.com", "/public"},
 			},
 			expectedPath:   "/datasites/alice@example.com/public/",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		{
 			name:       "Hash subdomain with nested path",
@@ -63,10 +57,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"ff8d9819fc0e12bf.syftbox.net": {"alice@example.com", "/public"},
 			},
 			expectedPath:   "/datasites/alice@example.com/public/docs/readme.md",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		// Vanity domain tests
 		{
@@ -78,10 +70,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"alice.blog": {"alice@example.com", "/blog"},
 			},
 			expectedPath:   "/datasites/alice@example.com/blog/post.html",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		{
 			name:       "Vanity domain with root path pointing to subdirectory",
@@ -92,10 +82,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"alice.blog": {"alice@example.com", "/blog"},
 			},
 			expectedPath:   "/datasites/alice@example.com/blog/",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		{
 			name:       "Vanity domain with nested custom path",
@@ -106,10 +94,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"projects.alice.dev": {"alice@example.com", "/projects/2024"},
 			},
 			expectedPath:   "/datasites/alice@example.com/projects/2024/demo/index.html",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		{
 			name:       "Vanity domain pointing to root",
@@ -120,10 +106,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"alice.site": {"alice@example.com", "/"},
 			},
 			expectedPath:   "/datasites/alice@example.com/about.html",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		// API endpoint tests
 		{
@@ -135,10 +119,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"ff8d9819fc0e12bf.syftbox.net": {"alice@example.com", "/public"},
 			},
 			expectedPath:   "/api/v1/status", // Should not be rewritten
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
-			isSubdomain:    true,
-			isVanity:       true,
+			isSubdomain:    true, // API paths are not rewritten, but are subdomain requests
 		},
 		{
 			name:       "API endpoint on vanity domain",
@@ -149,10 +131,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"alice.blog": {"alice@example.com", "/blog"},
 			},
 			expectedPath:   "/api/v1/posts", // Should not be rewritten
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
-			isSubdomain:    true,
-			isVanity:       true,
+			isSubdomain:    true, // API paths are not rewritten, but are subdomain requests
 		},
 		// Non-subdomain tests
 		{
@@ -164,7 +144,6 @@ func TestSubdomainMiddleware(t *testing.T) {
 			expectedPath:   "/index.html",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    false,
-			isVanity:       false,
 		},
 		{
 			name:           "Unknown subdomain",
@@ -173,9 +152,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 			mainDomain:     "syftbox.net",
 			vanityDomains:  map[string]struct{ email, path string }{},
 			expectedPath:   "/index.html",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError, // Should return error for unknown subdomain
 			isSubdomain:    false,
-			isVanity:       false,
 		},
 		{
 			name:           "Unknown vanity domain",
@@ -184,9 +162,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 			mainDomain:     "syftbox.net",
 			vanityDomains:  map[string]struct{ email, path string }{},
 			expectedPath:   "/index.html",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError, // Should return error for unknown vanity domain
 			isSubdomain:    false,
-			isVanity:       false,
 		},
 		{
 			name:           "Different domain entirely",
@@ -195,9 +172,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 			mainDomain:     "syftbox.net",
 			vanityDomains:  map[string]struct{ email, path string }{},
 			expectedPath:   "/index.html",
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError, // Should return error for unknown domain
 			isSubdomain:    false,
-			isVanity:       false,
 		},
 		// Port handling
 		{
@@ -209,10 +185,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"ff8d9819fc0e12bf.syftbox.net": {"alice@example.com", "/public"},
 			},
 			expectedPath:   "/datasites/alice@example.com/public/index.html",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		{
 			name:       "Vanity domain with port",
@@ -223,10 +197,8 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"alice.blog": {"alice@example.com", "/blog"},
 			},
 			expectedPath:   "/datasites/alice@example.com/blog/post.html",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
 		},
 		// Edge cases
 		{
@@ -238,24 +210,29 @@ func TestSubdomainMiddleware(t *testing.T) {
 				"alice.blog": {"alice@example.com", "/blog"},
 			},
 			expectedPath:   "/datasites/alice@example.com/blog/",
-			expectedEmail:  "alice@example.com",
 			expectedStatus: http.StatusOK,
 			isSubdomain:    true,
-			isVanity:       true,
+		},
+		// Local development tests
+		{
+			name:           "Localhost request",
+			host:           "localhost",
+			path:           "/index.html",
+			mainDomain:     "syftbox.net",
+			vanityDomains:  map[string]struct{ email, path string }{},
+			expectedPath:   "/index.html",
+			expectedStatus: http.StatusOK,
+			isSubdomain:    false,
 		},
 		{
-			name:       "Double slash prevention",
-			host:       "alice.blog",
-			path:       "//double//slash//",
-			mainDomain: "syftbox.net",
-			vanityDomains: map[string]struct{ email, path string }{
-				"alice.blog": {"alice@example.com", "/blog"},
-			},
-			expectedPath:   "/datasites/alice@example.com/blog//double//slash//",
-			expectedEmail:  "alice@example.com",
+			name:           "127.0.0.1 request",
+			host:           "127.0.0.1",
+			path:           "/index.html",
+			mainDomain:     "syftbox.net",
+			vanityDomains:  map[string]struct{ email, path string }{},
+			expectedPath:   "/index.html",
 			expectedStatus: http.StatusOK,
-			isSubdomain:    true,
-			isVanity:       true,
+			isSubdomain:    false,
 		},
 	}
 
@@ -263,20 +240,18 @@ func TestSubdomainMiddleware(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
 
-			// Mock vanity domain function
-			vanityDomainFunc := func(domain string) (string, string, bool) {
-				if config, exists := tt.vanityDomains[domain]; exists {
-					return config.email, config.path, true
-				}
-				return "", "", false
+			// Create subdomain mapping
+			subdomainMapping := datasite.NewSubdomainMapping()
+			for domain, config := range tt.vanityDomains {
+				subdomainMapping.AddVanityDomain(domain, config.email, config.path)
 			}
 
-			config := SubdomainConfig{
-				MainDomain:          tt.mainDomain,
-				GetVanityDomainFunc: vanityDomainFunc,
+			config := &SubdomainRewriteConfig{
+				Domain:  tt.mainDomain,
+				Mapping: subdomainMapping,
 			}
 
-			router.Use(SubdomainMiddleware(config))
+			router.Use(SubdomainRewrite(router, config))
 
 			// Test handler
 			router.GET("/*path", func(c *gin.Context) {
@@ -285,24 +260,6 @@ func TestSubdomainMiddleware(t *testing.T) {
 
 				if tt.isSubdomain {
 					assert.True(t, IsSubdomainRequest(c))
-					if tt.expectedEmail != "" {
-						email, exists := GetSubdomainEmail(c)
-						assert.True(t, exists)
-						assert.Equal(t, tt.expectedEmail, email)
-					}
-
-					// Check vanity domain flag
-					isVanity, _ := c.Get("is_vanity_domain")
-					if tt.isVanity {
-						assert.True(t, isVanity.(bool))
-						vanityDomain, _ := c.Get("vanity_domain")
-						// Remove port for comparison
-						expectedDomain := tt.host
-						if idx := strings.LastIndex(expectedDomain, ":"); idx != -1 {
-							expectedDomain = expectedDomain[:idx]
-						}
-						assert.Equal(t, expectedDomain, vanityDomain)
-					}
 				} else {
 					assert.False(t, IsSubdomainRequest(c))
 				}
@@ -324,70 +281,21 @@ func TestSubdomainMiddleware(t *testing.T) {
 	}
 }
 
-func TestExtractSubdomain(t *testing.T) {
-	tests := []struct {
-		host       string
-		mainDomain string
-		expected   string
-	}{
-		{"abc123.syftbox.net", "syftbox.net", "abc123"},
-		{"www.syftbox.net", "syftbox.net", "www"},
-		{"syftbox.net", "syftbox.net", ""},
-		{"example.com", "syftbox.net", ""},
-		{"deep.sub.syftbox.net", "syftbox.net", "deep.sub"},
-		{"", "syftbox.net", ""},
-		{"abc123.syftbox.net:8080", "syftbox.net", "abc123"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.host, func(t *testing.T) {
-			result := extractSubdomain(tt.host, tt.mainDomain)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
-func TestIsSubdomainRequest(t *testing.T) {
-	tests := []struct {
-		host       string
-		mainDomain string
-		expected   bool
-	}{
-		{"abc123.syftbox.net", "syftbox.net", true},
-		{"www.syftbox.net", "syftbox.net", false}, // www is excluded
-		{"syftbox.net", "syftbox.net", false},
-		{"example.com", "syftbox.net", false},
-		{"", "syftbox.net", false},
-		{"deep.sub.syftbox.net", "syftbox.net", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.host, func(t *testing.T) {
-			result := isSubdomainRequest(tt.host, tt.mainDomain)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 func TestSubdomainContextSetting(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
 
-	// Mock vanity domain function
-	vanityDomainFunc := func(domain string) (string, string, bool) {
-		if domain == "alice.blog" {
-			return "alice@example.com", "/blog", true
-		}
-		return "", "", false
+	// Create subdomain mapping
+	subdomainMapping := datasite.NewSubdomainMapping()
+	subdomainMapping.AddVanityDomain("alice.blog", "alice@example.com", "/blog")
+
+	config := &SubdomainRewriteConfig{
+		Domain:  "syftbox.net",
+		Mapping: subdomainMapping,
 	}
 
-	config := SubdomainConfig{
-		MainDomain:          "syftbox.net",
-		GetVanityDomainFunc: vanityDomainFunc,
-	}
-
-	router.Use(SubdomainMiddleware(config))
+	router.Use(SubdomainRewrite(router, config))
 
 	// Test handler that checks context values
 	router.GET("/*path", func(c *gin.Context) {
@@ -395,29 +303,10 @@ func TestSubdomainContextSetting(t *testing.T) {
 		isSubdomain := IsSubdomainRequest(c)
 		assert.True(t, isSubdomain)
 
-		// Check email
-		email, exists := GetSubdomainEmail(c)
-		assert.True(t, exists)
-		assert.Equal(t, "alice@example.com", email)
-
-		// Check vanity domain flag
-		isVanity, exists := c.Get("is_vanity_domain")
-		assert.True(t, exists)
-		assert.True(t, isVanity.(bool))
-
-		// Check vanity domain
-		vanityDomain, exists := c.Get("vanity_domain")
-		assert.True(t, exists)
-		assert.Equal(t, "alice.blog", vanityDomain)
-
 		// Check path rewriting
-		originalPath, exists := c.Get("original_path")
-		assert.True(t, exists)
-		assert.Equal(t, "index.html", originalPath)
-
-		rewrittenPath, exists := c.Get("rewritten_path")
-		assert.True(t, exists)
-		assert.Equal(t, "/datasites/alice@example.com/blog/index.html", rewrittenPath)
+		expectedPath := "/datasites/alice@example.com/blog/index.html"
+		actualPath := c.Request.URL.Path
+		assert.Equal(t, expectedPath, actualPath)
 
 		c.Status(http.StatusOK)
 	})
@@ -506,20 +395,16 @@ func TestPathRewritingEdgeCases(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
 
-			// Mock vanity domain function
-			vanityDomainFunc := func(domain string) (string, string, bool) {
-				if domain == tt.host {
-					return "alice@example.com", tt.vanityPath, true
-				}
-				return "", "", false
+			// Create subdomain mapping
+			subdomainMapping := datasite.NewSubdomainMapping()
+			subdomainMapping.AddVanityDomain(tt.host, "alice@example.com", tt.vanityPath)
+
+			config := &SubdomainRewriteConfig{
+				Domain:  "syftbox.net",
+				Mapping: subdomainMapping,
 			}
 
-			config := SubdomainConfig{
-				MainDomain:          "syftbox.net",
-				GetVanityDomainFunc: vanityDomainFunc,
-			}
-
-			router.Use(SubdomainMiddleware(config))
+			router.Use(SubdomainRewrite(router, config))
 
 			// Test handler
 			router.GET("/*path", func(c *gin.Context) {
@@ -538,6 +423,135 @@ func TestPathRewritingEdgeCases(t *testing.T) {
 
 			// Check status
 			assert.Equal(t, http.StatusOK, w.Code)
+		})
+	}
+}
+
+func TestSubdomainRewriteDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name         string
+		domain       string
+		mapping      *datasite.SubdomainMapping
+		host         string
+		path         string
+		expectedPath string
+	}{
+		{
+			name:         "No domain configured",
+			domain:       "",
+			mapping:      datasite.NewSubdomainMapping(),
+			host:         "alice.blog",
+			path:         "/index.html",
+			expectedPath: "/index.html", // Should not be rewritten
+		},
+		{
+			name:         "No mapping configured",
+			domain:       "syftbox.net",
+			mapping:      nil,
+			host:         "alice.blog",
+			path:         "/index.html",
+			expectedPath: "/index.html", // Should not be rewritten
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+
+			config := &SubdomainRewriteConfig{
+				Domain:  tt.domain,
+				Mapping: tt.mapping,
+			}
+
+			router.Use(SubdomainRewrite(router, config))
+
+			// Test handler
+			router.GET("/*path", func(c *gin.Context) {
+				actualPath := c.Request.URL.Path
+				assert.Equal(t, tt.expectedPath, actualPath)
+				assert.False(t, IsSubdomainRequest(c))
+				c.Status(http.StatusOK)
+			})
+
+			// Create request
+			req := httptest.NewRequest("GET", tt.path, nil)
+			req.Host = tt.host
+
+			// Perform request
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			// Check status
+			assert.Equal(t, http.StatusOK, w.Code)
+		})
+	}
+}
+
+func TestSandboxedRewrite(t *testing.T) {
+	tests := []struct {
+		name         string
+		urlPath      string
+		user         string
+		baseDir      string
+		expectedPath string
+	}{
+		{
+			name:         "Simple path",
+			urlPath:      "/index.html",
+			user:         "alice@example.com",
+			baseDir:      "/public",
+			expectedPath: "/datasites/alice@example.com/public/index.html",
+		},
+		{
+			name:         "Root path",
+			urlPath:      "/",
+			user:         "alice@example.com",
+			baseDir:      "/public",
+			expectedPath: "/datasites/alice@example.com/public/",
+		},
+		{
+			name:         "Nested path",
+			urlPath:      "/docs/readme.md",
+			user:         "alice@example.com",
+			baseDir:      "/public",
+			expectedPath: "/datasites/alice@example.com/public/docs/readme.md",
+		},
+		{
+			name:         "Empty base dir",
+			urlPath:      "/index.html",
+			user:         "alice@example.com",
+			baseDir:      "/",
+			expectedPath: "/datasites/alice@example.com/index.html",
+		},
+		{
+			name:         "Empty url path",
+			urlPath:      "/",
+			user:         "alice@example.com",
+			baseDir:      "/blog",
+			expectedPath: "/datasites/alice@example.com/blog/",
+		},
+		{
+			name:         "Both empty",
+			urlPath:      "/",
+			user:         "alice@example.com",
+			baseDir:      "/",
+			expectedPath: "/datasites/alice@example.com/",
+		},
+		{
+			name:         "No leading slashes",
+			urlPath:      "index.html",
+			user:         "alice@example.com",
+			baseDir:      "public",
+			expectedPath: "/datasites/alice@example.com/public/index.html",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sandboxedRewrite(tt.urlPath, tt.user, tt.baseDir)
+			assert.Equal(t, tt.expectedPath, result)
 		})
 	}
 }

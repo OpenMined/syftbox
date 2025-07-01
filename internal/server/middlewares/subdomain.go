@@ -20,36 +20,23 @@ var (
 	headerInternalRedirect = "x-internal-redirect"
 )
 
-type SubdomainRouterConfig struct {
+type SubdomainRewriteConfig struct {
 	Domain  string // base domain
 	Mapping *datasite.SubdomainMapping
 }
 
-func SubdomainRewrite(e *gin.Engine, config *SubdomainRouterConfig) gin.HandlerFunc {
+func SubdomainRewrite(e *gin.Engine, config *SubdomainRewriteConfig) gin.HandlerFunc {
 	if config.Domain == "" || config.Mapping == nil {
-		slog.Info("subdomain routing disabled")
+		slog.Debug("subdomain routing disabled")
 		return func(c *gin.Context) {
 			// Continue to the next handler
 			c.Next()
 		}
 	}
 
-	slog.Info("subdomain routing enabled", "domain", config.Domain)
+	slog.Debug("subdomain routing enabled", "domain", config.Domain)
 
 	return func(c *gin.Context) {
-		host := c.Request.Host
-		if idx := strings.LastIndex(host, ":"); idx != -1 {
-			// Remove port if present
-			host = host[:idx]
-		}
-
-		// host is root domain
-		if host == config.Domain {
-			// Continue to the next handler
-			c.Next()
-			return
-		}
-
 		// this is the exit condition for the subdomain rewrite
 		// if the request is a subdomain request, set the context and delete the headers
 		if c.GetHeader(headerInternalRedirect) == redirectNonce {
@@ -65,17 +52,40 @@ func SubdomainRewrite(e *gin.Engine, config *SubdomainRouterConfig) gin.HandlerF
 			return
 		}
 
+		host := c.Request.Host
+		if idx := strings.LastIndex(host, ":"); idx != -1 {
+			// Remove port if present
+			host = host[:idx]
+		}
+
+		// host is root domain
+		if host == config.Domain {
+			// Continue to the next handler
+			c.Next()
+			return
+		}
+
 		// if this is a vanity domain then rewrite the path
 		// can be custom domain or a hash-based subdomain
 		if config, ok := config.Mapping.GetVanityDomain(host); ok {
 			user := config.Email
 			baseDir := config.Path
 
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+				// is a subdomain request
+				// but don't rewrite the path
+				c.Set(KeySubdomainRequest, true)
+
+				// Continue to the next handler
+				c.Next()
+				return
+			}
+
 			// rewrite the path
 			originalPath := c.Request.URL.Path
 			newPath := sandboxedRewrite(originalPath, user, baseDir)
 
-			slog.Info("rewriting path", "host", host, "original", originalPath, "new", newPath)
+			slog.Debug("rewriting path", "host", host, "original", originalPath, "new", newPath)
 
 			// rewrite the path
 			c.Request.URL.Path = newPath
@@ -86,6 +96,10 @@ func SubdomainRewrite(e *gin.Engine, config *SubdomainRouterConfig) gin.HandlerF
 
 			// re-enter the updated context
 			e.HandleContext(c)
+
+			// Abort the original context to prevent double execution
+			c.Abort()
+
 			return
 		}
 
@@ -101,28 +115,30 @@ func SubdomainRewrite(e *gin.Engine, config *SubdomainRouterConfig) gin.HandlerF
 	}
 }
 
-func sandboxedRewrite(originalPath string, user string, baseDir string) string {
-	// original path gets converted to the sandboxed
-	// /datasites/{email}/{basePath}/{originalPath}
+// sandboxedRewrite converts an original path to a sandboxed path within the datasite structure.
+// path is of the format /datasites/{email}/{baseDir}/{urlPath}
+func sandboxedRewrite(urlPath string, user string, baseDir string) string {
+	// Clean the inputs - remove leading/trailing slashes
+	urlPath = strings.TrimLeft(urlPath, "/")
+	baseDir = strings.TrimLeft(baseDir, "/")
 
-	// default to public directory
-	if baseDir == "" || baseDir == "/" {
-		baseDir = "public"
+	// Build the path segments
+	segments := []string{"", "datasites", user}
+
+	if baseDir != "" {
+		segments = append(segments, baseDir)
 	}
 
-	if originalPath == "/" {
-		originalPath = ""
+	if urlPath != "" {
+		segments = append(segments, urlPath)
+	} else {
+		// Add empty segment to ensure trailing slash
+		segments = append(segments, "")
 	}
 
-	// cleanup paths
-	baseDir = strings.TrimPrefix(baseDir, "/")
-	baseDir = strings.TrimSuffix(baseDir, "/")
-	originalPath = strings.TrimPrefix(originalPath, "/")
-
-	// construct the new path
-	// not using filepath.Join because it resolves relative paths like ".."
-	// and we don't want to do that for security reasons
-	return strings.Join([]string{"/datasites", user, baseDir, originalPath}, "/")
+	// Using strings.Join instead of filepath.Join for security:
+	// filepath.Join resolves ".." and "." which could allow path traversal attacks
+	return strings.Join(segments, "/")
 }
 
 func abortWithInvalidSubdomain(c *gin.Context, host string) {
