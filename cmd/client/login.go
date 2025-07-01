@@ -47,6 +47,14 @@ func newLoginCmd() *cobra.Command {
 					note = fmt.Sprintf("[RELOGIN] Current config's server changed from '%s' to '%s'", cfg.ServerURL, serverURL)
 				}
 
+				if cfg.RefreshToken != "" {
+					_, err := syftsdk.ParseToken(cfg.RefreshToken, syftsdk.RefreshToken)
+					if err != nil {
+						note = "[RELOGIN] Token expired"
+						loggedIn = false
+					}
+				}
+
 				if loggedIn {
 					if !quiet {
 						fmt.Println(green.Render("**Already logged in**"))

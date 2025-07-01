@@ -9,13 +9,17 @@ type indexData struct {
 	Files       []*blob.BlobInfo
 	IsSubdomain bool   // Whether this is served via subdomain
 	BasePath    string // Base path for links (empty for subdomain, "/datasites" for direct)
+	IsRootPage  bool   // Whether this is the root page ("/")
+	Scheme      string // Scheme (http or https) for constructing subdomain URLs
+	BaseURL     string // Base URL (host) for constructing subdomain URLs
 }
 
 // directoryContents holds the result of listing a directory
 type directoryContents struct {
-	IsDir   bool
-	Files   []*blob.BlobInfo
-	Folders []string
+	IsDir    bool
+	HasIndex bool
+	Files    []*blob.BlobInfo
+	Folders  []string
 }
 
 func (d *directoryContents) EmptyDir() bool {

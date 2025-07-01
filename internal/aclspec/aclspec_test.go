@@ -83,7 +83,7 @@ func TestAsACLPath(t *testing.T) {
 		{
 			name:     "directory path",
 			path:     "user",
-			expected: filepath.Join("user", AclFileName),
+			expected: filepath.Join("user", ACLFileName),
 		},
 		{
 			name:     "already an ACL file",
@@ -93,7 +93,7 @@ func TestAsACLPath(t *testing.T) {
 		{
 			name:     "nested directory",
 			path:     "user/data",
-			expected: filepath.Join("user", "data", AclFileName),
+			expected: filepath.Join("user", "data", ACLFileName),
 		},
 	}
 
@@ -107,7 +107,7 @@ func TestAsACLPath(t *testing.T) {
 			{
 				name:     "Windows directory path",
 				path:     `C:\Users\test`,
-				expected: filepath.Join(`C:\Users\test`, AclFileName),
+				expected: filepath.Join(`C:\Users\test`, ACLFileName),
 			},
 			{
 				name:     "Windows path already ACL file",

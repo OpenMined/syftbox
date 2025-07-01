@@ -41,7 +41,6 @@ func NewS3Backend(s3Client *s3.Client, config *S3Config) *S3Backend {
 			AfterPutObject:    nil,
 			AfterDeleteObject: nil,
 			AfterCopyObject:   nil,
-			OnBlobChange:      nil,
 		},
 	}
 }
@@ -372,4 +371,4 @@ func (s *S3Backend) Delegate() any {
 }
 
 // check if BlobClient implements IBlobClient interface
-var _ BlobBackend = (*S3Backend)(nil)
+var _ IBlobBackend = (*S3Backend)(nil)

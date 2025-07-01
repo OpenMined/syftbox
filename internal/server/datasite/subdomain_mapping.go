@@ -3,8 +3,6 @@ package datasite
 import (
 	"errors"
 	"sync"
-
-	"github.com/openmined/syftbox/internal/server/middlewares"
 )
 
 var (
@@ -20,10 +18,10 @@ type VanityDomainConfig struct {
 
 // SubdomainMapping handles bidirectional mapping between email hashes and emails
 type SubdomainMapping struct {
-	mu               sync.RWMutex
-	hashToEmail      map[string]string
-	emailToHash      map[string]string
-	vanityDomains    map[string]*VanityDomainConfig // maps vanity domains to config
+	mu            sync.RWMutex
+	hashToEmail   map[string]string
+	emailToHash   map[string]string
+	vanityDomains map[string]*VanityDomainConfig // maps vanity domains to config
 }
 
 // NewSubdomainMapping creates a new subdomain mapping service
@@ -46,11 +44,11 @@ func (s *SubdomainMapping) AddMapping(email string) string {
 	}
 
 	// Generate hash for the email
-	hash := middlewares.EmailToSubdomainHash(email)
-	
+	hash := EmailToSubdomainHash(email)
+
 	s.hashToEmail[hash] = email
 	s.emailToHash[email] = hash
-	
+
 	return hash
 }
 
@@ -63,7 +61,7 @@ func (s *SubdomainMapping) GetEmailByHash(hash string) (string, error) {
 	if !exists {
 		return "", ErrSubdomainNotFound
 	}
-	
+
 	return email, nil
 }
 
@@ -76,7 +74,7 @@ func (s *SubdomainMapping) GetHashByEmail(email string) (string, error) {
 	if !exists {
 		return "", ErrEmailNotFound
 	}
-	
+
 	return hash, nil
 }
 
@@ -97,7 +95,7 @@ func (s *SubdomainMapping) LoadMappings(emails []string) {
 	defer s.mu.Unlock()
 
 	for _, email := range emails {
-		hash := middlewares.EmailToSubdomainHash(email)
+		hash := EmailToSubdomainHash(email)
 		s.hashToEmail[hash] = email
 		s.emailToHash[email] = hash
 	}
@@ -113,7 +111,7 @@ func (s *SubdomainMapping) GetAllMappings() map[string]string {
 	for hash, email := range s.hashToEmail {
 		result[hash] = email
 	}
-	
+
 	return result
 }
 
@@ -121,7 +119,7 @@ func (s *SubdomainMapping) GetAllMappings() map[string]string {
 func (s *SubdomainMapping) AddVanityDomain(domain string, email string, path string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.vanityDomains[domain] = &VanityDomainConfig{
 		Email: email,
 		Path:  path,
@@ -132,7 +130,7 @@ func (s *SubdomainMapping) AddVanityDomain(domain string, email string, path str
 func (s *SubdomainMapping) GetVanityDomain(domain string) (*VanityDomainConfig, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	config, exists := s.vanityDomains[domain]
 	return config, exists
 }
@@ -141,7 +139,7 @@ func (s *SubdomainMapping) GetVanityDomain(domain string) (*VanityDomainConfig, 
 func (s *SubdomainMapping) RemoveVanityDomain(domain string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	delete(s.vanityDomains, domain)
 }
 
@@ -149,7 +147,7 @@ func (s *SubdomainMapping) RemoveVanityDomain(domain string) {
 func (s *SubdomainMapping) ClearVanityDomains(email string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	// Find and remove all vanity domains for this email
 	for domain, config := range s.vanityDomains {
 		if config.Email == email {
@@ -162,7 +160,7 @@ func (s *SubdomainMapping) ClearVanityDomains(email string) {
 func (s *SubdomainMapping) GetAllVanityDomains() map[string]*VanityDomainConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Create a copy to avoid race conditions
 	result := make(map[string]*VanityDomainConfig, len(s.vanityDomains))
 	for domain, config := range s.vanityDomains {
@@ -171,7 +169,7 @@ func (s *SubdomainMapping) GetAllVanityDomains() map[string]*VanityDomainConfig 
 			Path:  config.Path,
 		}
 	}
-	
+
 	return result
 }
 
@@ -179,12 +177,12 @@ func (s *SubdomainMapping) GetAllVanityDomains() map[string]*VanityDomainConfig 
 func (s *SubdomainMapping) GetMapping(domain string) *VanityDomainConfig {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	// Check if it's a vanity domain
 	if config, exists := s.vanityDomains[domain]; exists {
 		return config
 	}
-	
+
 	return nil
 }
 
@@ -192,7 +190,7 @@ func (s *SubdomainMapping) GetMapping(domain string) *VanityDomainConfig {
 func (s *SubdomainMapping) HasDatasite(email string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	
+
 	_, exists := s.emailToHash[email]
 	return exists
 }

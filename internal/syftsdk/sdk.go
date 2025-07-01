@@ -122,7 +122,7 @@ func (s *SyftSDK) autoRefreshToken(ctx context.Context) {
 func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 	slog.Debug("sdk refreshing auth tokens")
 
-	refreshToken, err := parseToken(s.config.RefreshToken, RefreshToken)
+	refreshToken, err := ParseToken(s.config.RefreshToken, RefreshToken)
 	if err != nil {
 		return fmt.Errorf("parse refresh token: %w", err)
 	}
@@ -151,7 +151,7 @@ func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
 
 func (s *SyftSDK) setAccessToken(accessToken string) error {
 	// validate access token
-	claims, err := parseToken(accessToken, AccessToken)
+	claims, err := ParseToken(accessToken, AccessToken)
 
 	if err != nil {
 		return fmt.Errorf("failed to parse access token: %w", err)
