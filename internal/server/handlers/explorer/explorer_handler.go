@@ -20,6 +20,7 @@ import (
 	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
+	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/server/middlewares"
 )
@@ -39,6 +40,10 @@ func New(blobSvc blob.Service, aclSvc acl.Service) *ExplorerHandler {
 		"basename": filepath.Base,
 		"humanizeSize": func(size int64) string {
 			return humanize.Bytes(uint64(size))
+		},
+		"subdomainURL": func(email, baseURL string, scheme string) string {
+			hash := datasite.EmailToSubdomainHash(email)
+			return scheme + "://" + hash + "." + baseURL
 		},
 	}
 
@@ -167,12 +172,29 @@ func (e *ExplorerHandler) serveDir(c *gin.Context, path string, contents *direct
 		basePath = ""
 	}
 
+	// figure the baseurl only for the root page
+	var baseURL string
+	var scheme string
+	isRootPage := path == "/"
+
+	if isRootPage {
+		// Construct base URL from request
+		scheme = "http"
+		if c.Request.TLS != nil {
+			scheme = "https"
+		}
+		baseURL = c.Request.Host
+	}
+
 	data := indexData{
 		Path:        path,
 		Folders:     contents.Folders,
 		Files:       contents.Files,
 		IsSubdomain: isSubdomain,
 		BasePath:    basePath,
+		IsRootPage:  isRootPage,
+		BaseURL:     baseURL,
+		Scheme:      scheme,
 	}
 
 	// Generate an HTML response
