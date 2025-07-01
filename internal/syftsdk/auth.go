@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/openmined/syftbox/internal/utils"
@@ -43,14 +44,14 @@ func VerifyEmail(ctx context.Context, serverURL string, email string) error {
 		Post(authOtpRequest)
 
 	if err != nil {
-		return fmt.Errorf("request verification code: %w", err)
+		return fmt.Errorf("sdk: request verification code: %w", err)
 	}
 
 	if res.IsError() {
 		if sdkErr.Error != "" {
-			return fmt.Errorf("request verification code: %s", sdkErr.Error)
+			return fmt.Errorf("sdk: request verification code: %q - %q", res.Status(), sdkErr.Error)
 		}
-		return fmt.Errorf("request verification code: %s", res.String())
+		return fmt.Errorf("sdk: request verification code: %q - %q", res.Status(), res.String())
 	}
 
 	return nil
@@ -83,9 +84,9 @@ func VerifyEmailCode(ctx context.Context, serverURL string, codeReq *VerifyEmail
 
 	if res.IsError() {
 		if sdkErr.Error != "" {
-			return nil, fmt.Errorf("sdk: verify email code: %q %q", res.Status(), sdkErr.Error)
+			return nil, fmt.Errorf("sdk: verify email code: %q - %q", res.Status(), sdkErr.Error)
 		}
-		return nil, fmt.Errorf("sdk: verify email code: %q %q", res.Status(), res.String())
+		return nil, fmt.Errorf("sdk: verify email code: %q - %q", res.Status(), res.String())
 	}
 
 	return &resp, nil
@@ -119,7 +120,10 @@ func RefreshAuthTokens(ctx context.Context, serverURL string, refreshToken strin
 	}
 
 	if res.IsError() {
-		return nil, fmt.Errorf("sdk: refresh auth tokens: %s", res.String())
+		if sdkErr.Error != "" {
+			return nil, fmt.Errorf("sdk: refresh auth tokens: %q - %q", res.Status(), sdkErr.Error)
+		}
+		return nil, fmt.Errorf("sdk: refresh auth tokens: %q - %q", res.Status(), res.String())
 	}
 
 	return &resp, nil
@@ -129,9 +133,9 @@ func IsValidOTP(otp string) bool {
 	return len(otp) == 8 && regexOTP.MatchString(otp)
 }
 
-func parseToken(token string, tokenType AuthTokenType) (*AuthClaims, error) {
+func ParseToken(token string, tokenType AuthTokenType) (*AuthClaims, error) {
 	if token == "" {
-		return nil, fmt.Errorf("token is empty")
+		return nil, fmt.Errorf("sdk: token is empty")
 	}
 
 	var claims AuthClaims
@@ -139,8 +143,15 @@ func parseToken(token string, tokenType AuthTokenType) (*AuthClaims, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if claims.Type != tokenType {
-		return nil, fmt.Errorf("invalid token type. expected %s, got %s", tokenType, claims.Type)
+		return nil, fmt.Errorf("sdk: invalid token type, expected %s, got %s", tokenType, claims.Type)
 	}
+
+	// check if expired
+	if claims.ExpiresAt.Before(time.Now()) {
+		return nil, fmt.Errorf("sdk: token expired, login again")
+	}
+
 	return &claims, nil
 }
