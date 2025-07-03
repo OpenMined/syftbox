@@ -48,10 +48,17 @@ func (h *LogsHandler) getLogFilePath(appId string) string {
 		return ""
 	}
 	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appId)
-	if !apps.IsValidApp(appPath) {
-		return ""
+	if apps.IsValidApp(appPath) {
+		return filepath.Join(appPath, "logs", "app.log")
 	}
-	return filepath.Join(appPath, "logs", "app.log")
+	// Special case for manually installed local apps
+	if suffix, found := strings.CutPrefix(appId, "local."); found {
+		appPath := filepath.Join(datasite.GetAppManager().AppsDir, suffix)
+		if apps.IsValidApp(appPath) {
+			return filepath.Join(appPath, "logs", "app.log")
+		}
+	}
+	return ""
 }
 
 // GetLogs handles GET requests to retrieve logs

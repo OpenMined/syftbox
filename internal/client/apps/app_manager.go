@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -91,6 +92,11 @@ func (a *AppManager) UninstallApp(uri string) (string, error) {
 		// URI is an app ID already installed under AppsDir
 		targetDir = a.getAppDir(uri)
 		appID = uri
+
+	case strings.HasPrefix(uri, "local."):
+		// URI is a local path
+		targetDir = a.getAppDir(strings.TrimPrefix(uri, "local."))
+		appID = appIDFromPath(targetDir)
 
 	case utils.IsValidURL(uri):
 		// URI is a repository URL; derive the app ID and installation directory
