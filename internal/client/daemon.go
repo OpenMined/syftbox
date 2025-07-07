@@ -60,7 +60,6 @@ func (c *ClientDaemon) Start(ctx context.Context) error {
 	})
 
 	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("client daemon failure", "error", err)
 		return err
 	}
 

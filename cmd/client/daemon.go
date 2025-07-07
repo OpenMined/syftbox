@@ -24,6 +24,8 @@ func newDaemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Start the SyftBox client daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cmd.SilenceUsage = true
+
 			slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
 
 			daemon, err := client.NewClientDaemon(&controlplane.CPServerConfig{
@@ -37,7 +39,7 @@ func newDaemonCmd() *cobra.Command {
 
 			defer slog.Info("Bye!")
 			if err := daemon.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
-				slog.Error("start daemon", "error", err)
+				slog.Error("daemon start", "error", err)
 				return err
 			}
 			return nil
