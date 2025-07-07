@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -27,25 +30,40 @@ type AppManager struct {
 	AppsDir string // Directory where apps are stored
 	DataDir string // Directory where internal data is stored
 	flock   *flock.Flock
+
+	installedApps   map[string]*AppInfo
+	installedAppsMu sync.RWMutex
 }
 
 // NewManager creates a new Manager instance with the specified app directory
 func NewManager(appDir string, internalDataDir string) *AppManager {
 	flock := flock.New(filepath.Join(internalDataDir, "apps.lock"))
 	return &AppManager{
-		AppsDir: appDir,
-		DataDir: internalDataDir,
-		flock:   flock,
+		AppsDir:       appDir,
+		DataDir:       internalDataDir,
+		flock:         flock,
+		installedApps: make(map[string]*AppInfo),
 	}
 }
 
+func (a *AppManager) GetAppByID(appID string) (*AppInfo, error) {
+	a.installedAppsMu.RLock()
+	defer a.installedAppsMu.RUnlock()
+
+	app, ok := a.installedApps[appID]
+	if !ok {
+		return nil, ErrAppNotFound
+	}
+	return app, nil
+}
+
 func (a *AppManager) ListApps() ([]*AppInfo, error) {
-	apps := make([]*AppInfo, 0)
+	scannedApps := make(map[string]*AppInfo)
 
 	appDirs, err := os.ReadDir(a.AppsDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return apps, nil
+			return []*AppInfo{}, nil
 		}
 		return nil, fmt.Errorf("failed to read apps dir: %w", err)
 	}
@@ -59,11 +77,15 @@ func (a *AppManager) ListApps() ([]*AppInfo, error) {
 				slog.Warn("failed to load app info", "path", fullPath, "error", err)
 				continue
 			}
-			apps = append(apps, appInfo)
+			scannedApps[appInfo.ID] = appInfo
 		}
 	}
 
-	return apps, nil
+	a.installedAppsMu.Lock()
+	a.installedApps = scannedApps
+	a.installedAppsMu.Unlock()
+
+	return slices.Collect(maps.Values(scannedApps)), nil
 }
 
 // UninstallApp uninstalls an app from a given uri.
@@ -268,12 +290,6 @@ func (a *AppManager) saveAppInfo(app *AppInfo) error {
 	return os.WriteFile(metadataPath, metadata, 0o644)
 }
 
-// loads the app metadata from the data directory
-func (a *AppManager) loadAppInfoFromID(appID string) (*AppInfo, error) {
-	appPath := a.getAppDir(appID)
-	return a.loadAppInfoFromPath(appPath)
-}
-
 func (a *AppManager) loadAppInfoFromPath(appPath string) (*AppInfo, error) {
 	if !IsValidApp(appPath) {
 		return nil, ErrInvalidApp
@@ -303,10 +319,7 @@ func (a *AppManager) loadAppInfoFromPath(appPath string) (*AppInfo, error) {
 
 }
 
-func (a *AppManager) getAppInfoPath(appID string) string {
-	return filepath.Join(a.getAppDir(appID), appInfoFileName)
-}
-
-func (a *AppManager) getAppDir(appID string) string {
-	return filepath.Join(a.AppsDir, appID)
+// getAppDir returns the directory for a given app URI (id, dirname)
+func (a *AppManager) getAppDir(uri string) string {
+	return filepath.Join(a.AppsDir, uri)
 }

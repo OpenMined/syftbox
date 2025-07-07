@@ -85,7 +85,7 @@ func (a *App) Info() *AppInfo {
 
 func (a *App) Start() error {
 	// in the app directory
-	logsDir := filepath.Join(a.info.Path, "logs")
+	logsDir := a.info.LogsDir()
 
 	// clean up old logs
 	if err := os.RemoveAll(logsDir); err != nil {

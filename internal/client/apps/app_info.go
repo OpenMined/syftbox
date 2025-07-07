@@ -1,6 +1,9 @@
 package apps
 
-import "time"
+import (
+	"path/filepath"
+	"time"
+)
 
 type AppID = string
 type AppSource = string
@@ -20,4 +23,12 @@ type AppInfo struct {
 	Tag         string    `json:"tag,omitempty"`
 	Commit      string    `json:"commit,omitempty"`
 	InstalledOn time.Time `json:"installedOn,omitempty"`
+}
+
+func (a *AppInfo) LogsDir() string {
+	return filepath.Join(a.Path, "logs")
+}
+
+func (a *AppInfo) LogFilePath() string {
+	return filepath.Join(a.LogsDir(), "app.log")
 }
