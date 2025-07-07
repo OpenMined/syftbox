@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,10 +40,9 @@ type AppManager struct {
 func NewManager(appDir string, internalDataDir string) *AppManager {
 	flock := flock.New(filepath.Join(internalDataDir, "apps.lock"))
 	return &AppManager{
-		AppsDir:       appDir,
-		DataDir:       internalDataDir,
-		flock:         flock,
-		installedApps: make(map[string]*AppInfo),
+		AppsDir: appDir,
+		DataDir: internalDataDir,
+		flock:   flock,
 	}
 }
 
@@ -58,34 +58,17 @@ func (a *AppManager) GetAppByID(appID string) (*AppInfo, error) {
 }
 
 func (a *AppManager) ListApps() ([]*AppInfo, error) {
-	scannedApps := make(map[string]*AppInfo)
-
-	appDirs, err := os.ReadDir(a.AppsDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return []*AppInfo{}, nil
-		}
-		return nil, fmt.Errorf("failed to read apps dir: %w", err)
+	if err := a.loadInstalledApps(); err != nil {
+		return nil, fmt.Errorf("failed to load apps: %w", err)
 	}
 
-	for _, dir := range appDirs {
-		if dir.IsDir() || dir.Type()&os.ModeSymlink != 0 {
-			fullPath := filepath.Join(a.AppsDir, dir.Name())
+	a.installedAppsMu.RLock()
+	apps := a.installedApps
+	a.installedAppsMu.RUnlock()
 
-			appInfo, err := a.loadAppInfoFromPath(fullPath)
-			if err != nil {
-				slog.Warn("failed to load app info", "path", fullPath, "error", err)
-				continue
-			}
-			scannedApps[appInfo.ID] = appInfo
-		}
-	}
-
-	a.installedAppsMu.Lock()
-	a.installedApps = scannedApps
-	a.installedAppsMu.Unlock()
-
-	return slices.Collect(maps.Values(scannedApps)), nil
+	return slices.SortedFunc(maps.Values(apps), func(a, b *AppInfo) int {
+		return strings.Compare(a.ID, b.ID)
+	}), nil
 }
 
 // UninstallApp uninstalls an app from a given uri.
@@ -99,44 +82,29 @@ func (a *AppManager) UninstallApp(uri string) (string, error) {
 	var targetDir string
 	var appID string
 
-	switch {
-	case utils.DirExists(uri):
-		// URI points directly to an app directory on disk
-		targetDir = uri
-		info, err := a.loadAppInfoFromPath(targetDir)
-		if err != nil {
-			return "", fmt.Errorf("failed to load app info: %w", err)
+	// if check if apps are loaded, if not load the apps
+	if a.installedApps == nil {
+		if err := a.loadInstalledApps(); err != nil {
+			return "", fmt.Errorf("failed to list apps: %w", err)
 		}
-		appID = info.ID
+	}
 
-	case utils.DirExists(a.getAppDir(uri)):
-		// URI is an app ID already installed under AppsDir
-		targetDir = a.getAppDir(uri)
-		appID = uri
-
-	case utils.IsValidURL(uri):
-		// URI is a repository URL; derive the app ID and installation directory
-		parsed, err := parseRepoURL(uri)
-		if err != nil {
-			return "", err
+	// iterate over installed apps, & check if uri is path/id/name
+	a.installedAppsMu.RLock()
+	for _, app := range a.installedApps {
+		if app.Path == uri || app.ID == uri || app.Name == uri || app.SourceURI == uri {
+			targetDir = app.Path
+			appID = app.ID
+			break
 		}
-		appID = appIDFromURL(parsed)
-		targetDir = a.getAppDir(appID)
-
-	default:
-		return "", fmt.Errorf("no app found for %q", uri)
 	}
-
-	// 1) The directory must correspond to a valid syftbox app
-	if !IsValidApp(targetDir) {
-		return "", fmt.Errorf("no app found for %q", uri)
-	}
-
-	if !utils.DirExists(targetDir) {
-		return "", fmt.Errorf("no app found for %q", uri)
-	}
+	a.installedAppsMu.RUnlock()
 
 	// Remove the application directory
+	if targetDir == "" {
+		return "", ErrAppNotFound
+	}
+
 	if err := os.RemoveAll(targetDir); err != nil {
 		return "", fmt.Errorf("failed to remove app: %w", err)
 	}
@@ -279,6 +247,37 @@ func (a *AppManager) prepareInstallLocation(installDir string, force bool) error
 	return nil
 }
 
+func (a *AppManager) loadInstalledApps() error {
+	scannedApps := make(map[string]*AppInfo)
+
+	appDirs, err := os.ReadDir(a.AppsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to read apps dir: %w", err)
+	}
+
+	for _, dir := range appDirs {
+		if dir.IsDir() || dir.Type()&os.ModeSymlink != 0 {
+			fullPath := filepath.Join(a.AppsDir, dir.Name())
+
+			appInfo, err := a.loadAppInfoFromPath(fullPath)
+			if err != nil {
+				slog.Warn("failed to load app info", "path", fullPath, "error", err)
+				continue
+			}
+			scannedApps[appInfo.ID] = appInfo
+		}
+	}
+
+	a.installedAppsMu.Lock()
+	a.installedApps = scannedApps
+	a.installedAppsMu.Unlock()
+
+	return nil
+}
+
 // saves the app metadata to the data directory
 func (a *AppManager) saveAppInfo(app *AppInfo) error {
 	metadataPath := filepath.Join(app.Path, appInfoFileName)
@@ -319,7 +318,6 @@ func (a *AppManager) loadAppInfoFromPath(appPath string) (*AppInfo, error) {
 
 }
 
-// getAppDir returns the directory for a given app URI (id, dirname)
 func (a *AppManager) getAppDir(uri string) string {
 	return filepath.Join(a.AppsDir, uri)
 }

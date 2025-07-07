@@ -25,6 +25,10 @@ type AppInfo struct {
 	InstalledOn time.Time `json:"installedOn,omitempty"`
 }
 
+func (a *AppInfo) RunScriptPath() string {
+	return filepath.Join(a.Path, "run.sh")
+}
+
 func (a *AppInfo) LogsDir() string {
 	return filepath.Join(a.Path, "logs")
 }

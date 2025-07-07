@@ -30,7 +30,7 @@ func NewApp(info *AppInfo, configPath string) (*App, error) {
 		return nil, fmt.Errorf("invalid app: %s", info.ID)
 	}
 
-	runScript := GetRunScript(info.Path)
+	runScript := info.RunScriptPath()
 
 	// chmod +x the scripts
 	// get perms of the script

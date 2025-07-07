@@ -4,9 +4,19 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/openmined/syftbox/internal/utils"
+)
+
+const (
+	appIDSeparator = "-"
+)
+
+var (
+	// Pre-compiled regex patterns for appIDFromPath optimization
+	regexIDReservedChars = regexp.MustCompile(`[\s.]+`)
 )
 
 func GetRunScript(app string) string {
@@ -46,7 +56,7 @@ func appIDFromURL(url *url.URL) string {
 	for _, part := range pathParts {
 		if part != "" {
 			// Replace any dots with hyphens in path parts
-			part = strings.ReplaceAll(part, ".", "-")
+			part = strings.ReplaceAll(part, ".", appIDSeparator)
 			filteredPathParts = append(filteredPathParts, strings.ToLower(part))
 		}
 	}
@@ -59,7 +69,8 @@ func appIDFromURL(url *url.URL) string {
 // returns a reverse domain name from a local path
 func appIDFromPath(path string) string {
 	base := filepath.Base(path)
-	base = strings.ReplaceAll(base, ".", "-")
+	base = strings.ReplaceAll(base, ".", appIDSeparator)
+	base = regexIDReservedChars.ReplaceAllString(base, appIDSeparator)
 	return fmt.Sprintf("local.%s", base)
 }
 
