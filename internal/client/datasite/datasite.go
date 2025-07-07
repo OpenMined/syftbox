@@ -98,7 +98,9 @@ func (d *Datasite) Stop() {
 	d.appScheduler.Stop()
 	d.sync.Stop()
 	d.sdk.Close()
-	d.workspace.Unlock()
+	if err := d.workspace.Unlock(); err != nil {
+		slog.Error("datasite stop", "error", err)
+	}
 	slog.Info("datasite stopped", "id", d.id)
 }
 

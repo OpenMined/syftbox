@@ -77,7 +77,7 @@ func (s *AppScheduler) Stop() {
 	slog.Debug("scheduler stopping")
 	s.stopAllAppsUnsafe()
 	s.schedWg.Wait()
-	slog.Debug("scheduler stopped")
+	slog.Info("scheduler stopped")
 }
 
 // Get an app
@@ -104,7 +104,7 @@ func (s *AppScheduler) StartApp(appId string) (*App, error) {
 	}
 
 	if app.GetStatus() == StatusRunning {
-		return app, ErrAlreadyRunning
+		return app, ErrAppAlreadyRunning
 	}
 
 	go func() {
@@ -225,7 +225,7 @@ func (s *AppScheduler) startAppLifecycle(app *App) error {
 		slog.Error("scheduler failed to start app", "app", appId, "error", err)
 		return err
 	}
-	slog.Info("scheduler started app", "app", appId, "pid", app.Process().Pid, "port", app.port, "url", fmt.Sprintf("http://localhost:%d", app.port))
+	slog.Info("scheduler app started", "app", appId, "pid", app.Process().Pid, "port", app.port, "url", fmt.Sprintf("http://localhost:%d", app.port))
 
 	// wait for the app to exit
 	code, err := app.Wait()
@@ -252,12 +252,17 @@ func (s *AppScheduler) removeApp(appID string) error {
 	// stop the app
 	app, ok := s.sched[appID]
 	if !ok {
-		return nil
+		return ErrAppNotFound
 	}
 
 	delete(s.sched, appID)
-	slog.Debug("scheduler removed app", "app", appID)
-	return app.Stop()
+	slog.Info("scheduler app removed", "app", appID)
+
+	if err := app.Stop(); err != nil && !errors.Is(err, ErrAppNotRunning) {
+		return fmt.Errorf("failed to stop app: %w", err)
+	}
+
+	return nil
 }
 
 // stopAllAppsUnsafe stops all apps without locking the scheduler
@@ -265,10 +270,11 @@ func (s *AppScheduler) removeApp(appID string) error {
 func (s *AppScheduler) stopAllAppsUnsafe() {
 	for _, app := range s.sched {
 		if app.GetStatus() == StatusRunning {
-			slog.Info("scheduler stopping app", "app", app.Info().ID)
+			id := app.Info().ID
 			if err := app.Stop(); err != nil {
-				slog.Error("failed to stop app", "app", app.Info().ID, "error", err)
+				slog.Error("failed to stop app", "app", id, "error", err)
 			}
+			slog.Info("scheduler app stopped", "app", id)
 		}
 	}
 }

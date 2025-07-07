@@ -81,6 +81,11 @@ func (w *Workspace) Lock() error {
 }
 
 func (w *Workspace) Unlock() error {
+	// if this process hasn't locked the workspace, then don't delete the lock file
+	if !w.flock.Locked() {
+		return nil
+	}
+
 	if err := w.flock.Unlock(); err != nil {
 		return fmt.Errorf("failed to unlock workspace: %w", err)
 	}

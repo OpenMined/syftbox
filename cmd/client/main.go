@@ -36,6 +36,10 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// not running any local server, so we don't need to set client_url or client_token
+		cfg.ClientURL = ""
+		cfg.ClientToken = ""
+
 		if err := cfg.Validate(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: syftbox config: %s\n", red.Bold(true).Render("ERROR"), err)
 			if cfg.Email == "" || cfg.DataDir == "" || cfg.RefreshToken == "" {
@@ -177,8 +181,9 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
 	v.BindPFlag("server_url", cmd.Flags().Lookup("server"))
 	v.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config"))
-	v.SetDefault("client_url", config.DefaultClientURL) // this is not used in standard mode
 	v.SetDefault("apps_enabled", config.DefaultAppsEnabled)
+	v.SetDefault("client_url", "") // this is not used in standard mode
+	v.SetDefault("client_token", "")
 	v.SetDefault("refresh_token", "")
 	v.SetDefault("access_token", "")
 }

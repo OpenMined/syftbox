@@ -33,10 +33,13 @@ type Config struct {
 	Email        string `json:"email" mapstructure:"email"`
 	ServerURL    string `json:"server_url" mapstructure:"server_url"`
 	ClientURL    string `json:"client_url,omitempty" mapstructure:"client_url,omitempty"`
-	AppsEnabled  bool   `json:"-" mapstructure:"apps_enabled"`
+	ClientToken  string `json:"client_token,omitempty" mapstructure:"client_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty" mapstructure:"refresh_token,omitempty"`
-	AccessToken  string `json:"-" mapstructure:"access_token"` // must never be persisted. always in memory
-	Path         string `json:"-" mapstructure:"config_path"`
+
+	// do not persist, keep in memory
+	AppsEnabled bool   `json:"-" mapstructure:"apps_enabled"`
+	AccessToken string `json:"-" mapstructure:"access_token"`
+	Path        string `json:"-" mapstructure:"config_path"`
 }
 
 func (c *Config) Save() error {
@@ -83,8 +86,10 @@ func (c *Config) Validate() error {
 	}
 
 	// validate client url
-	if err := utils.ValidateURL(c.ClientURL); err != nil {
-		return fmt.Errorf("client url: %w", err)
+	if c.ClientURL != "" {
+		if err := utils.ValidateURL(c.ClientURL); err != nil {
+			return fmt.Errorf("client url: %w", err)
+		}
 	}
 
 	// do not validate refresh token... it can be empty for local dev.
