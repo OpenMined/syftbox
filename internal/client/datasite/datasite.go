@@ -77,8 +77,8 @@ func (d *Datasite) Start(ctx context.Context) error {
 	}
 
 	// authenticate with the server
-	if err := d.handleClientAuth(ctx); err != nil {
-		return fmt.Errorf("handle client auth: %w", err)
+	if err := d.authenticateClient(ctx); err != nil {
+		return fmt.Errorf("client auth: %w", err)
 	}
 
 	// Start app scheduler
@@ -128,7 +128,7 @@ func (d *Datasite) GetSyncManager() *sync.SyncManager {
 	return d.sync
 }
 
-func (d *Datasite) handleClientAuth(ctx context.Context) error {
+func (d *Datasite) authenticateClient(ctx context.Context) error {
 	// setup callback to update the refresh token in the config
 	d.sdk.OnAuthTokenUpdate(d.updateRefreshToken)
 
@@ -137,7 +137,7 @@ func (d *Datasite) handleClientAuth(ctx context.Context) error {
 		if errors.Is(err, syftsdk.ErrNoRefreshToken) {
 			return fmt.Errorf("no refresh token found, please login again")
 		} else {
-			return fmt.Errorf("authenticate: %w", err)
+			return err
 		}
 	}
 	slog.Info("authenticated", "user", d.config.Email)
@@ -147,7 +147,7 @@ func (d *Datasite) handleClientAuth(ctx context.Context) error {
 
 func (d *Datasite) updateRefreshToken(refreshToken string) {
 	// just in case we decide to not rotate refresh tokens
-	if refreshToken == "" {
+	if refreshToken == "" || refreshToken == d.config.RefreshToken {
 		return
 	}
 

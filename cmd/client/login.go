@@ -65,7 +65,7 @@ func newLoginCmd() *cobra.Command {
 			}
 
 			onEmailSubmit := func(emailInput string) error {
-				return syftsdk.VerifyEmail(cmd.Context(), serverURL, emailInput)
+				return syftsdk.RequestEmailCode(cmd.Context(), serverURL, emailInput)
 			}
 
 			onOTPSubmit := func(emailInput, otpInput string) error {

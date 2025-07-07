@@ -3,123 +3,94 @@ package syftsdk
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"sync"
+	"time"
 
-	"resty.dev/v3"
+	"github.com/imroc/req/v3"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
-type Downloader struct {
-	client     *resty.Client
-	tempDir    string
-	numWorkers int
-}
-
-func NewDownloader(numWorkers int) (*Downloader, error) {
-	tempDir, err := os.MkdirTemp("", "syftbox-*")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp directory: %w", err)
-	}
-
-	if numWorkers <= AutoDetectWorkers {
-		numWorkers = runtime.NumCPU()
-	}
-
-	r := resty.New().
-		SetRetryCount(3).
-		SetRetryMaxWaitTime(1)
-
-	return &Downloader{
-		client:     r,
-		tempDir:    tempDir,
-		numWorkers: numWorkers,
-	}, nil
-}
-
-func (d *Downloader) Stop() error {
-	// Remove temp directory
-	return os.RemoveAll(d.tempDir)
-}
-
-// DownloadFile downloads a single file from the provided URL to the temp directory
+// DownloadPresignedURL downloads a single file from the provided URL to the temp directory
 // Returns the path to the downloaded file or an error
-func (d *Downloader) DownloadFile(ctx context.Context, url string, name string) (string, error) {
-	// If no filename is provided, use the last part of the URL
-	if name == "" {
-		name = filepath.Base(url)
+func DownloadPresignedURL(ctx context.Context, job *DownloadJob) (string, error) {
+	if err := utils.EnsureDir(job.TargetDir); err != nil {
+		return "", fmt.Errorf("sdk: download file: %q: %w", job.URL, err)
 	}
 
-	destPath := filepath.Join(d.tempDir, name)
+	// If no filename is provided, use the last part of the URL
+	if job.Name == "" {
+		job.Name = filepath.Base(job.URL)
+	}
+
+	destPath := filepath.Join(job.TargetDir, job.Name)
 
 	// Use context for cancelation
-	resp, err := d.client.R().
-		SetDoNotParseResponse(true).
-		SetSaveResponse(true).
-		SetOutputFileName(destPath).
+	resp, err := HTTPClient.R().
+		DisableAutoReadResponse().
 		SetContext(ctx).
-		Get(url)
+		SetOutputFile(destPath).
+		SetDownloadCallbackWithInterval(func(info req.DownloadInfo) {
+			if info.Response.Response != nil && job.Callback != nil {
+				job.Callback(job, info.DownloadedSize, info.Response.ContentLength)
+			}
+		}, 1*time.Second).
+		Get(job.URL)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to download file from %s: %w", url, err)
-	} else if resp.IsError() {
-		return "", fmt.Errorf("failed to download file from %s: %s", url, resp.Status())
+		return "", fmt.Errorf("sdk: download file: '%s': %w", job.URL, err)
+	}
+
+	if resp.IsErrorState() {
+		var errorCode string
+		respStr := resp.String()
+
+		switch resp.GetStatusCode() {
+		case 403:
+			// Check if it's an expiration error
+			if strings.Contains(respStr, "expired") {
+				errorCode = CodePresignedURLExpired
+			} else if strings.Contains(respStr, "SignatureDoesNotMatch") {
+				errorCode = CodePresignedURLInvalid
+			} else {
+				errorCode = CodePresignedURLForbidden
+			}
+		case 404:
+			errorCode = CodePresignedURLNotFound
+		case 429:
+			errorCode = CodePresignedURLRateLimit
+		case 500, 502, 503, 504:
+			errorCode = CodeInternalError
+		default:
+			errorCode = CodeUnknownError
+		}
+
+		return "", fmt.Errorf("sdk: download file: '%s': %w", job.URL, &APIError{
+			Code:    errorCode,
+			Message: resp.String(),
+		})
 	}
 
 	return destPath, nil
 }
 
-func (d *Downloader) DownloadAllC(ctx context.Context, files <-chan *DownloadJob) <-chan *DownloadResult {
-	results := make(chan *DownloadResult)
+func DownloadPresignedURLs(ctx context.Context, opts *DownloadOpts) <-chan *DownloadResult {
+	jobs := make(chan *DownloadJob, len(opts.Jobs))
+	results := make(chan *DownloadResult, len(opts.Jobs))
 
-	var wg sync.WaitGroup
-	wg.Add(d.numWorkers)
-
-	// Start worker pool
-	for range d.numWorkers {
-		go func() {
-			defer wg.Done()
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case file, ok := <-files:
-					if !ok {
-						// Input channel closed, worker can exit
-						return
-					}
-					filePath, err := d.DownloadFile(ctx, file.URL, file.FileName)
-					results <- &DownloadResult{
-						DownloadJob:  *file,
-						DownloadPath: filePath,
-						Error:        err,
-					}
-				}
-			}
-		}()
+	// If no workers are provided, use the default number of workers
+	workers := opts.Workers
+	if workers == 0 {
+		workers = DefaultWorkers
 	}
-
-	// Close results channel when all workers are done
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	return results
-}
-
-func (d *Downloader) DownloadAll(ctx context.Context, files []*DownloadJob) <-chan *DownloadResult {
-	jobs := make(chan *DownloadJob, len(files))
-	results := make(chan *DownloadResult, len(files))
 
 	// Start exactly maxWorkers workers
 	var wg sync.WaitGroup
-	wg.Add(d.numWorkers)
+	wg.Add(workers)
 
 	// Launch worker pool
-	for range d.numWorkers {
+	for range workers {
 		go func() {
 			defer wg.Done()
 			for file := range jobs {
@@ -127,7 +98,7 @@ func (d *Downloader) DownloadAll(ctx context.Context, files []*DownloadJob) <-ch
 				case <-ctx.Done():
 					return
 				default:
-					filePath, err := d.DownloadFile(ctx, file.URL, file.FileName)
+					filePath, err := DownloadPresignedURL(ctx, file)
 					results <- &DownloadResult{
 						DownloadJob:  *file,
 						DownloadPath: filePath,
@@ -144,11 +115,11 @@ func (d *Downloader) DownloadAll(ctx context.Context, files []*DownloadJob) <-ch
 		defer close(jobs)
 
 		// Queue all files
-		for _, file := range files {
+		for _, job := range opts.Jobs {
 			select {
 			case <-ctx.Done():
 				return // Context canceled
-			case jobs <- file:
+			case jobs <- job:
 				// File queued successfully
 			}
 		}

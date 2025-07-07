@@ -10,20 +10,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/imroc/req/v3"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/openmined/syftbox/internal/version"
-	"resty.dev/v3"
 )
 
 const (
-	RetryInterval        = 5 * time.Second
 	TokenRefreshInterval = 24 * time.Hour
 )
 
 // SyftSDK is the main client for interacting with the Syft API
 type SyftSDK struct {
 	config   *SyftSDKConfig
-	client   *resty.Client
+	client   *req.Client
 	Datasite *DatasiteAPI
 	Blob     *BlobAPI
 	Events   *EventsAPI
@@ -37,21 +36,22 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 		return nil, fmt.Errorf("invalid sdk config: %w", err)
 	}
 
-	client := resty.New().
+	client := req.C().
 		SetBaseURL(config.BaseURL).
 		SetTLSClientConfig(&tls.Config{
 			MinVersion: tls.VersionTLS13,
+			NextProtos: []string{"h2", "http/1.1"},
 		}).
-		SetRetryCount(3).
-		SetRetryWaitTime(1*time.Second).
-		SetHeader(HeaderUserAgent, "SyftBox/"+version.Version).
-		SetHeader(HeaderSyftVersion, version.Version).
-		SetHeader(HeaderSyftDeviceId, utils.HWID).
-		SetHeader(HeaderSyftUser, config.Email).
-		SetQueryParam("user", config.Email).
-		SetRetryMaxWaitTime(RetryInterval).
-		AddContentTypeEncoder("json", jsonEncoder).
-		AddContentTypeDecoder("json", jsonDecoder)
+		SetCommonRetryCount(3).
+		SetCommonRetryFixedInterval(1*time.Second).
+		SetUserAgent(SyftBoxUserAgent).
+		SetCommonHeader(HeaderSyftVersion, version.Version).
+		SetCommonHeader(HeaderSyftDeviceId, utils.HWID).
+		SetCommonHeader(HeaderSyftUser, config.Email).
+		SetCommonQueryParam("user", config.Email).
+		SetJsonMarshal(jsonMarshal).
+		SetJsonUnmarshal(jsonUmarshal).
+		SetCommonErrorResult(&APIError{})
 
 	datasiteAPI := newDatasiteAPI(client)
 	blobAPI := newBlobAPI(client)
@@ -71,19 +71,18 @@ func (s *SyftSDK) Close() {
 	if s.Events.IsConnected() {
 		s.Events.Close()
 	}
-	s.client.Close()
 }
 
 // Authenticate sets the user authentication for API calls and events
 func (s *SyftSDK) Authenticate(ctx context.Context) error {
-	if isAuthDisabled() || isDevURL(s.config.BaseURL) {
-		slog.Warn("sdk auth disabled, skipping auth")
+	if isAuthDisabled(s.config.BaseURL) {
+		slog.Warn("sdk: auth disabled, skipping auth")
 		return nil
 	}
 
 	// if we have an access token, set it
 	if s.config.AccessToken != "" {
-		slog.Debug("sdk using existing access token")
+		slog.Debug("sdk: using existing access token")
 		if err := s.setAccessToken(s.config.AccessToken); err != nil {
 			return err
 		}
@@ -111,23 +110,23 @@ func (s *SyftSDK) autoRefreshToken(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			slog.Info("auto refreshing auth token")
+			slog.Info("sdk: auto refreshing auth token")
 			if err := s.refreshAuthToken(ctx); err != nil {
-				slog.Error("auto refresh auth token", "error", err)
+				slog.Error("sdk: auto refresh auth token", "error", err)
 			}
 		}
 	}
 }
 
 func (s *SyftSDK) refreshAuthToken(ctx context.Context) error {
-	slog.Debug("sdk refreshing auth tokens")
+	slog.Debug("sdk: refreshing auth tokens")
 
 	refreshToken, err := ParseToken(s.config.RefreshToken, RefreshToken)
 	if err != nil {
-		return fmt.Errorf("parse refresh token: %w", err)
+		return fmt.Errorf("refresh token: %w", err)
 	}
 	if err := refreshToken.Validate(s.config.Email, s.config.BaseURL); err != nil {
-		return fmt.Errorf("validate refresh token: %w", err)
+		return fmt.Errorf("refresh token: %w", err)
 	}
 
 	// refresh auth tokens with current refresh token
@@ -154,7 +153,7 @@ func (s *SyftSDK) setAccessToken(accessToken string) error {
 	claims, err := ParseToken(accessToken, AccessToken)
 
 	if err != nil {
-		return fmt.Errorf("failed to parse access token: %w", err)
+		return fmt.Errorf("access token: %w", err)
 	}
 
 	if err := claims.Validate(s.config.Email, s.config.BaseURL); err != nil {
@@ -162,19 +161,27 @@ func (s *SyftSDK) setAccessToken(accessToken string) error {
 	}
 
 	// set access token
-	s.client.SetAuthScheme("Bearer")
-	s.client.SetAuthToken(accessToken)
+	s.client.SetCommonBearerAuthToken(accessToken)
 
-	slog.Debug("sdk update access token", "user", claims.Subject, "expiry", claims.ExpiresAt)
+	slog.Debug("sdk: update access token", "user", claims.Subject, "expiry", claims.ExpiresAt)
 	return nil
 }
 
-func isAuthDisabled() bool {
+func isAuthDisabled(baseURL string) bool {
 	authEnabled := os.Getenv("SYFTBOX_AUTH_ENABLED")
+
+	// If SYFTBOX_AUTH_ENABLED is not provided, check if dev URL
+	if authEnabled == "" {
+		return isDevURL(baseURL)
+	}
+
+	// SYFTBOX_AUTH_ENABLED is provided, use the provided value
+	// default to enabled
 	enabled, err := strconv.ParseBool(authEnabled)
 	if err != nil {
 		return false
 	}
+
 	return !enabled
 }
 

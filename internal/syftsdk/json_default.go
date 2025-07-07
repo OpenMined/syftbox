@@ -8,6 +8,11 @@ import (
 	"github.com/goccy/go-json"
 )
 
+// for imroc/req
+var jsonMarshal = json.Marshal
+var jsonUmarshal = json.Unmarshal
+
+// for go resty
 func jsonEncoder(w io.Writer, v any) error {
 	return json.NewEncoder(w).Encode(v)
 }

@@ -2,10 +2,9 @@ package syftsdk
 
 import (
 	"context"
-	"fmt"
-	"net/http"
 
-	"resty.dev/v3"
+	"github.com/imroc/req/v3"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 const (
@@ -16,108 +15,85 @@ const (
 )
 
 type BlobAPI struct {
-	client *resty.Client
+	client *req.Client
 }
 
-func newBlobAPI(client *resty.Client) *BlobAPI {
+func newBlobAPI(client *req.Client) *BlobAPI {
 	return &BlobAPI{
 		client: client,
 	}
 }
 
 // Upload uploads a file to the blob storage
-func (b *BlobAPI) Upload(ctx context.Context, params *UploadParams) (*UploadResponse, error) {
-	var resp UploadResponse
-	var sdkError SyftSDKError
+func (b *BlobAPI) Upload(ctx context.Context, params *UploadParams) (apiResp *UploadResponse, err error) {
+	if !utils.FileExists(params.FilePath) {
+		return nil, ErrFileNotFound
+	}
 
-	res, err := b.client.R().
+	resp, err := b.client.R().
 		SetContext(ctx).
 		SetQueryParam("key", params.Key).
 		// SetQueryParam("crc64nvme", params.ChecksumCRC64NVME).
+		SetRetryCount(0).
 		SetFile("file", params.FilePath).
-		SetResult(&resp).
-		SetError(&sdkError).
+		SetSuccessResult(&apiResp).
+		SetUploadCallback(func(info req.UploadInfo) {
+			// if file size is less than 1MB, don't show progress
+			if info.FileSize < 1024*1024*1 || params.Callback == nil {
+				return
+			}
+			params.Callback(info.UploadedSize, info.FileSize)
+		}).
 		Put(v1BlobUpload)
 
-	if err != nil {
-		return nil, fmt.Errorf("sdk: blob upload: %q", err)
+	if err := handleAPIError(resp, err, "blob upload"); err != nil {
+		return nil, err
 	}
 
-	if res.IsError() {
-		if res.StatusCode() == http.StatusForbidden {
-			return nil, fmt.Errorf("%w: %s", ErrNoPermissions, sdkError.Error)
-		}
-		return nil, fmt.Errorf("sdk: blob upload: %q %q", res.Status(), sdkError.Error)
-	}
-
-	return &resp, nil
+	return apiResp, nil
 }
 
 // UploadPresigned gets presigned URLs for uploading multiple blobs
-func (b *BlobAPI) UploadPresigned(ctx context.Context, params *PresignedParams) (*PresignedResponse, error) {
-	var resp PresignedResponse
-	var sdkError SyftSDKError
-
-	res, err := b.client.R().
+func (b *BlobAPI) UploadPresigned(ctx context.Context, params *PresignedParams) (apiResp *PresignedResponse, err error) {
+	resp, err := b.client.R().
 		SetContext(ctx).
 		SetBody(params).
-		SetResult(&resp).
-		SetError(&sdkError).
+		SetSuccessResult(&apiResp).
 		Post(v1BlobUploadPresigned)
 
-	if err != nil {
-		return nil, fmt.Errorf("sdk: blob upload presigned: %q", err)
+	if err := handleAPIError(resp, err, "blob upload presigned"); err != nil {
+		return nil, err
 	}
 
-	if res.IsError() {
-		return nil, fmt.Errorf("sdk: blob upload presigned: %q %q", res.Status(), sdkError.Error)
-	}
-
-	return &resp, nil
+	return apiResp, nil
 }
 
 // DownloadPresigned gets presigned URLs for downloading multiple blobs
-func (b *BlobAPI) DownloadPresigned(ctx context.Context, params *PresignedParams) (*PresignedResponse, error) {
-	var resp PresignedResponse
-	var sdkError SyftSDKError
-
-	res, err := b.client.R().
+func (b *BlobAPI) DownloadPresigned(ctx context.Context, params *PresignedParams) (apiResp *PresignedResponse, err error) {
+	resp, err := b.client.R().
 		SetContext(ctx).
 		SetBody(params).
-		SetResult(&resp).
-		SetError(&sdkError).
+		SetSuccessResult(&apiResp).
 		Post(v1BlobDownload)
 
-	if err != nil {
-		return nil, fmt.Errorf("sdk: blob download presigned: %q", err)
+	if err := handleAPIError(resp, err, "blob download presigned"); err != nil {
+		return nil, err
 	}
 
-	if res.IsError() {
-		return nil, fmt.Errorf("sdk: blob download presigned: %q %q", res.Status(), sdkError.Error)
-	}
-
-	return &resp, nil
+	return apiResp, nil
 }
 
 // Delete deletes multiple blobs
-func (b *BlobAPI) Delete(ctx context.Context, params *DeleteParams) (*DeleteResponse, error) {
-	var resp DeleteResponse
-	var sdkError SyftSDKError
-
-	res, err := b.client.R().
+func (b *BlobAPI) Delete(ctx context.Context, params *DeleteParams) (apiResp *DeleteResponse, err error) {
+	resp, err := b.client.R().
 		SetContext(ctx).
 		SetBody(params).
-		SetResult(&resp).
-		SetError(&sdkError).
+		SetSuccessResult(&apiResp).
 		Post(v1BlobDelete)
 
-	if err != nil {
-		return nil, fmt.Errorf("sdk: blob delete: %q", err)
+	if err := handleAPIError(resp, err, "blob delete"); err != nil {
+		return nil, err
 	}
 
-	if res.IsError() {
-		return nil, fmt.Errorf("sdk blob delete: %q %q", res.Status(), sdkError.Error)
-	}
-
-	return &resp, nil
+	return apiResp, nil
 }

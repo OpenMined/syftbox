@@ -3,9 +3,8 @@ package syftsdk
 // ===================================================================================================
 
 // DataSiteViewInput represents the input parameters for the datasite view API
-type DatasiteViewParams struct {
-	// for now, no params are needed
-}
+// for now, no params are needed
+type DatasiteViewParams struct{}
 
 // DataSiteViewOutput represents the output from the datasite view API
 type DatasiteViewResponse struct {
@@ -22,6 +21,6 @@ type DownloadFileParams struct {
 
 // DownloadFileResponse represents the response from a file download request
 type DownloadFileResponse struct {
-	URLs   []*BlobUrl   `json:"urls"`
+	URLs   []*BlobURL   `json:"urls"`
 	Errors []*BlobError `json:"errors"`
 }
