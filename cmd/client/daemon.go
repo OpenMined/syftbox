@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/openmined/syftbox/internal/client"
+	"github.com/openmined/syftbox/internal/client/controlplane"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -25,7 +26,7 @@ func newDaemonCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
 
-			daemon, err := client.NewClientDaemon(&client.ControlPlaneConfig{
+			daemon, err := client.NewClientDaemon(&controlplane.CPServerConfig{
 				Addr:          addr,
 				AuthToken:     authToken,
 				EnableSwagger: enableSwagger,
