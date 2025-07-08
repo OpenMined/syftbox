@@ -3,8 +3,10 @@ package auth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"text/template"
 	"time"
 
@@ -15,9 +17,13 @@ import (
 	"github.com/openmined/syftbox/internal/utils"
 )
 
+type EmailString = string
+
+type OTPString = string
+
 type AuthService struct {
 	config        *Config
-	codes         *expirable.LRU[string, string]
+	codes         *expirable.LRU[EmailString, OTPString]
 	emailTemplate *template.Template
 	emailSvc      email.Service
 }
@@ -25,7 +31,7 @@ type AuthService struct {
 func NewAuthService(config *Config, emailSvc email.Service) *AuthService {
 	return &AuthService{
 		config:        config,
-		codes:         expirable.NewLRU[string, string](0, nil, config.EmailOTPExpiry), // 0 = LRU off
+		codes:         expirable.NewLRU[EmailString, OTPString](0, nil, config.EmailOTPExpiry), // 0 = LRU off
 		emailTemplate: template.Must(template.New("emailTemplate").Parse(emailTemplate)),
 		emailSvc:      emailSvc,
 	}
@@ -35,7 +41,7 @@ func (s *AuthService) IsEnabled() bool {
 	return s.config.Enabled
 }
 
-func (s *AuthService) SendOTP(ctx context.Context, userEmail string) error {
+func (s *AuthService) SendOTP(ctx context.Context, userEmail EmailString) error {
 	// Generate an OTP
 	otp, err := s.generateOTP(userEmail)
 	if err != nil {
@@ -52,7 +58,7 @@ func (s *AuthService) SendOTP(ctx context.Context, userEmail string) error {
 	return s.sendOTPEmail(ctx, userEmail, otp)
 }
 
-func (s *AuthService) GenerateTokensPair(ctx context.Context, userEmail string, otp string) (string, string, error) {
+func (s *AuthService) GenerateTokensPair(ctx context.Context, userEmail EmailString, otp OTPString) (string, string, error) {
 	// Verify the OTP
 	if err := s.verifyOTP(userEmail, otp); err != nil {
 		return "", "", fmt.Errorf("failed to generate token pair: %w", err)
@@ -127,12 +133,12 @@ func (s *AuthService) ValidateRefreshToken(ctx context.Context, refreshToken str
 	return claims, nil
 }
 
-func (s *AuthService) generateOTP(userEmail string) (string, error) {
+func (s *AuthService) generateOTP(userEmail EmailString) (OTPString, error) {
 	if !utils.IsValidEmail(userEmail) {
 		return "", ErrInvalidEmail
 	}
 
-	otp, err := utils.RandBase34(s.config.EmailOTPLength)
+	otp, err := randOTP(s.config.EmailOTPLength)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate OTP: %w", err)
 	}
@@ -142,7 +148,7 @@ func (s *AuthService) generateOTP(userEmail string) (string, error) {
 	return otp, nil
 }
 
-func (s *AuthService) verifyOTP(userEmail string, otp string) error {
+func (s *AuthService) verifyOTP(userEmail EmailString, otp OTPString) error {
 	if err := utils.ValidateEmail(userEmail); err != nil {
 		return err
 	}
@@ -160,7 +166,7 @@ func (s *AuthService) verifyOTP(userEmail string, otp string) error {
 	return nil
 }
 
-func (s *AuthService) sendOTPEmail(ctx context.Context, to, code string) error {
+func (s *AuthService) sendOTPEmail(ctx context.Context, to EmailString, code OTPString) error {
 	htmlBody, err := s.generateOTPEmail(to, code)
 	if err != nil {
 		return fmt.Errorf("failed to generate email: %w", err)
@@ -175,7 +181,7 @@ func (s *AuthService) sendOTPEmail(ctx context.Context, to, code string) error {
 	})
 }
 
-func (s *AuthService) generateOTPEmail(to, code string) (string, error) {
+func (s *AuthService) generateOTPEmail(to EmailString, code OTPString) (string, error) {
 	var buf bytes.Buffer
 
 	if err := s.emailTemplate.Execute(&buf, map[string]any{
@@ -190,7 +196,7 @@ func (s *AuthService) generateOTPEmail(to, code string) (string, error) {
 	return buf.String(), nil
 }
 
-func generateTokenPair(subject string, config *Config) (accessToken string, refreshToken string, err error) {
+func generateTokenPair(subject EmailString, config *Config) (accessToken string, refreshToken string, err error) {
 	// generate access token
 	// maybe save the access token ID for revocation?
 	accessToken, err = newAccessToken(subject, config.TokenIssuer, config.AccessTokenSecret, config.AccessTokenExpiry)
@@ -207,15 +213,15 @@ func generateTokenPair(subject string, config *Config) (accessToken string, refr
 	return accessToken, refreshToken, nil
 }
 
-func newAccessToken(subject, issuer, jwtSecret string, expiry time.Duration) (string, error) {
+func newAccessToken(subject EmailString, issuer, jwtSecret string, expiry time.Duration) (string, error) {
 	return newToken(subject, issuer, jwtSecret, expiry, AccessToken)
 }
 
-func newRefreshToken(subject, issuer, jwtSecret string, expiry time.Duration) (string, error) {
+func newRefreshToken(subject EmailString, issuer, jwtSecret string, expiry time.Duration) (string, error) {
 	return newToken(subject, issuer, jwtSecret, expiry, RefreshToken)
 }
 
-func newToken(subject, issuer, jwtSecret string, expiry time.Duration, tokenType AuthTokenType) (string, error) {
+func newToken(subject EmailString, issuer, jwtSecret string, expiry time.Duration, tokenType AuthTokenType) (string, error) {
 	var expiryTime *jwt.NumericDate
 
 	if expiry > 0 {
@@ -235,4 +241,21 @@ func newToken(subject, issuer, jwtSecret string, expiry time.Duration, tokenType
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtSecret))
+}
+
+func randOTP(length int) (OTPString, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("invalid OTP length: %d", length)
+	}
+
+	otpChars := make([]byte, length)
+	for i := range otpChars {
+		num, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", fmt.Errorf("failed to generate random digit: %w", err)
+		}
+		otpChars[i] = byte(num.Int64() + '0') // convert number to ascii
+	}
+
+	return string(otpChars), nil
 }

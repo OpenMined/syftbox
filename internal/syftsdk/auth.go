@@ -149,7 +149,7 @@ func ParseToken(token string, tokenType AuthTokenType) (*AuthClaims, error) {
 	}
 
 	// check if expired
-	if claims.ExpiresAt.Before(time.Now()) {
+	if claims.ExpiresAt != nil && claims.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("sdk: token expired, login again")
 	}
 
