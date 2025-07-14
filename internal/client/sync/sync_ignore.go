@@ -15,8 +15,10 @@ import (
 var defaultIgnoreLines = []string{
 	// syft
 	"syftignore",
-	"**/*syftrejected*",
-	"**/*syftconflict*",
+	"**/*syftrejected*", // legacy marker
+	"**/*syftconflict*", // legacy marker
+	"**/*.conflict.*",
+	"**/*.rejected.*",
 	".syftkeep",
 	// python
 	".ipynb_checkpoints/",

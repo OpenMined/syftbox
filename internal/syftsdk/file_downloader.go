@@ -12,9 +12,9 @@ import (
 	"github.com/openmined/syftbox/internal/utils"
 )
 
-// DownloadPresignedURL downloads a single file from the provided URL to the temp directory
+// DownloadFile downloads a single file from the provided URL to the temp directory
 // Returns the path to the downloaded file or an error
-func DownloadPresignedURL(ctx context.Context, job *DownloadJob) (string, error) {
+func DownloadFile(ctx context.Context, job *DownloadJob) (string, error) {
 	if err := utils.EnsureDir(job.TargetDir); err != nil {
 		return "", fmt.Errorf("sdk: download file: %q: %w", job.URL, err)
 	}
@@ -35,7 +35,7 @@ func DownloadPresignedURL(ctx context.Context, job *DownloadJob) (string, error)
 			if info.Response.Response != nil && job.Callback != nil {
 				job.Callback(job, info.DownloadedSize, info.Response.ContentLength)
 			}
-		}, 1*time.Second).
+		}, time.Second).
 		Get(job.URL)
 
 	if err != nil {
@@ -46,6 +46,7 @@ func DownloadPresignedURL(ctx context.Context, job *DownloadJob) (string, error)
 		var errorCode string
 		respStr := resp.String()
 
+		// presigned url specific errors
 		switch resp.GetStatusCode() {
 		case 403:
 			// Check if it's an expiration error
@@ -75,7 +76,7 @@ func DownloadPresignedURL(ctx context.Context, job *DownloadJob) (string, error)
 	return destPath, nil
 }
 
-func DownloadPresignedURLs(ctx context.Context, opts *DownloadOpts) <-chan *DownloadResult {
+func Downloader(ctx context.Context, opts *DownloadOpts) <-chan *DownloadResult {
 	jobs := make(chan *DownloadJob, len(opts.Jobs))
 	results := make(chan *DownloadResult, len(opts.Jobs))
 
@@ -98,7 +99,7 @@ func DownloadPresignedURLs(ctx context.Context, opts *DownloadOpts) <-chan *Down
 				case <-ctx.Done():
 					return
 				default:
-					filePath, err := DownloadPresignedURL(ctx, file)
+					filePath, err := DownloadFile(ctx, file)
 					results <- &DownloadResult{
 						DownloadJob:  *file,
 						DownloadPath: filePath,

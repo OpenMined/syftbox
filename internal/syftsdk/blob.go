@@ -2,6 +2,8 @@ package syftsdk
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/imroc/req/v3"
 	"github.com/openmined/syftbox/internal/utils"
@@ -37,13 +39,13 @@ func (b *BlobAPI) Upload(ctx context.Context, params *UploadParams) (apiResp *Up
 		SetRetryCount(0).
 		SetFile("file", params.FilePath).
 		SetSuccessResult(&apiResp).
-		SetUploadCallback(func(info req.UploadInfo) {
+		SetUploadCallbackWithInterval(func(info req.UploadInfo) {
 			// if file size is less than 1MB, don't show progress
 			if info.FileSize < 1024*1024*1 || params.Callback == nil {
 				return
 			}
 			params.Callback(info.UploadedSize, info.FileSize)
-		}).
+		}, time.Second).
 		Put(v1BlobUpload)
 
 	if err := handleAPIError(resp, err, "blob upload"); err != nil {
@@ -68,8 +70,13 @@ func (b *BlobAPI) UploadPresigned(ctx context.Context, params *PresignedParams) 
 	return apiResp, nil
 }
 
-// DownloadPresigned gets presigned URLs for downloading multiple blobs
-func (b *BlobAPI) DownloadPresigned(ctx context.Context, params *PresignedParams) (apiResp *PresignedResponse, err error) {
+// Download gets presigned URLs for downloading multiple blobs
+func (b *BlobAPI) Download(ctx context.Context, params *PresignedParams) (apiResp *PresignedResponse, err error) {
+	// if no keys are provided, return an error
+	if len(params.Keys) == 0 {
+		return nil, fmt.Errorf("no keys provided")
+	}
+
 	resp, err := b.client.R().
 		SetContext(ctx).
 		SetBody(params).

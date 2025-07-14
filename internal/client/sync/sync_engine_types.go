@@ -1,28 +1,33 @@
 package sync
 
+const (
+	SyncPriority = "Priority"
+	SyncStandard = "Standard"
+)
+
 // BatchLocalDelete represents a collection of sync operations for items deleted locally.
-type BatchLocalDelete = map[string]*SyncOperation
+type BatchLocalDelete = map[SyncPath]*SyncOperation
 
 // BatchRemoteDelete represents a collection of sync operations for items deleted remotely.
-type BatchRemoteDelete = map[string]*SyncOperation
+type BatchRemoteDelete = map[SyncPath]*SyncOperation
 
 // BatchLocalWrite represents a collection of sync operations for items created or updated locally.
-type BatchLocalWrite = map[string]*SyncOperation
+type BatchLocalWrite = map[SyncPath]*SyncOperation
 
 // BatchRemoteWrite represents a collection of sync operations for items created or updated remotely.
-type BatchRemoteWrite = map[string]*SyncOperation
+type BatchRemoteWrite = map[SyncPath]*SyncOperation
 
 // BatchConflict represents a collection of sync operations where conflicts were detected.
-type BatchConflict = map[string]*SyncOperation
+type BatchConflict = map[SyncPath]*SyncOperation
 
 // BatchUnchanged represents a set of paths that were compared and found to be unchanged.
-type BatchUnchanged = map[string]struct{}
+type BatchUnchanged = map[SyncPath]struct{}
 
 // BatchCleanups represents a set of paths that require local cleanup (e.g., removing tombstones).
-type BatchCleanups = map[string]struct{}
+type BatchCleanups = map[SyncPath]struct{}
 
 // BatchIgnored represents a set of paths that were ignored.
-type BatchIgnored = map[string]struct{}
+type BatchIgnored = map[SyncPath]struct{}
 
 // ReconcileOperations aggregates the results of a sync reconciliation process,
 // categorizing operations based on their type and origin.

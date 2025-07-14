@@ -238,3 +238,118 @@ func TestFileWatcher_MultipleIgnoresSameFile(t *testing.T) {
 		assert.Fail(t, "expected event after short ignore timeout expired")
 	}
 }
+
+func TestFileWatcher_FilterPaths_NilCallback(t *testing.T) {
+	tempDir := t.TempDir()
+	tempDir, err := filepath.EvalSymlinks(tempDir)
+	require.NoError(t, err)
+
+	fw := NewFileWatcher(tempDir)
+
+	// Set filter to nil (no filtering)
+	fw.FilterPaths(nil)
+
+	err = fw.Start(t.Context())
+	require.NoError(t, err)
+	defer fw.Stop()
+
+	events := fw.Events()
+
+	// Create a file - should generate an event since no filter is active
+	testFile := filepath.Join(tempDir, "test.txt")
+	err = os.WriteFile(testFile, []byte("content"), 0644)
+	require.NoError(t, err)
+
+	// Should receive the event
+	select {
+	case event := <-events:
+		assert.Equal(t, notify.Write, event.Event())
+		assert.Equal(t, testFile, event.Path())
+	case <-time.After(2 * time.Second):
+		assert.Fail(t, "expected event but got timeout")
+	}
+}
+
+func TestFileWatcher_FilterPaths_MultipleCriteria(t *testing.T) {
+	tempDir := t.TempDir()
+	tempDir, err := filepath.EvalSymlinks(tempDir)
+	require.NoError(t, err)
+
+	fw := NewFileWatcher(tempDir)
+
+	// Set up filter to ignore both .tmp files and files containing "ignore" in the name
+	fw.FilterPaths(func(path string) bool {
+		filename := filepath.Base(path)
+		return filepath.Ext(path) == ".tmp" ||
+			filepath.Ext(path) == ".log" ||
+			filepath.Base(filename) == "ignore_me.txt"
+	})
+
+	err = fw.Start(t.Context())
+	require.NoError(t, err)
+	defer fw.Stop()
+
+	events := fw.Events()
+
+	// Create various files
+	files := []string{
+		"should_see.txt",  // Should generate event
+		"temp.tmp",        // Should be filtered
+		"debug.log",       // Should be filtered
+		"ignore_me.txt",   // Should be filtered
+		"normal_file.doc", // Should generate event
+	}
+
+	for _, filename := range files {
+		fullPath := filepath.Join(tempDir, filename)
+		err = os.WriteFile(fullPath, []byte("content"), 0644)
+		require.NoError(t, err, "failed to write %s", filename)
+	}
+
+	// Collect events for a reasonable time period
+	var receivedEvents []notify.EventInfo
+	timeout := time.After(3 * time.Second)
+
+	for {
+		select {
+		case event := <-events:
+			receivedEvents = append(receivedEvents, event)
+		case <-timeout:
+			goto done
+		}
+
+		// If we've received 2 events (the expected non-filtered ones), we can stop early
+		if len(receivedEvents) >= 2 {
+			// Wait a bit more to ensure no filtered events come through
+			select {
+			case extraEvent := <-events:
+				receivedEvents = append(receivedEvents, extraEvent)
+			case <-time.After(200 * time.Millisecond):
+				goto done
+			}
+		}
+	}
+
+done:
+	// Should have received exactly 2 events (for files that shouldn't be filtered)
+	expectedEvents := []string{"should_see.txt", "normal_file.doc"}
+	require.Len(t, receivedEvents, 2, "expected exactly 2 events")
+
+	receivedPaths := make([]string, len(receivedEvents))
+	for i, event := range receivedEvents {
+		receivedPaths[i] = filepath.Base(event.Path())
+		assert.Equal(t, notify.Write, event.Event())
+	}
+
+	// Check that we got events for the right files (order might vary)
+	for _, expectedFile := range expectedEvents {
+		found := false
+		for _, receivedPath := range receivedPaths {
+			if receivedPath == expectedFile {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "expected to receive event for %s", expectedFile)
+	}
+}
