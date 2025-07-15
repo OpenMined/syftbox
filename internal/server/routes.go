@@ -26,6 +26,7 @@ import (
 var templateFS embed.FS
 
 func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler {
+	setGinMode()
 	r := gin.New()
 
 	// --------------------------- middlewares ---------------------------
@@ -148,7 +149,7 @@ func HealthHandler(ctx *gin.Context) {
 	})
 }
 
-func init() {
+func setGinMode() {
 	switch os.Getenv("SYFTBOX_ENV") {
 	case "PROD", "STAGE":
 		gin.SetMode(gin.ReleaseMode)
