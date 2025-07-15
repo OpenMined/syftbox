@@ -46,18 +46,34 @@ resource "google_compute_firewall" "allow_internal" {
   source_ranges = ["10.0.0.0/8"]
 }
 
-# Firewall - Allow external
-resource "google_compute_firewall" "allow_external" {
-  name    = "${var.cluster_name}-allow-external"
-  network = google_compute_network.vpc.name
-  
-  allow {
-    protocol = "tcp"
-    ports    = ["80", "443", "8080", "8888", "7938"]
-  }
-  
-  source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["syftbox"]
+# Firewall - Allow external (disabled for security - access via bastion)
+# resource "google_compute_firewall" "allow_external" {
+#   name    = "${var.cluster_name}-allow-external"
+#   network = google_compute_network.vpc.name
+#   
+#   allow {
+#     protocol = "tcp"
+#     ports    = ["80", "443", "8080", "8888", "7938"]
+#   }
+#   
+#   source_ranges = ["0.0.0.0/0"]
+#   target_tags   = ["syftbox"]
+# }
+
+# Cloud Router for NAT
+resource "google_compute_router" "router" {
+  name    = "${var.cluster_name}-router"
+  region  = var.region
+  network = google_compute_network.vpc.id
+}
+
+# Cloud NAT for bastion outbound internet access
+resource "google_compute_router_nat" "nat" {
+  name                               = "${var.cluster_name}-nat"
+  router                             = google_compute_router.router.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
 # Private IP for Cloud SQL

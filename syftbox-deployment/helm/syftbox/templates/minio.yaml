@@ -124,14 +124,13 @@ data:
     #!/bin/bash
     # MinIO initialization script - mirrors ../docker/minio/init.d setup
     
-    # Wait for MinIO to be ready
-    until curl -f http://localhost:9000/minio/health/live; do
+    # Wait for MinIO to be ready and configure client
+    until mc alias set local http://{{ include "syftbox.fullname" . }}-minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} 2>/dev/null; do
       echo "Waiting for MinIO to be ready..."
       sleep 2
     done
     
-    # Configure MinIO client
-    mc alias set local http://localhost:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}
+    echo "MinIO is ready!"
     
     # Create bucket with versioning
     mc mb local/{{ .Values.minio.bucketName }} --ignore-existing
@@ -141,7 +140,7 @@ data:
     mc admin user add local {{ .Values.minio.accessKey }} {{ .Values.minio.secretKey }}
     
     # Set policy for the user
-    mc admin policy set local readwrite user={{ .Values.minio.accessKey }}
+    mc admin policy attach local readwrite --user={{ .Values.minio.accessKey }}
     
     echo "MinIO initialization completed!"
 ---

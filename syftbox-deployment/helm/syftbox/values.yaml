@@ -39,11 +39,21 @@ dataOwner:
   jupyter:
     enabled: true
     token: ""  # Empty token for easy access
+  syftbox:
+    enabled: true  # Enable syftbox client
+    email: "dataowner@syftbox.local"  # Default email, can be overridden
+    workingDir: /home/syftbox
   service:
-    type: LoadBalancer
+    type: ClusterIP
     ports:
       syftbox: 7938
       jupyter: 8888
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""  # Use default storage class
+    accessModes:
+      - ReadWriteOnce
   resources:
     requests:
       memory: "1Gi"

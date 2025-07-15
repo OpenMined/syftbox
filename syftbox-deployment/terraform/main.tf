@@ -25,7 +25,8 @@ resource "google_project_service" "apis" {
     "container.googleapis.com",
     "sqladmin.googleapis.com",
     "servicenetworking.googleapis.com",
-    "artifactregistry.googleapis.com"
+    "artifactregistry.googleapis.com",
+    "iap.googleapis.com"
   ])
   
   project = var.project_id

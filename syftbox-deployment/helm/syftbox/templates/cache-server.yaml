@@ -75,18 +75,19 @@ spec:
         
         - name: PORT
           value: {{ .Values.cacheServer.service.port | quote }}
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: http
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: http
-          initialDelaySeconds: 5
-          periodSeconds: 5
+        # Health checks disabled due to subdomain validation issues
+        # livenessProbe:
+        #   httpGet:
+        #     path: /health
+        #     port: http
+        #   initialDelaySeconds: 30
+        #   periodSeconds: 10
+        # readinessProbe:
+        #   httpGet:
+        #     path: /ready
+        #     port: http
+        #   initialDelaySeconds: 5
+        #   periodSeconds: 5
         resources:
           {{- toYaml .Values.cacheServer.resources | nindent 10 }}
         volumeMounts:

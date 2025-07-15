@@ -22,6 +22,7 @@ DEFAULT_REGION="us-central1"
 DEFAULT_ZONE="us-central1-a"
 DEFAULT_CLUSTER_NAME="syftbox-cluster"
 DEFAULT_PROJECT_ID=""
+DEFAULT_EMAIL="dataowner@syftbox.local"
 
 # Load environment variables
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -219,6 +220,7 @@ deploy_syftbox() {
         --set database.private.password="$private_db_password" \
         --set database.mock.host="$mock_db_host" \
         --set database.mock.password="$mock_db_password" \
+        --set dataOwner.syftbox.email="${EMAIL:-$DEFAULT_EMAIL}" \
         --wait
 }
 
@@ -265,17 +267,18 @@ cleanup() {
         fi
     fi
     
-    # Delete Helm release
-    print_success "Deleting Helm release..."
-    helm uninstall syftbox -n syftbox || true
-    
-    # Delete namespace
-    print_success "Deleting namespace..."
-    kubectl delete namespace syftbox --ignore-not-found
-    
-    # Destroy Terraform infrastructure
+    # Follow terraform principles: let terraform handle all infrastructure
     cd "$TERRAFORM_DIR"
-    print_success "Destroying infrastructure..."
+    
+    # Check if terraform state exists
+    if [ ! -f terraform.tfstate ]; then
+        print_warning "No Terraform state found - nothing to destroy"
+        cd "$SCRIPT_DIR"
+        return 0
+    fi
+    
+    # Destroy Terraform infrastructure (this will handle GKE cluster and all resources)
+    print_success "Destroying infrastructure with Terraform..."
     terraform destroy -auto-approve
     
     cd "$SCRIPT_DIR"
@@ -320,12 +323,14 @@ Commands:
 
 Environment Variables:
   PROJECT_ID    - GCP project ID (required)
+  EMAIL         - Email for syftbox client (default: dataowner@syftbox.local)
   REGION        - GCP region (default: us-central1)
   ZONE          - GCP zone (default: us-central1-a)
   CLUSTER_NAME  - GKE cluster name (default: syftbox-cluster)
 
 Example:
   export PROJECT_ID=my-gcp-project
+  export EMAIL=user@company.com
   $0 deploy
 EOF
 }

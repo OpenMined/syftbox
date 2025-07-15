@@ -15,8 +15,8 @@ resource "google_sql_database_instance" "private" {
   database_version = "POSTGRES_15"
   region           = var.region
   
-  # Disable deletion protection for easy cleanup
-  deletion_protection = false
+  # Deletion protection based on variable
+  deletion_protection = var.database_deletion_protection
   
   settings {
     tier = var.database_tier
@@ -49,8 +49,8 @@ resource "google_sql_database_instance" "mock" {
   database_version = "POSTGRES_15"
   region           = var.region
   
-  # Disable deletion protection for easy cleanup
-  deletion_protection = false
+  # Deletion protection based on variable
+  deletion_protection = var.database_deletion_protection
   
   settings {
     tier = var.database_tier

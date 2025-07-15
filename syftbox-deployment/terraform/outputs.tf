@@ -50,3 +50,23 @@ output "artifact_registry_url" {
   description = "Artifact Registry URL for Docker images"
   value       = "${google_artifact_registry_repository.syftbox.location}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.syftbox.repository_id}"
 }
+
+output "bastion_instance_name" {
+  description = "Name of the bastion host instance"
+  value       = google_compute_instance.bastion.name
+}
+
+output "bastion_zone" {
+  description = "Zone where bastion host is deployed"
+  value       = google_compute_instance.bastion.zone
+}
+
+output "bastion_iap_ssh_command" {
+  description = "Command to SSH to bastion host via IAP"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion.name} --zone=${google_compute_instance.bastion.zone} --tunnel-through-iap --project=${var.project_id}"
+}
+
+output "bastion_iap_tunnel_command" {
+  description = "Example command to create IAP tunnel for Jupyter access"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion.name} --zone=${google_compute_instance.bastion.zone} --tunnel-through-iap --project=${var.project_id} -- -L 8888:localhost:8888 -N"
+}

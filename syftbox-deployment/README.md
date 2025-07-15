@@ -1,197 +1,247 @@
 # SyftBox GCP Deployment
 
-A simplified one-click deployment system for SyftBox on Google Cloud Platform (GCP) with PostgreSQL database connectivity.
+A secure deployment system for SyftBox on Google Cloud Platform (GCP) with PostgreSQL database connectivity and bastion host access.
 
 ## 🎯 Features
 
-- **One-click deployment**: Deploy complete infrastructure with a single command
+- **Secure architecture**: Bastion host for controlled access to cluster services
 - **Cloud SQL PostgreSQL**: Managed database with private IP access
 - **GKE cluster**: Kubernetes cluster with auto-scaling nodes
 - **Enhanced data owner pod**: Includes Jupyter Lab and PostgreSQL tools
+- **Internal-only services**: All cluster services use ClusterIP (no external exposure)
 - **Simple cleanup**: Destroy everything with one command
+
+## 🏗️ Architecture Overview
+
+The deployment consists of:
+- **GKE Cluster**: Kubernetes cluster running SyftBox components
+- **Cloud SQL**: PostgreSQL databases for private and mock data
+- **Artifact Registry**: Container image storage
+- **MinIO**: Object storage for blobs
+- **Bastion Host**: Secure access gateway for cluster services
+
+## 🔐 Security Architecture
+
+### Zero-Trust Network Model
+- **No External IPs**: Bastion has no public IP address
+- **IAP-Only Access**: All bastion access via Google Cloud Identity-Aware Proxy
+- **Internal Services**: SyftBox, Jupyter, databases are internal-only (ClusterIP)
+- **Network Isolation**: VPC with private subnets and controlled routing
+
+### Access Flow
+```
+User → Google Auth → IAP → Bastion (internal) → kubectl port-forward → Jupyter
+```
+
+### Security Benefits
+1. **Authentication**: Google SSO + IAM roles required
+2. **Authorization**: Fine-grained IAM permissions per user
+3. **Audit Trail**: All access logged in Cloud Audit Logs
+4. **Zero Attack Surface**: No public IPs or open ports
+5. **Encrypted Transit**: All traffic encrypted end-to-end
+
+### Security Improvements (Future)
+- **Private GKE Cluster**: Currently uses public cluster endpoint
+- **Workload Identity**: Pod-level IAM authentication
+- **Binary Authorization**: Signed container image validation
+- **Network Policies**: Pod-to-pod traffic restrictions
+- **VPC-native Networking**: Enhanced network security
 
 ## 📋 Prerequisites
 
-- GCP account with billing enabled
-- GCP project with sufficient permissions
-- Terraform authentication with GCP (see [Authentication](#-gcp-authentication))
+### Required Tools
+- `gcloud` CLI
+- `docker`
+- `terraform`
+- `helm`
+- `kubectl`
 
-## 🚀 Quick Start
-
-### 1. Setup Prerequisites
-
+Install all prerequisites:
 ```bash
-# Clone or download this repository
-cd syftbox-deployment
-
-# Make scripts executable
-chmod +x deploy.sh build-and-push.sh scripts/*.sh
-
-# Install required tools (optional - script will check)
 ./scripts/setup-prerequisites.sh
 ```
 
-### 2. Configure Environment
+### GCP Setup
+1. Create or select a GCP project
+2. Enable required APIs
+3. Configure authentication:
+   ```bash
+   gcloud auth login
+   gcloud config set project YOUR_PROJECT_ID
+   ```
 
+## 🚀 Deployment
+
+### 1. Configure Environment
+Create a `.env` file:
 ```bash
-# Copy example environment file
 cp .env.example .env
-
-# Edit with your settings
-export PROJECT_ID="your-gcp-project-id"
-export REGION="us-central1"
-export ZONE="us-central1-a"
+# Edit .env with your configuration
 ```
 
-### 3. Deploy SyftBox
+Required variables:
+- `PROJECT_ID`: Your GCP project ID
+- `REGION`: GCP region (default: us-central1)
+- `ZONE`: GCP zone (default: us-central1-a)
+- `CLUSTER_NAME`: GKE cluster name (default: syftbox-cluster)
+
+### 2. Configure Bastion Access
+
+**Option A: OS Login (Recommended)**
+Use Google Cloud OS Login for dynamic user management:
 
 ```bash
-# Deploy everything
+# No SSH keys needed in terraform.tfvars
+# Users are managed through Google Cloud IAM
+```
+
+**Note:** With IAP-only access, user management is handled entirely through Google Cloud IAM - no SSH key configuration needed.
+
+### 3. Deploy Infrastructure
+```bash
 ./deploy.sh deploy
 ```
 
 This will:
-1. Build and push Docker images to GCP Artifact Registry
-2. Deploy GCP infrastructure with Terraform
-3. Create GKE cluster and Cloud SQL database
-4. Deploy SyftBox with Helm
-5. Initialize database schema
-6. Display access information
+1. Deploy GCP infrastructure (VPC, GKE, Cloud SQL, Bastion)
+2. Build and push Docker images
+3. Deploy SyftBox with Helm
+4. Initialize databases
+5. Display access information
 
-### 4. Access Your Deployment
+## 🔑 Accessing SyftBox Services
 
-After deployment, you'll get access information:
+### Connect to Bastion Host
 
-```
-Data Owner Services:
-  - SyftBox: http://EXTERNAL_IP:7938
-  - Jupyter Lab: http://EXTERNAL_IP:8888
-
-To access the data owner pod:
-  kubectl exec -it deploy/syftbox-data-owner -n syftbox -- bash
-
-To connect to the database from the pod:
-  db-connect
-```
-
-## 📁 Project Structure
-
-```
-syftbox-deployment/
-├── README.md                   # This file
-├── deploy.sh                   # Main deployment script
-├── build-and-push.sh          # Docker build and push
-├── .env.example               # Environment variables template
-├── .gitignore                 # Git ignore rules
-├── docker/
-│   ├── Dockerfile.server      # Cache server image (for mock DB)
-│   └── Dockerfile.dataowner   # Data owner client image (for private DB)
-├── terraform/
-│   ├── main.tf                # Main Terraform configuration
-│   ├── variables.tf           # Input variables
-│   ├── outputs.tf             # Output values
-│   ├── vpc.tf                 # VPC and networking
-│   ├── gke.tf                 # GKE cluster
-│   ├── database.tf            # Cloud SQL database
-│   └── terraform.tfvars.example # Example variables
-├── helm/
-│   └── syftbox/
-│       ├── Chart.yaml         # Helm chart metadata
-│       ├── values.yaml        # Configuration values
-│       └── templates/         # Kubernetes templates
-│           ├── _helpers.tpl   # Template helpers
-│           ├── configmap.yaml # Configuration
-│           ├── database.yaml  # Database resources
-│           ├── cache-server.yaml # Cache server
-│           ├── data-owner.yaml # Data owner pod
-│           └── services.yaml  # Additional services
-└── scripts/
-    ├── setup-prerequisites.sh # Install required tools
-    ├── init-database.sh      # Database initialization
-    └── cleanup.sh            # Cleanup script
-```
-
-## 🛠️ Commands
-
-### Deploy
+The bastion host uses Google Cloud IAP (Identity-Aware Proxy) for secure access without exposing any external IP addresses.
 
 ```bash
-./deploy.sh deploy    # Deploy complete infrastructure
+# Get the IAP SSH command from Terraform output
+terraform output bastion_iap_ssh_command
+
+# Connect to bastion via IAP (requires gcloud auth and IAM permissions)
+gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --project=YOUR_PROJECT_ID --tunnel-through-iap
 ```
 
-### Status
+### Access Jupyter Lab
+
+**Option 1: Single Command IAP Tunnel (Recommended)**
+```bash
+# Get the tunnel command from Terraform output
+terraform output bastion_iap_tunnel_command
+
+# Create IAP tunnel with port forwarding in one command
+gcloud compute ssh syftbox-cluster-bastion \
+  --zone=us-central1-a \
+  --project=YOUR_PROJECT_ID \
+  --tunnel-through-iap \
+  -- -L 8888:localhost:8888 -N
+```
+
+**Option 2: Two-Step Process**
+First, SSH to bastion:
+```bash
+gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --project=YOUR_PROJECT_ID --tunnel-through-iap
+```
+
+Then from the bastion host:
+```bash
+# Forward Jupyter port
+kubectl port-forward svc/syftbox-data-owner 8888:8888 -n syftbox &
+```
+
+In a new terminal, create the IAP tunnel:
+```bash
+gcloud compute ssh syftbox-cluster-bastion \
+  --zone=us-central1-a \
+  --project=YOUR_PROJECT_ID \
+  --tunnel-through-iap \
+  -- -L 8888:localhost:8888 -N
+```
+
+Access Jupyter at: http://localhost:8888
+
+### Access SyftBox Application
+
+**Single Command IAP Tunnel:**
+```bash
+# Create IAP tunnel with SyftBox port forwarding
+gcloud compute ssh syftbox-cluster-bastion \
+  --zone=us-central1-a \
+  --project=YOUR_PROJECT_ID \
+  --tunnel-through-iap \
+  -- -L 7938:localhost:7938 -N
+```
+
+Access SyftBox at: http://localhost:7938
+
+### Direct Pod Access
+From the bastion host:
+```bash
+# Access data owner pod directly
+kubectl exec -it deploy/syftbox-data-owner -n syftbox -- bash
+
+# Access cache server pod
+kubectl exec -it deploy/syftbox-cache-server -n syftbox -- bash
+```
+
+## 👥 User Management
+
+Grant users access with appropriate IAM roles:
 
 ```bash
-./deploy.sh status    # Show deployment status
+# Essential roles for bastion access
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+    --member="user:user@company.com" \
+    --role="roles/compute.osLogin"
+
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+    --member="user:user@company.com" \
+    --role="roles/iap.tunnelResourceAccessor"
+
+# Optional: Grant Kubernetes access
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+    --member="user:user@company.com" \
+    --role="roles/container.developer"
 ```
 
-### Cleanup
-
+**Revoke Access:**
 ```bash
-./deploy.sh destroy   # Destroy all resources
-./scripts/cleanup.sh  # Interactive cleanup options
+gcloud projects remove-iam-policy-binding YOUR_PROJECT_ID \
+    --member="user:user@company.com" \
+    --role="roles/compute.osLogin"
 ```
 
-## 🔧 Configuration
 
-### Environment Variables
+## 🛠️ Management Commands
 
-Create a `.env` file or export these variables:
-
+### Cluster Management
 ```bash
-# Required
-PROJECT_ID="your-gcp-project-id"
+# Check deployment status
+./deploy.sh status
 
-# Optional (with defaults)
-REGION="us-central1"
-ZONE="us-central1-a" 
-CLUSTER_NAME="syftbox-cluster"
+# View cluster resources
+kubectl get all -n syftbox
+
+# View logs
+kubectl logs -l app=syftbox-data-owner -n syftbox
+kubectl logs -l app=syftbox-cache-server -n syftbox
 ```
 
-### Terraform Variables
-
-Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars` and customize:
-
-```hcl
-project_id = "your-gcp-project-id"
-region = "us-central1"
-zone = "us-central1-a"
-cluster_name = "syftbox-cluster"
-node_count = 3
-machine_type = "e2-standard-4"
-database_tier = "db-f1-micro"
+### Database Management
+```bash
+# Connect to databases from data owner pod
+kubectl exec -it deploy/syftbox-data-owner -n syftbox -- db-connect
 ```
 
-### Helm Values
+### Updating Deployment
+```bash
+# Update Helm deployment
+helm upgrade syftbox helm/syftbox --namespace syftbox
 
-Customize `helm/syftbox/values.yaml` for:
-- Resource limits and requests
-- Enable/disable Jupyter Lab
-- Database connection settings (private and mock databases)
-- Service types and ports
-- Network policies for enhanced security
-
-#### Database Configuration
-
-The values file now supports dual database configuration:
-
-```yaml
-database:
-  # Private database - for sensitive data (data owner only)
-  private:
-    type: managed
-    host: "private-db-host"
-    database: syftbox_private
-    username: syftbox
-    password: "private-password"
-  
-  # Mock database - for non-sensitive data (cache server)
-  mock:
-    type: managed  
-    host: "mock-db-host"
-    database: syftbox_mock
-    username: syftbox
-    password: "mock-password"
+# Update infrastructure
+terraform plan
+terraform apply
 ```
 
 ## 💾 Database Access
@@ -229,288 +279,218 @@ db-connect
 psql $DATABASE_URL  # Points to private database
 ```
 
-### From Jupyter Lab
+## 🔧 Configuration
 
-Open Jupyter Lab and use the provided notebook `SyftBox_Database_Tutorial.ipynb` for examples.
+### Environment Variables
 
-## 🐳 Docker Images
-
-The system uses two main Docker images (plus base images) stored in GCP Artifact Registry:
-
-### Deployment Images:
-1. **syftbox-cache-server**: Cache server that connects to mock database
-   - Handles public data and caching
-   - Includes MinIO blob storage integration
-   - Mirrors `../docker/docker-compose.yml` server configuration
-
-2. **syftbox-dataowner**: Data owner client that connects to private database
-   - Enhanced with Jupyter Lab and PostgreSQL tools
-   - Includes Python data science libraries
-   - Dual database connection helpers (private + mock)
-   - Mirrors `../docker/docker-compose-client.yml` client configuration
-
-### Base Images:
-- **syftbox-server**: Base server image (built from `../docker/Dockerfile.server`)
-- **syftbox-client**: Base client image (built from `../docker/Dockerfile.client`)
-
-### Architecture:
-- **Cache Server** → **Mock Database** (public data, external VM access)
-- **Data Owner** → **Private Database** (sensitive data, pod-only access)
-- **MinIO** → **Blob Storage** (mirrors docker-compose MinIO setup)
-
-### Container Registry
-
-Images are stored in GCP Artifact Registry at:
-```
-us-central1-docker.pkg.dev/YOUR_PROJECT_ID/syftbox/
-```
-
-#### Anonymous Pulling
-
-To enable anonymous pulling from the Artifact Registry (for external access):
-
-1. **Enable anonymous access to the repository**:
-```bash
-# Set the repository to allow anonymous reads
-gcloud artifacts repositories set-iam-policy syftbox \
-    --project=YOUR_PROJECT_ID \
-    --location=us-central1 \
-    policy.json
-```
-
-Where `policy.json` contains:
-```json
-{
-  "bindings": [
-    {
-      "role": "roles/artifactregistry.reader",
-      "members": [
-        "allUsers"
-      ]
-    }
-  ]
-}
-```
-
-2. **Pull images without authentication**:
-```bash
-# Anyone can now pull images without authentication
-docker pull us-central1-docker.pkg.dev/YOUR_PROJECT_ID/syftbox/syftbox-server:latest
-docker pull us-central1-docker.pkg.dev/YOUR_PROJECT_ID/syftbox/syftbox-client:latest
-```
-
-**Note**: The GKE cluster automatically has access to pull from Artifact Registry in the same project without additional configuration.
-
-## 🔐 GCP Authentication
-
-Terraform needs to authenticate with GCP to manage resources. There are several methods:
-
-### Method 1: Service Account Key (Recommended for CI/CD)
-
-1. **Create a service account**:
-```bash
-# Set your project ID
-export PROJECT_ID="your-gcp-project-id"
-
-# Create service account
-gcloud iam service-accounts create syftbox-terraform \
-    --display-name="SyftBox Terraform Service Account"
-
-# Grant necessary permissions
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:syftbox-terraform@$PROJECT_ID.iam.gserviceaccount.com" \
-    --role="roles/editor"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:syftbox-terraform@$PROJECT_ID.iam.gserviceaccount.com" \
-    --role="roles/container.admin"
-
-# Create and download key
-gcloud iam service-accounts keys create ~/syftbox-terraform.json \
-    --iam-account=syftbox-terraform@$PROJECT_ID.iam.gserviceaccount.com
-```
-
-2. **Configure Terraform to use the key**:
-```bash
-# Set environment variable
-export GOOGLE_APPLICATION_CREDENTIALS=~/syftbox-terraform.json
-
-# Or add to your .env file
-echo "GOOGLE_APPLICATION_CREDENTIALS=~/syftbox-terraform.json" >> .env
-```
-
-### Method 2: Application Default Credentials (Recommended for Development)
-
-1. **Install and configure gcloud CLI**:
-```bash
-# Install gcloud CLI (if not installed)
-curl https://sdk.cloud.google.com | bash
-exec -l $SHELL
-
-# Login with your user account
-gcloud auth login
-
-# Set your project
-gcloud config set project your-gcp-project-id
-
-# Create application default credentials
-gcloud auth application-default login
-```
-
-2. **Verify authentication**:
-```bash
-# Check current auth status
-gcloud auth list
-
-# Test that Terraform can authenticate
-terraform init
-terraform plan
-```
-
-### Method 3: Google Cloud Shell
-
-If you're using Google Cloud Shell, authentication is automatic:
+Create a `.env` file or export these variables:
 
 ```bash
-# Cloud Shell has built-in authentication
-# Just set your project
-gcloud config set project your-gcp-project-id
+# Required
+PROJECT_ID="your-gcp-project-id"
 
-# Run deployment
-./deploy.sh deploy
+# Optional (with defaults)
+REGION="us-central1"
+ZONE="us-central1-a" 
+CLUSTER_NAME="syftbox-cluster"
 ```
 
-### Method 4: Service Account Impersonation
+### Terraform Variables
 
-For advanced use cases where you want to impersonate a service account:
+Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars` and customize:
 
-```bash
-# Create the service account (as above)
-# Then impersonate it
-gcloud auth application-default login --impersonate-service-account=syftbox-terraform@$PROJECT_ID.iam.gserviceaccount.com
+```hcl
+project_id = "your-gcp-project-id"
+region = "us-central1"
+zone = "us-central1-a"
+cluster_name = "syftbox-cluster"
+node_count = 3
+machine_type = "e2-standard-4"
+database_tier = "db-f1-micro"
 
-# Or set in Terraform
-export GOOGLE_IMPERSONATE_SERVICE_ACCOUNT="syftbox-terraform@$PROJECT_ID.iam.gserviceaccount.com"
+# Bastion configuration (optional - only if not using OS Login)
+# bastion_ssh_keys = "username:ssh-rsa AAAAB3NzaC1yc2EAAAA..."
 ```
 
-### Required GCP Permissions
+### Helm Values
 
-The service account or user needs these permissions:
-
-- `roles/editor` - For general resource management
-- `roles/container.admin` - For GKE cluster management
-- `roles/cloudsql.admin` - For Cloud SQL database management
-- `roles/compute.networkAdmin` - For VPC and networking
-- `roles/iam.serviceAccountUser` - For service account operations
-
-### Troubleshooting Authentication
-
-```bash
-# Check if authentication is working
-gcloud auth list
-gcloud projects list
-
-# Test Terraform authentication
-terraform init
-terraform plan -var="project_id=your-project-id"
-
-# Common issues:
-# 1. Wrong project ID
-gcloud config get-value project
-
-# 2. Missing permissions
-gcloud projects get-iam-policy $PROJECT_ID
-
-# 3. Quota issues
-gcloud compute project-info describe --project=$PROJECT_ID
-```
+Customize `helm/syftbox/values.yaml` for:
+- Resource limits and requests
+- Enable/disable Jupyter Lab
+- Database connection settings (private and mock databases)
+- Service types and ports (now ClusterIP for security)
 
 ## 🔍 Troubleshooting
 
 ### Common Issues
 
-**Authentication Error**
-```bash
-# Ensure you're authenticated with GCP
-gcloud auth login
-gcloud auth application-default login
-```
+**1. Bastion IAP Access Denied**
+- Verify you have the `roles/iap.tunnelResourceAccessor` IAM role
+- Ensure you're authenticated with gcloud: `gcloud auth login`
+- Check that the bastion host has been deployed successfully
+- Verify IAP API is enabled: `gcloud services enable iap.googleapis.com`
 
-**Docker Build Fails**
-```bash
-# Ensure you can access the registry
-gcloud auth configure-docker us-central1-docker.pkg.dev
-```
+**2. kubectl Access from Bastion**
+- The bastion host is pre-configured with kubectl access
+- If issues persist, run: `gcloud container clusters get-credentials CLUSTER_NAME --zone ZONE`
 
-**Database Connection Issues**
-```bash
-# Check if database is running
-kubectl get pods -n syftbox
-kubectl logs deploy/syftbox-data-owner -n syftbox
-```
+**3. Port Forwarding Issues**
+- Ensure the service exists: `kubectl get svc -n syftbox`
+- Check pod status: `kubectl get pods -n syftbox`
+- Verify network connectivity from bastion to cluster
 
-**Terraform State Issues**
-```bash
-# Reset Terraform state if needed
-cd terraform
-rm -rf .terraform/ terraform.tfstate*
-terraform init
-```
+**4. Database Connection Issues**
+- Check Cloud SQL instances: `gcloud sql instances list`
+- Verify VPC peering: `gcloud compute networks peerings list`
+- Review database logs in GCP Console
 
-### Logs and Debugging
+### Logs and Monitoring
 
 ```bash
-# Check pod logs
-kubectl logs -f deploy/syftbox-cache-server -n syftbox
-kubectl logs -f deploy/syftbox-data-owner -n syftbox
+# Application logs
+kubectl logs -l app=syftbox-data-owner -n syftbox --tail=100
+kubectl logs -l app=syftbox-cache-server -n syftbox --tail=100
 
-# Check events
-kubectl get events -n syftbox --sort-by='.lastTimestamp'
+# MinIO logs
+kubectl logs -l app=syftbox-minio -n syftbox --tail=100
 
-# Check services
-kubectl get svc -n syftbox
+# Cluster events
+kubectl get events -n syftbox --sort-by=.metadata.creationTimestamp
 ```
+
+## 🔒 Security Considerations
+
+### Network Security
+- All cluster services are internal-only (no external LoadBalancer)
+- Bastion host is the only external access point
+- VPC firewall rules restrict access to authorized IPs only
+- Private Cloud SQL instances with VPC peering
+
+### Access Control
+- SSH key-based authentication for bastion access
+- Service account with minimal required permissions
+- Regular security updates on bastion host
+- Network segmentation between components
+
+### Best Practices
+1. **Minimal IAM Permissions**: Grant only required roles to users
+2. **Regular Updates**: Keep bastion host and cluster updated
+3. **Monitoring**: Enable Cloud Audit Logs for access monitoring
+4. **Backup Strategy**: Regular backup of cluster state and databases
 
 ## 🧹 Cleanup
 
-### Complete Cleanup
-
+To destroy all resources:
 ```bash
-# Interactive cleanup
-./scripts/cleanup.sh
-
-# Force cleanup (no confirmation)
-./scripts/cleanup.sh force
+./deploy.sh destroy
 ```
 
-### Partial Cleanup
+## 🚀 Future Security Enhancements
 
-```bash
-# Clean only Kubernetes resources
-./scripts/cleanup.sh kubernetes
+### TODO: Option 1 - Ingress with Authentication (Recommended Upgrade)
 
-# Clean only Docker images
-./scripts/cleanup.sh docker
+For improved user experience and enterprise security, consider upgrading to:
 
-# Clean only Terraform infrastructure
-./scripts/cleanup.sh terraform
+**Components to Add:**
+- **Nginx Ingress Controller**: External HTTP/HTTPS routing
+- **OAuth2 Proxy**: Authentication middleware
+- **Cert-Manager**: Automatic SSL certificate management
+- **Identity Provider Integration**: Google Workspace, Azure AD, etc.
+
+**Benefits:**
+- Direct browser access (no SSH tunneling required)
+- Centralized authentication management
+- Automatic SSL/TLS certificates
+- Better user experience for data owners
+- Audit logging and session management
+
+**Implementation Plan:**
+1. Deploy Nginx Ingress Controller
+2. Configure OAuth2 proxy with identity provider
+3. Set up Cert-Manager for SSL certificates
+4. Create ingress rules for Jupyter access
+5. Configure DNS for custom domains
+6. Implement network policies for additional security
+
+**Example Access Flow:**
+```
+User → https://jupyter.syftbox.company.com 
+     → OAuth2 Authentication 
+     → Nginx Ingress 
+     → Jupyter Service (ClusterIP)
 ```
 
-## 📝 Notes
+This upgrade maintains security while providing a more user-friendly access method.
 
-- This is a simplified deployment focused on core functionality
-- No backup systems, monitoring, or complex security features
-- Database uses private IP with VPC peering for security
-- LoadBalancer services will create external IPs for access
-- All passwords are auto-generated and stored in Terraform state
+## 📊 Architecture Diagrams
+
+### Current Architecture (Bastion-based)
+```
+Internet
+    ↓
+Bastion Host (SSH)
+    ↓
+GKE Cluster (private)
+├── SyftBox Data Owner (ClusterIP)
+├── Cache Server (ClusterIP)
+├── MinIO (ClusterIP)
+└── Cloud SQL (private)
+```
+
+### Future Architecture (Ingress-based)
+```
+Internet
+    ↓
+Nginx Ingress + OAuth2
+    ↓
+GKE Cluster (private)
+├── SyftBox Data Owner (ClusterIP)
+├── Cache Server (ClusterIP)
+├── MinIO (ClusterIP)
+└── Cloud SQL (private)
+```
+
+## 🐳 Docker Images
+
+The system uses two main Docker images stored in GCP Artifact Registry:
+
+### Deployment Images:
+1. **syftbox-cache-server**: Cache server that connects to mock database
+2. **syftbox-dataowner**: Data owner client that connects to private database
+
+### Architecture:
+- **Cache Server** → **Mock Database** (public data)
+- **Data Owner** → **Private Database** (sensitive data)
+- **MinIO** → **Blob Storage**
+
+## 📁 Project Structure
+
+```
+syftbox-deployment/
+├── README.md                   # This file
+├── deploy.sh                   # Main deployment script
+├── build-and-push.sh          # Docker build and push
+├── .env.example               # Environment variables template
+├── terraform/
+│   ├── main.tf                # Main Terraform configuration
+│   ├── variables.tf           # Input variables
+│   ├── bastion.tf             # Bastion host configuration
+│   ├── vpc.tf                 # VPC and networking
+│   ├── gke.tf                 # GKE cluster
+│   └── database.tf            # Cloud SQL database
+├── helm/
+│   └── syftbox/               # Helm chart
+└── scripts/
+    └── setup-prerequisites.sh # Install required tools
+```
 
 ## 🤝 Support
 
 For issues and questions:
 1. Check the troubleshooting section above
-2. Review deployment logs
-3. Verify GCP permissions and quotas
-4. Ensure all prerequisites are installed
+2. Review cluster logs and events
+3. Verify infrastructure state with `terraform plan`
+4. Contact the SyftBox team for application-specific issues
 
 ## 📄 License
 
