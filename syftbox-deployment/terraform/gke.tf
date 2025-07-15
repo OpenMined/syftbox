@@ -17,8 +17,8 @@ resource "google_container_cluster" "primary" {
     services_secondary_range_name = "services"
   }
   
-  # Basic cluster settings
-  min_master_version = "1.27"
+  # Basic cluster settings - pinned to stable version for reproducibility
+  min_master_version = "1.32"
   
   depends_on = [
     google_project_service.apis,
