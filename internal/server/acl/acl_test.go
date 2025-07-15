@@ -1,15 +1,182 @@
 package acl
 
 import (
+	"context"
+	"iter"
 	"testing"
+	"time"
 
 	"github.com/openmined/syftbox/internal/aclspec"
+	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
+// MockBlobService is a mock implementation of blob.Service
+type MockBlobService struct {
+	mock.Mock
+}
+
+func (m *MockBlobService) Backend() blob.IBlobBackend {
+	args := m.Called()
+	return args.Get(0).(blob.IBlobBackend)
+}
+
+func (m *MockBlobService) Index() blob.IBlobIndex {
+	args := m.Called()
+	return args.Get(0).(blob.IBlobIndex)
+}
+
+func (m *MockBlobService) OnBlobChange(callback blob.BlobChangeCallback) {
+	m.Called(callback)
+}
+
+// MockBlobIndex is a mock implementation of blob.IBlobIndex
+type MockBlobIndex struct {
+	mock.Mock
+}
+
+func (m *MockBlobIndex) Get(key string) (*blob.BlobInfo, bool) {
+	args := m.Called(key)
+	return args.Get(0).(*blob.BlobInfo), args.Bool(1)
+}
+
+func (m *MockBlobIndex) Set(blob *blob.BlobInfo) error {
+	args := m.Called(blob)
+	return args.Error(0)
+}
+
+func (m *MockBlobIndex) SetMany(blobs []*blob.BlobInfo) error {
+	args := m.Called(blobs)
+	return args.Error(0)
+}
+
+func (m *MockBlobIndex) Remove(key string) error {
+	args := m.Called(key)
+	return args.Error(0)
+}
+
+func (m *MockBlobIndex) List() ([]*blob.BlobInfo, error) {
+	args := m.Called()
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) Iter() iter.Seq[*blob.BlobInfo] {
+	args := m.Called()
+	return args.Get(0).(iter.Seq[*blob.BlobInfo])
+}
+
+func (m *MockBlobIndex) Count() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
+func (m *MockBlobIndex) FilterByKeyGlob(pattern string) ([]*blob.BlobInfo, error) {
+	args := m.Called(pattern)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterByPrefix(prefix string) ([]*blob.BlobInfo, error) {
+	args := m.Called(prefix)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterBySuffix(suffix string) ([]*blob.BlobInfo, error) {
+	args := m.Called(suffix)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterByTime(filter blob.TimeFilter) ([]*blob.BlobInfo, error) {
+	args := m.Called(filter)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterAfterTime(after time.Time) ([]*blob.BlobInfo, error) {
+	args := m.Called(after)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterBeforeTime(before time.Time) ([]*blob.BlobInfo, error) {
+	args := m.Called(before)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+// MockBlobBackend is a mock implementation of blob.IBlobBackend
+type MockBlobBackend struct {
+	mock.Mock
+}
+
+func (m *MockBlobBackend) GetObject(ctx context.Context, key string) (*blob.GetObjectResponse, error) {
+	args := m.Called(ctx, key)
+	return args.Get(0).(*blob.GetObjectResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) GetObjectPresigned(ctx context.Context, key string) (string, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBlobBackend) PutObject(ctx context.Context, params *blob.PutObjectParams) (*blob.PutObjectResponse, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(*blob.PutObjectResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) PutObjectPresigned(ctx context.Context, key string) (string, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBlobBackend) PutObjectMultipart(ctx context.Context, params *blob.PutObjectMultipartParams) (*blob.PutObjectMultipartResponse, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(*blob.PutObjectMultipartResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) CompleteMultipartUpload(ctx context.Context, params *blob.CompleteMultipartUploadParams) (*blob.PutObjectResponse, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(*blob.PutObjectResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) CopyObject(ctx context.Context, params *blob.CopyObjectParams) (*blob.CopyObjectResponse, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(*blob.CopyObjectResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) DeleteObject(ctx context.Context, key string) (bool, error) {
+	args := m.Called(ctx, key)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockBlobBackend) ListObjects(ctx context.Context) ([]*blob.BlobInfo, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobBackend) Delegate() any {
+	args := m.Called()
+	return args.Get(0)
+}
+
+// Note: setHooks is a private method not needed for testing
+
 func aclSvc() *ACLService {
-	// todo mock blob service later
-	return NewACLService(nil)
+	// Create mock dependencies
+	mockIndex := &MockBlobIndex{}
+	mockBackend := &MockBlobBackend{}
+	mockBlobService := &MockBlobService{}
+
+	// Set up common expectations
+	mockBlobService.On("Index").Return(mockIndex)
+	mockBlobService.On("Backend").Return(mockBackend)
+	mockBlobService.On("OnBlobChange", mock.AnythingOfType("blob.BlobChangeCallback")).Return()
+
+	// Set up index expectations with sensible defaults
+	mockIndex.On("FilterBySuffix", mock.AnythingOfType("string")).Return([]*blob.BlobInfo{}, nil)
+	mockIndex.On("Iter").Return(func(yield func(*blob.BlobInfo) bool) {
+		// Empty iterator by default
+	})
+	mockIndex.On("Count").Return(0)
+
+	return NewACLService(mockBlobService)
 }
 
 func TestAclServiceGetRule(t *testing.T) {
