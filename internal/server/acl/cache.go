@@ -64,3 +64,10 @@ func (c *ACLCache) DeletePrefix(path string) int {
 
 	return deleted
 }
+
+func (c *ACLCache) Count() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return len(c.index)
+}
