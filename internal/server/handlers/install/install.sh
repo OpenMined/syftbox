@@ -3,14 +3,19 @@
 
 set -e
 
-# --no-prompt => disables the run client prompt
-ASK_RUN_CLIENT=1
+# Installation modes:
+# - download-only: Just download the binary, no login/run, no prompts
+# - setup-only: Download + login, but don't run, no prompts  
+# - interactive: Download + login + prompt to run (default)
 
-# --run => disables the prompt & runs the client
-RUN_CLIENT=0
+# Default installation mode (can be overridden by INSTALL_MODE env var)
+INSTALL_MODE=${INSTALL_MODE:-"interactive"}
 
-# --apps => installs these apps (comma separated list)
+# Apps to install (comma separated list)
 INSTALL_APPS=${INSTALL_APPS:-""}
+
+# Debug mode (can be overridden by SYFTBOX_DEBUG env var)
+DEBUG=${DEBUG:-"0"}
 
 APP_NAME="syftbox"
 ARTIFACT_BASE_URL=${ARTIFACT_BASE_URL:-"https://syftbox.net"}
@@ -20,6 +25,7 @@ SYFTBOX_BINARY_PATH="$HOME/.local/bin/syftbox"
 red='\033[1;31m'
 yellow='\033[0;33m'
 cyan='\033[0;36m'
+purple='\033[0;35m'
 green='\033[1;32m'
 reset='\033[0m'
 
@@ -40,6 +46,12 @@ success() {
     echo "${green}$1${reset}"
 }
 
+debug() {
+    if [ "$DEBUG" = "1" ]; then
+        echo "${purple}DEBUG${reset}: $1" >&2
+    fi
+}
+
 check_cmd() {
     command -v "$1" > /dev/null 2>&1
     return $?
@@ -54,12 +66,36 @@ need_cmd() {
 ###################################################
 
 downloader() {
-    if check_cmd curl
-    then curl -fs "$1" -o "$2"
-    elif check_cmd wget
-    then wget -q "$1" -O "$2" 
-    else need_cmd "curl or wget"
+    local url="$1"
+    local output="$2"
+
+    debug "attempting download: $url -> $output"
+
+    if check_cmd curl; then
+        local curl_flags="-fSL --progress-bar"
+        if [ "$DEBUG" = "1" ]; then
+            curl_flags="-v $curl_flags"
+        fi
+        curl $curl_flags "$url" -o "$output"
+        local exit_code=$?
+        if [ $exit_code -ne 0 ]; then
+            err "failed to download $url (curl exit code: $exit_code)"
+        fi
+    elif check_cmd wget; then
+        local wget_flags="-q --show-progress --https-only"
+        if [ "$DEBUG" = "1" ]; then
+            wget_flags="-d $wget_flags"
+        fi
+        wget $wget_flags "$url" -O "$output"
+        local exit_code=$?
+        if [ $exit_code -ne 0 ]; then
+            err "failed to download $url (wget exit code: $exit_code)"
+        fi
+    else
+        need_cmd "curl or wget"
     fi
+
+    debug "download completed successfully"
 }
 
 ###################################################
@@ -136,6 +172,46 @@ detect_arch() {
   esac
 }
 
+debug_dump() {
+    if [ "$DEBUG" = "1" ]; then
+        echo "${yellow}=== SYFTBOX INSTALLER DEBUG ===${reset}" >&2
+        echo "${yellow}System Information:${reset}" >&2
+        echo "  OS: $(uname -s)" >&2
+        echo "  Architecture: $(uname -m)" >&2
+        echo "  Detected OS: $(detect_os)" >&2
+        echo "  Detected Arch: $(detect_arch)" >&2
+        echo "  Shell: $SHELL" >&2
+        echo "  User: $USER" >&2
+        echo "  Home: $HOME" >&2
+        echo >&2
+        echo "${yellow}Configuration:${reset}" >&2
+        echo "  Install Mode: $INSTALL_MODE" >&2
+        echo "  Install Apps: $INSTALL_APPS" >&2
+        echo "  Artifact Base URL: $ARTIFACT_BASE_URL" >&2
+        echo "  Download URL: $ARTIFACT_DOWNLOAD_URL" >&2
+        echo "  Binary Path: $SYFTBOX_BINARY_PATH" >&2
+        echo "  Package Name: ${APP_NAME}_client_$(detect_os)_$(detect_arch)" >&2
+        echo >&2
+        echo "${yellow}Environment Variables:${reset}" >&2
+        echo "  SYFTBOX_INSTALL_MODE: ${SYFTBOX_INSTALL_MODE:-"(not set)"}" >&2
+        echo "  SYFTBOX_INSTALL_APPS: ${SYFTBOX_INSTALL_APPS:-"(not set)"}" >&2
+        echo "  SYFTBOX_ARTIFACT_BASE_URL: ${SYFTBOX_ARTIFACT_BASE_URL:-"(not set)"}" >&2
+        echo "  SYFTBOX_DEBUG: ${SYFTBOX_DEBUG:-"(not set)"}" >&2
+        echo >&2
+        echo "${yellow}PATH Information:${reset}" >&2
+        echo "  Current PATH: $PATH" >&2
+        echo "  ~/.local/bin in PATH: $(check_home_path ".local/bin" && echo "yes" || echo "no")" >&2
+        echo >&2
+        echo "${yellow}Dependencies:${reset}" >&2
+        echo "  curl: $(check_cmd curl && echo "available" || echo "not found")" >&2
+        echo "  wget: $(check_cmd wget && echo "available" || echo "not found")" >&2
+        echo "  tar: $(check_cmd tar && echo "available" || echo "not found")" >&2
+        echo "  uname: $(check_cmd uname && echo "available" || echo "not found")" >&2
+        echo "  mktemp: $(check_cmd mktemp && echo "available" || echo "not found")" >&2
+        echo >&2
+    fi
+}
+
 ###################################################
 
 prompt_restart_shell() {
@@ -149,7 +225,6 @@ prompt_restart_shell() {
     echo "  \`syftbox login\`"
     echo "  \`syftbox\`"
 }
-
 
 ###################################################
 # Download & Install SyftBox
@@ -225,6 +300,7 @@ uninstall_old_version() {
 }
 
 pre_install() {
+    debug "Starting pre-install checks..."
     need_cmd "uname"
     need_cmd "tar"
     need_cmd "mktemp"
@@ -234,22 +310,36 @@ pre_install() {
 }
 
 post_install() {
-    if ! setup_client; then
-        RUN_CLIENT=0
-        ASK_RUN_CLIENT=0
-        prompt_restart_shell
-        echo
-        err "Setup did not complete. Please login manually."
-    fi
-
-    success "Installation completed!"
-
-    if [ $RUN_CLIENT -eq 1 ]
-    then run_client
-    elif [ $ASK_RUN_CLIENT -eq 1 ]
-    then prompt_run_client
-    else prompt_restart_shell
-    fi
+    case "$INSTALL_MODE" in
+        "download-only")
+            debug "install mode: download-only. skipping login and run"
+            success "Download completed!"
+            prompt_restart_shell
+            ;;
+        "setup-only")
+            debug "install mode: setup-only. performing login but not running"
+            if ! setup_client; then
+                prompt_restart_shell
+                echo
+                err "Setup did not complete. Please login manually."
+            fi
+            success "Installation and setup completed!"
+            prompt_restart_shell
+            ;;
+        "interactive")
+            debug "install mode: interactive. performing login and prompting for run"
+            if ! setup_client; then
+                prompt_restart_shell
+                echo
+                err "Setup did not complete. Please login manually."
+            fi
+            success "Installation completed!"
+            prompt_run_client
+            ;;
+        *)
+            err "invalid install mode: $INSTALL_MODE"
+            ;;
+    esac
 }
 
 install_syftbox() {
@@ -258,29 +348,73 @@ install_syftbox() {
     local pkg_name="${APP_NAME}_client_${os}_${arch}"
     local tmp_dir=$(mktemp -d)
 
+    debug "Detected OS: $os"
+    debug "Detected architecture: $arch"
+    debug "Package name: $pkg_name"
+    debug "Temporary directory: $tmp_dir"
+    debug "Download URL: ${ARTIFACT_DOWNLOAD_URL}/${pkg_name}.tar.gz"
+
     info "Downloading..."
     mkdir -p $tmp_dir
     downloader "${ARTIFACT_DOWNLOAD_URL}/${pkg_name}.tar.gz" "$tmp_dir/$pkg_name.tar.gz"
 
+    debug "Download completed, extracting..."
     info "Installing..."
     tar -xzf "$tmp_dir/$pkg_name.tar.gz" -C $tmp_dir
     mkdir -p $HOME/.local/bin
     cp "$tmp_dir/$pkg_name/syftbox" $SYFTBOX_BINARY_PATH
+    debug "Binary copied to: $SYFTBOX_BINARY_PATH"
     info "Installed $($SYFTBOX_BINARY_PATH -v)"
 
+    debug "Cleaning up temporary directory: $tmp_dir"
     rm -rf $tmp_dir
+    debug "Patching PATH..."
     patch_path
+}
+
+show_usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo
+    echo "Installation modes:"
+    echo "  --download-only     Download binary only, no login/run"
+    echo "  --setup-only        Download + login, but don't run"
+    echo "  --interactive       Download + login + prompt to run (default)"
+    echo
+    echo "Options:"
+    echo "  -m, --mode=MODE     Set installation mode (download-only|setup-only|interactive)"
+    echo "  -a, --apps=APPS     Install comma-separated list of apps"
+    echo "  -d, --debug         Enable debug output"
+    echo "  -h, --help          Show this help message"
+    echo
+    echo "Environment variables:"
+    echo "  SYFTBOX_INSTALL_MODE        Installation mode (default: interactive)"
+    echo "  SYFTBOX_INSTALL_APPS        Apps to install (comma-separated)"
+    echo "  SYFTBOX_ARTIFACT_BASE_URL   Base URL for downloads (default: https://syftbox.net)"
+    echo "  SYFTBOX_DEBUG               Enable debug output (1=enabled, 0=disabled)"
 }
 
 do_install() {
     local next_arg=""
     for arg in "$@"; do
         case "$arg" in
-            -r|--run)
-                RUN_CLIENT=1
+            -h|--help)
+                show_usage
+                exit 0
                 ;;
-            -n|--no-prompt)
-                ASK_RUN_CLIENT=0
+            --download-only)
+                INSTALL_MODE="download-only"
+                ;;
+            --setup-only)
+                INSTALL_MODE="setup-only"
+                ;;
+            --interactive)
+                INSTALL_MODE="interactive"
+                ;;
+            -m=*|--mode=*)
+                INSTALL_MODE="${arg#*=}"
+                ;;
+            -m|--mode)
+                next_arg="mode"
                 ;;
             -a=*|--apps=*)
                 INSTALL_APPS="${arg#*=}"
@@ -288,14 +422,31 @@ do_install() {
             -a|--apps)
                 next_arg="apps"
                 ;;
+            -d|--debug)
+                DEBUG="1"
+                ;;
             *)
-                if [ "$next_arg" = "apps" ]; then
+                if [ "$next_arg" = "mode" ]; then
+                    INSTALL_MODE="$arg"
+                    next_arg=""
+                elif [ "$next_arg" = "apps" ]; then
                     INSTALL_APPS="$arg"
                     next_arg=""
                 fi
                 ;;
         esac
     done
+
+    # Validate install mode
+    case "$INSTALL_MODE" in
+        "download-only"|"setup-only"|"interactive")
+            ;;
+        *)
+            err "Invalid installation mode: $INSTALL_MODE. Use --help for usage."
+            ;;
+    esac
+
+    debug_dump
 
     pre_install
     install_syftbox
