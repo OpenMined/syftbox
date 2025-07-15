@@ -75,6 +75,8 @@ func (s *ACLService) Start(ctx context.Context) error {
 	}
 	slog.Debug("acl cache warm", "took", time.Since(start))
 
+	s.blob.OnBlobChange(s.onBlobChange)
+
 	return nil
 }
 
@@ -91,7 +93,7 @@ func (s *ACLService) AddRuleSet(ruleSet *aclspec.RuleSet) (ACLVersion, error) {
 	}
 
 	deleted := s.cache.DeletePrefix(ruleSet.Path)
-	slog.Debug("updated rule set", "path", node.path, "version", node.version, "cache.deleted", deleted)
+	slog.Debug("updated rule set", "path", node.path, "version", node.version, "cache.deleted", deleted, "cache.size", s.cache.Count(), "blob.size", s.blob.Index().Count())
 	return node.version, nil
 }
 
@@ -218,6 +220,14 @@ func (s *ACLService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobInfo) (
 	wg.Wait()
 
 	return results, nil
+}
+
+func (s *ACLService) onBlobChange(key string, eventType blob.BlobEventType) {
+	if eventType == blob.BlobEventDelete {
+		// Clean up cache entry for the deleted file
+		s.cache.Delete(key)
+		slog.Debug("acl cache removed", "key", key, "cache.size", s.cache.Count(), "blob.size", s.blob.Index().Count())
+	}
 }
 
 // checks if the user is the owner of the path

@@ -108,7 +108,7 @@ func (d *DatasiteService) loadDatasiteSubdomains() error {
 		d.addDefaultHashMapping(datasite)
 
 		// Then, load the vanity domain configurations
-		if err := d.loadVanityDomain(datasite); err != nil {
+		if err := d.loadVanityDomain(datasite); err != nil && !errors.Is(err, ErrNoSettingsYAML) {
 			slog.Warn("failed to load vanity domain", "datasite", datasite, "error", err)
 		}
 	}
