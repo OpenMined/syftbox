@@ -48,7 +48,7 @@ func (h *InitHandler) GetToken(c *gin.Context) {
 		return
 	}
 
-	err := syftsdk.VerifyEmail(c.Request.Context(), req.ServerURL, req.Email)
+	err := syftsdk.RequestEmailCode(c.Request.Context(), req.ServerURL, req.Email)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, &ControlPlaneError{
 			ErrorCode: ErrRequestEmailCode,

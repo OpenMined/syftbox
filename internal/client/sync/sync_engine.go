@@ -11,13 +11,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/syftsdk"
+	"github.com/openmined/syftbox/internal/utils"
+	"github.com/shirou/gopsutil/v4/disk"
 )
 
 const (
-	fullSyncInterval = 5 * time.Second
+	minFreeSpace     = 5 * 1024 * 1024 * 1024 // 5GB
+	fullSyncInterval = 5 * time.Second        // 5 seconds
+	maxRetryCount    = 3
 	syncDbName       = "sync.db"
 )
 
@@ -26,18 +31,17 @@ var (
 )
 
 type SyncEngine struct {
-	workspace     *workspace.Workspace
-	sdk           *syftsdk.SyftSDK
-	journal       *SyncJournal
-	localState    *SyncLocalState
-	syncStatus    *SyncStatus
-	watcher       *FileWatcher
-	ignoreList    *SyncIgnoreList
-	priorityList  *SyncPriorityList
-	wg            sync.WaitGroup
-	muSync        sync.Mutex
-	lastSyncTime  time.Time
-	syncIntervals []float64 // Stores last 5 intervals between syncs in seconds
+	workspace    *workspace.Workspace
+	sdk          *syftsdk.SyftSDK
+	journal      *SyncJournal
+	localState   *SyncLocalState
+	syncStatus   *SyncStatus
+	watcher      *FileWatcher
+	ignoreList   *SyncIgnoreList
+	priorityList *SyncPriorityList
+	lastSyncTime time.Time
+	wg           sync.WaitGroup
+	muSync       sync.Mutex
 }
 
 func NewSyncEngine(
@@ -45,16 +49,16 @@ func NewSyncEngine(
 	sdk *syftsdk.SyftSDK,
 	ignore *SyncIgnoreList,
 	priority *SyncPriorityList,
-	watcher *FileWatcher,
 ) (*SyncEngine, error) {
-	journalDir := filepath.Join(workspace.MetadataDir, syncDbName)
-	journal, err := NewSyncJournal(journalDir)
+	journalPath := filepath.Join(workspace.MetadataDir, syncDbName)
+	journal, err := NewSyncJournal(journalPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync journal: %w", err)
 	}
 
-	localState := NewSyncLocalState(workspace.DatasitesDir)
+	watcher := NewFileWatcher(workspace.DatasitesDir)
 
+	localState := NewSyncLocalState(workspace.DatasitesDir)
 	syncStatus := NewSyncStatus()
 
 	return &SyncEngine{
@@ -76,19 +80,29 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	// there would be crucial migrations that might happen before the sync engine is started
 	// and we don't want to load pre-migrations state
 	if err := se.journal.Open(); err != nil {
-		return fmt.Errorf("failed to open sync journal: %w", err)
+		return fmt.Errorf("sync journal: %w", err)
 	}
 
 	// run sync once and wait before starting watcher//websocket
 	slog.Info("running initial sync")
 	if err := se.runFullSync(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("failed to run initial sync", "error", err)
+		return fmt.Errorf("initial full sync: %w", err)
+	}
+
+	// start the watcher
+	slog.Info("starting file watcher")
+	se.watcher.FilterPaths(func(path string) bool {
+		// ignore all files that are ignored, not priority or that are marked
+		return se.isIgnoredFile(path) || !se.isPriorityFile(path) || IsMarkedPath(path)
+	})
+	if err := se.watcher.Start(ctx); err != nil {
+		return fmt.Errorf("file watcher: %w", err)
 	}
 
 	// connect to websocket
 	slog.Info("listening for websocket events")
 	if err := se.sdk.Events.Connect(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		return fmt.Errorf("failed to connect websocket: %w", err)
+		return fmt.Errorf("websocket events: %w", err)
 	}
 
 	se.wg.Add(1)
@@ -108,7 +122,7 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 			case <-timer.C:
 				err := se.runFullSync(ctx)
 				if err != nil && !errors.Is(err, context.Canceled) {
-					slog.Error("failed to run sync", "error", err)
+					slog.Error("full sync", "error", err)
 				}
 				timer.Reset(fullSyncInterval)
 			}
@@ -132,6 +146,8 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 
 func (se *SyncEngine) Stop() error {
 	slog.Info("sync stop")
+	se.watcher.Stop()
+	se.syncStatus.Close()
 	return se.journal.Close()
 }
 
@@ -146,24 +162,20 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 	defer se.muSync.Unlock()
 
+	if err := se.presyncChecks(); err != nil {
+		return err
+	}
+
 	tStart := time.Now()
 
-	// Calculate interval since last sync
-	if !se.lastSyncTime.IsZero() {
-		interval := tStart.Sub(se.lastSyncTime).Seconds()
-		se.syncIntervals = append(se.syncIntervals, interval)
-		if len(se.syncIntervals) > 5 {
-			se.syncIntervals = se.syncIntervals[1:]
-		}
-	}
-	se.lastSyncTime = tStart
-
+	// get remote state
 	remoteState, err := se.getRemoteState(ctx)
 	if err != nil {
 		return fmt.Errorf("get remote state: %w", err)
 	}
 	tRemoteState := time.Since(tStart)
 
+	// get local state
 	tlocalStart := time.Now()
 	localState, err := se.localState.Scan()
 	if err != nil {
@@ -171,17 +183,26 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 	tLocalState := time.Since(tlocalStart)
 
+	// scan for existing conflicted/rejected files and populate sync status
+	if se.isFirstSync() {
+		se.initStatusFromMarkers(localState)
+	} else {
+		se.cleanupResolvedMarkers()
+	}
+
+	// check journal
 	journalCount, err := se.journal.Count()
 	if err != nil {
 		return fmt.Errorf("get journal count: %w", err)
 	}
 
-	// journal is empty, but you have local files!
+	// journal is empty, but you have local files! rebuild
 	if journalCount == 0 && len(localState) > 0 && len(remoteState) > 0 {
 		slog.Info("rebuilding journal")
 		se.rebuildJournal(localState, remoteState)
 	}
 
+	// get the journal state
 	tjournalStart := time.Now()
 	journalState, err := se.journal.GetState()
 	if err != nil {
@@ -189,38 +210,132 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 	tJournalState := time.Since(tjournalStart)
 
+	// reconcile trees
 	tReconcileStart := time.Now()
 	result := se.reconcile(localState, remoteState, journalState)
 	tReconcile := time.Since(tReconcileStart)
+
+	if result.HasChanges() {
+		slog.Info("full sync start",
+			"downloads", len(result.LocalWrites),
+			"uploads", len(result.RemoteWrites),
+			"localDeletes", len(result.LocalDeletes),
+			"remoteDeletes", len(result.RemoteDeletes),
+			"conflicts", len(result.Conflicts), // new set of conflicts in this cycle
+		)
+	}
 
 	se.executeReconcileOperations(ctx, result)
 	tTotal := time.Since(tStart)
 
 	if result.HasChanges() {
-		slog.Info("full sync",
+		slog.Info("full sync completed",
 			"total", result.Total,
 			"downloads", len(result.LocalWrites),
 			"uploads", len(result.RemoteWrites),
 			"localDeletes", len(result.LocalDeletes),
 			"remoteDeletes", len(result.RemoteDeletes),
-			"conflicts", len(result.Conflicts),
 			"unchanged", len(result.UnchangedPaths),
 			"cleanups", len(result.Cleanups),
 			"ignored", len(result.Ignored),
-			"syncing", len(se.syncStatus.status),
-			"tsRemoteState", tRemoteState,
-			"tsLocalState", tLocalState,
-			"tsJournalState", tJournalState,
-			"tsReconcile", tReconcile,
-			"tsTotal", tTotal,
+			"status.syncing", se.syncStatus.GetSyncingFileCount(),
+			"status.unresolvedConflicts", se.syncStatus.GetConflictedFileCount(),
+			"status.unresolvedRejects", se.syncStatus.GetRejectedFileCount(),
+			"ts.remoteState", tRemoteState,
+			"ts.localState", tLocalState,
+			"ts.journalState", tJournalState,
+			"ts.reconcile", tReconcile,
+			"ts.total", tTotal,
 		)
+	}
+
+	se.lastSyncTime = time.Now()
+	return nil
+}
+
+func (se *SyncEngine) isFirstSync() bool {
+	return se.lastSyncTime.IsZero()
+}
+
+func (se *SyncEngine) initStatusFromMarkers(localState map[SyncPath]*FileMetadata) {
+	for relPath := range localState {
+		relPathStr := relPath.String()
+
+		// cleanup legacy markers - randomly shoved here
+		// todo - remove this in a future release
+		if IsLegacyMarkedPath(relPathStr) {
+			if err := os.Remove(se.workspace.DatasiteAbsPath(relPathStr)); err != nil {
+				slog.Error("failed to remove legacy marked path", "path", relPathStr, "error", err)
+			}
+		}
+
+		if !IsMarkedPath(relPathStr) {
+			continue
+		}
+
+		// check if conflicted or rejected file on a path
+		// if so, then set sync status on the ORIGINAL path
+		if IsConflictPath(relPathStr) {
+			unmarked := GetUnmarkedPath(relPathStr)
+			slog.Warn("unresolved conflict", "path", relPath)
+			se.syncStatus.SetConflicted(SyncPath(unmarked))
+		} else if IsRejectedPath(relPathStr) {
+			unmarked := GetUnmarkedPath(relPathStr)
+			slog.Warn("unresolved reject", "path", relPath)
+			se.syncStatus.SetRejected(SyncPath(unmarked))
+		}
+	}
+}
+
+func (se *SyncEngine) cleanupResolvedMarkers() {
+	// check if the conflict or reject is still present on the local filesystem
+	// if not, then we can remove it from the sync status
+	conflicted := se.syncStatus.GetConflictedFiles()
+	rejected := se.syncStatus.GetRejectedFiles()
+
+	for syncPath := range conflicted {
+		localAbsPath := se.workspace.DatasiteAbsPath(syncPath.String())
+		if !ConflictFileExists(localAbsPath) {
+			slog.Info("resolved conflict", "path", syncPath)
+			se.syncStatus.SetCompletedAndRemove(syncPath)
+		}
+	}
+
+	for syncPath := range rejected {
+		localAbsPath := se.workspace.DatasiteAbsPath(syncPath.String())
+		if !RejectedFileExists(localAbsPath) {
+			slog.Info("resolved reject", "path", syncPath)
+			se.syncStatus.SetCompletedAndRemove(syncPath)
+		}
+	}
+}
+
+func (se *SyncEngine) presyncChecks() error {
+	// check if the workspace is writable
+	if !utils.IsWritable(se.workspace.DatasitesDir) {
+		return fmt.Errorf("'%s' is not writable", se.workspace.DatasitesDir)
+	}
+
+	// check if the workspace has enough free space
+	// need atleast 5gb free
+	usage, err := disk.Usage(se.workspace.DatasitesDir)
+	if err != nil {
+		slog.Error("preflight checks: failed to get disk usage", "error", err)
+	}
+	if usage.Free <= minFreeSpace {
+		return fmt.Errorf("not enough free space on disk. %s free", humanize.Bytes(usage.Free))
+	}
+
+	// check if the user is online
+	if !utils.IsOnline() {
+		return fmt.Errorf("not online")
 	}
 
 	return nil
 }
 
-func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string]*FileMetadata) *ReconcileOperations {
-	allPaths := make(map[string]struct{})
+func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPath]*FileMetadata) *ReconcileOperations {
+	allPaths := make(map[SyncPath]struct{})
 	reconcileOps := NewReconcileOperations()
 
 	for path := range journalState {
@@ -240,26 +355,25 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 		remote, remoteExists := remoteState[path]
 		journal, journalExists := journalState[path]
 
-		// check if it's already in conflict
-		isConflict := se.isConflict(path)
 		isSyncing := se.isSyncing(path)
-		isIgnored := se.ignoreList.ShouldIgnore(path)
+		isIgnored := se.ignoreList.ShouldIgnore(path.String()) // conflicts and rejects are ignored in the list
 		isEmpty := false
+		errorCount := se.syncStatus.GetErrorCount(path)
 		if localExists && local.Size == 0 {
 			isEmpty = true
 		}
 
-		if isConflict || isSyncing || isIgnored || isEmpty {
+		if isSyncing || isIgnored || isEmpty || errorCount >= maxRetryCount {
 			reconcileOps.Ignored[path] = struct{}{}
 			continue
 		}
 
 		localCreated := localExists && !journalExists && !remoteExists
-		remoteCreated := remoteExists && !journalExists && !localExists
+		remoteCreated := !localExists && !journalExists && remoteExists
 		localDeleted := !localExists && journalExists && remoteExists
-		remoteDeleted := !remoteExists && journalExists && localExists
+		remoteDeleted := localExists && journalExists && !remoteExists
 		localModified := localExists && se.hasModified(local, journal)
-		remoteModified := remoteExists && se.hasModified(remote, journal)
+		remoteModified := remoteExists && se.hasModified(journal, remote)
 
 		// early checks
 		if !localExists && !remoteExists && journalExists {
@@ -273,23 +387,23 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[string
 			(localCreated && remoteCreated) {
 			// Conflict Case: Local Create/Modify + Remote Create/Modify
 			// todo we can also consider local modify + remote delete or local delete + remote modify as conflict
-			reconcileOps.Conflicts[path] = &SyncOperation{Op: OpConflict, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.Conflicts[path] = &SyncOperation{Type: OpConflict, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 			continue
 		}
 
 		// Regular Sync
 		if localCreated || localModified {
 			// Local New/Modify + Remote Unchanged
-			reconcileOps.RemoteWrites[path] = &SyncOperation{Op: OpWriteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.RemoteWrites[path] = &SyncOperation{Type: OpWriteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteCreated || remoteModified {
 			// Local Unchanged + Remote New/Modify
-			reconcileOps.LocalWrites[path] = &SyncOperation{Op: OpWriteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.LocalWrites[path] = &SyncOperation{Type: OpWriteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if localDeleted {
 			// Local Delete + Remote Exists
-			reconcileOps.RemoteDeletes[path] = &SyncOperation{Op: OpDeleteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.RemoteDeletes[path] = &SyncOperation{Type: OpDeleteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteDeleted {
 			// Remote Delete + Local Exists
-			reconcileOps.LocalDeletes[path] = &SyncOperation{Op: OpDeleteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
+			reconcileOps.LocalDeletes[path] = &SyncOperation{Type: OpDeleteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else {
 			// Local Unchanged + Remote Unchanged
 			reconcileOps.UnchangedPaths[path] = struct{}{}
@@ -396,33 +510,30 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 	return false
 }
 
-func (se *SyncEngine) isSyncing(path string) bool {
-	return se.syncStatus.IsSyncing(path)
+func (se *SyncEngine) isSyncing(path SyncPath) bool {
+	status, exists := se.syncStatus.GetStatus(path)
+	return exists && status.SyncState == SyncStateSyncing
 }
 
-func (se *SyncEngine) isConflict(path string) bool {
-	// if there's a dir basename.conflicted/
-	name := filepath.Base(path)
-	conflictedDir := filepath.Join(filepath.Dir(path), name+".conflicted")
-	info, err := os.Stat(conflictedDir)
-	if err != nil {
-		return false
-	}
-	return info.IsDir()
+func (se *SyncEngine) isPriorityFile(path string) bool {
+	return se.priorityList.ShouldPrioritize(path)
 }
 
-func (se *SyncEngine) getRemoteState(ctx context.Context) (map[string]*FileMetadata, error) {
-	// tstart := time.Now()
+func (se *SyncEngine) isIgnoredFile(path string) bool {
+	return se.ignoreList.ShouldIgnore(path)
+}
+
+func (se *SyncEngine) getRemoteState(ctx context.Context) (map[SyncPath]*FileMetadata, error) {
 	resp, err := se.sdk.Datasite.GetView(ctx, &syftsdk.DatasiteViewParams{})
 	if err != nil {
 		return nil, err
 	}
-	// slog.Debug("remote state", "took", time.Since(tstart), "files", len(resp.Files))
 
-	remoteState := make(map[string]*FileMetadata)
+	remoteState := make(map[SyncPath]*FileMetadata)
 	for _, file := range resp.Files {
-		remoteState[file.Key] = &FileMetadata{
-			Path:         file.Key,
+		syncRelPath := SyncPath(file.Key)
+		remoteState[syncRelPath] = &FileMetadata{
+			Path:         syncRelPath,
 			ETag:         file.ETag,
 			Size:         int64(file.Size),
 			LastModified: file.LastModified,
@@ -430,12 +541,11 @@ func (se *SyncEngine) getRemoteState(ctx context.Context) (map[string]*FileMetad
 		}
 	}
 
-	// slog.Debug("build remote state", "files", len(remoteState), "took", time.Since(tstart))
 	return remoteState, nil
 }
 
-func (se *SyncEngine) rebuildJournal(localState, remoteState map[string]*FileMetadata) {
-	allPaths := make(map[string]struct{})
+func (se *SyncEngine) rebuildJournal(localState, remoteState map[SyncPath]*FileMetadata) {
+	allPaths := make(map[SyncPath]struct{})
 	for path := range localState {
 		allPaths[path] = struct{}{}
 	}
@@ -491,10 +601,8 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 				return
 			}
 			path := event.Path()
-			if se.ignoreList.ShouldIgnore(path) ||
-				!se.priorityList.ShouldPrioritize(path) {
-				continue
-			}
+
+			// this is already filtered
 			go se.handlePriorityUpload(path)
 		}
 	}
@@ -511,7 +619,7 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 		return
 	}
 
-	slog.Debug("handle", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
+	slog.Debug("handle socket message", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
 
 	// Unwrap the into a syftmsg.SyftRPCMessage
 	syftRPCMsg, err := syftmsg.NewSyftRPCMessage(*httpMsg)
@@ -555,10 +663,11 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 		return
 	}
 
+	se.watcher.IgnoreOnce(filePath)
 	slog.Debug("SyftRPC Message", "msg", string(jsonRPCMsg), "filePath", filePath)
 }
 
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {
 	systemMsg := msg.Data.(syftmsg.System)
-	slog.Info("handle", "msgType", msg.Type, "msgId", msg.Id, "serverVersion", systemMsg.SystemVersion)
+	slog.Info("handle socket message", "msgType", msg.Type, "msgId", msg.Id, "serverVersion", systemMsg.SystemVersion)
 }

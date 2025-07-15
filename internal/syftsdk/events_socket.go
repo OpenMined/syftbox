@@ -16,9 +16,9 @@ import (
 
 const (
 	wsClientChannelSize  = 8
-	wsClientPingPeriod   = 120 * time.Second
+	wsClientPingPeriod   = 15 * time.Second
 	wsClientPingTimeout  = 5 * time.Second
-	wsClientWriteTimeout = 20 * time.Second
+	wsClientWriteTimeout = 5 * time.Second
 )
 
 // wsClient represents a connected WebSocket client.
@@ -91,11 +91,11 @@ func (c *wsClient) readLoop(ctx context.Context) {
 		err := wsjson.Read(ctx, c.conn, &data)
 		if err != nil {
 			if !isWSExpectedCloseError(err) {
-				slog.Warn("socket rx", "error", err)
+				slog.Warn("socket RECV", "error", err)
 			}
 			return
 		}
-		slog.Debug("socket rx", "id", data.Id, "type", data.Type)
+		slog.Debug("socket RECV", "id", data.Id, "type", data.Type)
 
 		select {
 		case <-c.closing:
@@ -105,7 +105,7 @@ func (c *wsClient) readLoop(ctx context.Context) {
 			// do nothing
 
 		default:
-			slog.Warn("socket rx buffer full", "dropped", data)
+			slog.Warn("socket RECV buffer full", "dropped", data)
 		}
 	}
 }
@@ -132,7 +132,7 @@ func (c *wsClient) writeLoop(ctx context.Context) {
 				return
 			}
 
-			slog.Debug("socket tx", "id", msg.Id, "type", msg.Type)
+			slog.Debug("socket SEND", "id", msg.Id, "type", msg.Type)
 
 			// write message within timeout
 			ctxWrite, cancel := context.WithTimeout(ctx, wsClientWriteTimeout)
@@ -140,7 +140,7 @@ func (c *wsClient) writeLoop(ctx context.Context) {
 			cancel()
 
 			if err != nil {
-				slog.Error("socket tx", "error", err)
+				slog.Error("socket SEND", "error", err)
 				return
 			}
 
@@ -151,7 +151,7 @@ func (c *wsClient) writeLoop(ctx context.Context) {
 			cancel()
 
 			if err != nil {
-				slog.Error("socket ping", "error", err)
+				slog.Error("socket PING", "error", err)
 				return
 			}
 		}

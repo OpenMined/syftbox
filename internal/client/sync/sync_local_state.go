@@ -14,22 +14,22 @@ import (
 
 type SyncLocalState struct {
 	rootDir   string
-	lastState map[string]*FileMetadata // Stores the result of the last successful scan
+	lastState map[SyncPath]*FileMetadata // Stores the result of the last successful scan
 	mu        sync.RWMutex
 }
 
 func NewSyncLocalState(rootDir string) *SyncLocalState {
 	return &SyncLocalState{
 		rootDir:   rootDir,
-		lastState: make(map[string]*FileMetadata),
+		lastState: make(map[SyncPath]*FileMetadata),
 	}
 }
 
-func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
+func (s *SyncLocalState) Scan() (map[SyncPath]*FileMetadata, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	newState := make(map[string]*FileMetadata)
+	newState := make(map[SyncPath]*FileMetadata)
 
 	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -55,11 +55,11 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 		if err != nil {
 			return fmt.Errorf("walk rel path: %s: %w", path, err)
 		}
-		relPath = workspace.NormPath(relPath)
+		syncRelPath := SyncPath(workspace.NormPath(relPath))
 
 		// Etag
 		var etag string
-		prevMeta, exists := s.lastState[relPath]
+		prevMeta, exists := s.lastState[syncRelPath]
 
 		if exists && prevMeta.Size == info.Size() && prevMeta.LastModified.Equal(info.ModTime()) {
 			// File metadata matches cached state, reuse ETag
@@ -74,14 +74,14 @@ func (s *SyncLocalState) Scan() (map[string]*FileMetadata, error) {
 		}
 
 		metadata := &FileMetadata{
-			Path:         relPath,
+			Path:         syncRelPath,
 			Size:         info.Size(),
 			LastModified: info.ModTime(),
 			ETag:         etag,
 			Version:      "",
 		}
 
-		newState[relPath] = metadata
+		newState[syncRelPath] = metadata
 		return nil
 	})
 
