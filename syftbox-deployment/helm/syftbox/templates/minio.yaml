@@ -1,0 +1,184 @@
+# MinIO deployment - mirrors ../docker/docker-compose.yml MinIO service
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "syftbox.fullname" . }}-minio
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  serviceName: {{ include "syftbox.fullname" . }}-minio
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "syftbox.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:latest
+        command: ["minio", "server", "/data", "--console-address", ":9001"]
+        env:
+        - name: MINIO_ROOT_USER
+          value: {{ .Values.minio.rootUser | quote }}
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "syftbox.fullname" . }}-minio-secret
+              key: root-password
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: init-scripts
+          mountPath: /etc/minio/init.d
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.minio.resources | nindent 10 }}
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: {{ include "syftbox.fullname" . }}-minio-init
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: {{ .Values.minio.storage.size }}
+      {{- if .Values.minio.storage.storageClassName }}
+      storageClassName: {{ .Values.minio.storage.storageClassName }}
+      {{- end }}
+---
+# MinIO Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "syftbox.fullname" . }}-minio
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  selector:
+    {{- include "syftbox.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+  - name: console
+    port: 9001
+    targetPort: 9001
+  type: ClusterIP
+---
+# MinIO Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "syftbox.fullname" . }}-minio-secret
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+type: Opaque
+data:
+  root-password: {{ .Values.minio.rootPassword | b64enc }}
+  access-key: {{ .Values.minio.accessKey | b64enc }}
+  secret-key: {{ .Values.minio.secretKey | b64enc }}
+---
+# MinIO Init ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "syftbox.fullname" . }}-minio-init
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+data:
+  init.sh: |
+    #!/bin/bash
+    # MinIO initialization script - mirrors ../docker/minio/init.d setup
+    
+    # Wait for MinIO to be ready
+    until curl -f http://localhost:9000/minio/health/live; do
+      echo "Waiting for MinIO to be ready..."
+      sleep 2
+    done
+    
+    # Configure MinIO client
+    mc alias set local http://localhost:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}
+    
+    # Create bucket with versioning
+    mc mb local/{{ .Values.minio.bucketName }} --ignore-existing
+    mc version enable local/{{ .Values.minio.bucketName }}
+    
+    # Create access key for application
+    mc admin user add local {{ .Values.minio.accessKey }} {{ .Values.minio.secretKey }}
+    
+    # Set policy for the user
+    mc admin policy set local readwrite user={{ .Values.minio.accessKey }}
+    
+    echo "MinIO initialization completed!"
+---
+# MinIO Init Job
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "syftbox.fullname" . }}-minio-init
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-init
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: minio-init
+        image: minio/mc:latest
+        command: ["/bin/sh", "/scripts/init.sh"]
+        env:
+        - name: MINIO_ROOT_USER
+          value: {{ .Values.minio.rootUser | quote }}
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "syftbox.fullname" . }}-minio-secret
+              key: root-password
+        volumeMounts:
+        - name: init-scripts
+          mountPath: /scripts
+        - name: mc-config
+          mountPath: /root/.mc
+      volumes:
+      - name: init-scripts
+        configMap:
+          name: {{ include "syftbox.fullname" . }}-minio-init
+          defaultMode: 0755
+      - name: mc-config
+        emptyDir: {}

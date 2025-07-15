@@ -1,0 +1,99 @@
+# Global configuration
+global:
+  imageRegistry: us-central1-docker.pkg.dev/PROJECT_ID/syftbox
+  namespace: syftbox
+  imagePullPolicy: Always
+  environment: PROD  # DEV, PROD - mirrors SYFTBOX_ENV from docker-compose
+
+# Image configuration - mirrors docker-compose structure
+images:
+  cacheServer:
+    repository: syftbox-cache-server
+    tag: latest
+  dataowner:
+    repository: syftbox-dataowner
+    tag: latest
+
+# Cache Server configuration - mirrors ../docker/docker-compose.yml server
+cacheServer:
+  enabled: true
+  replicaCount: 1
+  domain: syftbox.local  # mirrors SYFTBOX_HTTP_DOMAIN
+  auth:
+    enabled: false  # mirrors SYFTBOX_AUTH_ENABLED=0
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Data Owner configuration
+dataOwner:
+  enabled: true
+  replicaCount: 1
+  jupyter:
+    enabled: true
+    token: ""  # Empty token for easy access
+  service:
+    type: LoadBalancer
+    ports:
+      syftbox: 7938
+      jupyter: 8888
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+
+# Database configuration
+database:
+  # Private database - for sensitive data (data owner only)
+  private:
+    type: managed  # managed or external
+    host: ""       # Will be set by Terraform output
+    port: 5432
+    database: syftbox_private
+    username: syftbox
+    password: ""   # Will be set by Terraform output
+    sslmode: require
+  
+  # Mock database - for non-sensitive data (cache server)
+  mock:
+    type: managed  # managed or external
+    host: ""       # Will be set by Terraform output
+    port: 5432
+    database: syftbox_mock
+    username: syftbox
+    password: ""   # Will be set by Terraform output
+    sslmode: require
+
+# MinIO configuration - mirrors ../docker/docker-compose.yml minio service
+minio:
+  enabled: true
+  rootUser: minioadmin  # mirrors MINIO_ROOT_USER
+  rootPassword: minioadmin  # mirrors MINIO_ROOT_PASSWORD
+  accessKey: ptSLdKiwOi2LYQFZYEZ6  # mirrors SYFTBOX_BLOB_ACCESS_KEY
+  secretKey: GMDvYrAhWDkB2DyFMn8gU8I8Bg0fT3JGT6iEB7P8  # mirrors SYFTBOX_BLOB_SECRET_KEY
+  bucketName: syftbox-local  # mirrors SYFTBOX_BLOB_BUCKET_NAME
+  region: us-east-1  # mirrors SYFTBOX_BLOB_REGION
+  storage:
+    size: 10Gi
+    storageClassName: ""  # Use default storage class
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Network Policy configuration
+networkPolicy:
+  enabled: false  # Set to true to enable network policies for enhanced security

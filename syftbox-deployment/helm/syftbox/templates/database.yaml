@@ -1,0 +1,36 @@
+{{- if eq .Values.database.private.type "external" }}
+---
+# Secret for private database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "syftbox.fullname" . }}-private-database
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  host: {{ .Values.database.private.host | quote }}
+  port: {{ .Values.database.private.port | quote }}
+  database: {{ .Values.database.private.database | quote }}
+  username: {{ .Values.database.private.username | quote }}
+  password: {{ .Values.database.private.password | quote }}
+  url: {{ include "syftbox.privateDatabaseUrl" . | quote }}
+{{- end }}
+{{- if eq .Values.database.mock.type "external" }}
+---
+# Secret for mock database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "syftbox.fullname" . }}-mock-database
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  host: {{ .Values.database.mock.host | quote }}
+  port: {{ .Values.database.mock.port | quote }}
+  database: {{ .Values.database.mock.database | quote }}
+  username: {{ .Values.database.mock.username | quote }}
+  password: {{ .Values.database.mock.password | quote }}
+  url: {{ include "syftbox.mockDatabaseUrl" . | quote }}
+{{- end }}

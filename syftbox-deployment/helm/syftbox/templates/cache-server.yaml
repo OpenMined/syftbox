@@ -1,0 +1,119 @@
+{{- if .Values.cacheServer.enabled }}
+---
+# Cache Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "syftbox.fullname" . }}-cache-server
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    component: cache-server
+spec:
+  replicas: {{ .Values.cacheServer.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      component: cache-server
+  template:
+    metadata:
+      labels:
+        {{- include "syftbox.selectorLabels" . | nindent 8 }}
+        component: cache-server
+    spec:
+      containers:
+      - name: server
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.cacheServer.repository }}:{{ .Values.images.cacheServer.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.cacheServer.service.port }}
+          protocol: TCP
+        env:
+        # SyftBox core configuration - mirrors ../docker/docker-compose.yml
+        - name: SYFTBOX_ENV
+          value: {{ .Values.global.environment | quote }}
+        - name: SYFTBOX_AUTH_ENABLED
+          value: {{ if .Values.cacheServer.auth.enabled }}"1"{{ else }}"0"{{ end }}
+        - name: SYFTBOX_EMAIL_ENABLED
+          value: "0"
+        - name: SYFTBOX_HTTP_ADDR
+          value: "0.0.0.0:{{ .Values.cacheServer.service.port }}"
+        - name: SYFTBOX_HTTP_DOMAIN
+          value: {{ .Values.cacheServer.domain | quote }}
+        
+        # Mock database configuration (for caching)
+        - name: DATABASE_URL
+          value: {{ include "syftbox.mockDatabaseUrl" . }}
+        - name: MOCK_DATABASE_HOST
+          value: {{ .Values.database.mock.host | quote }}
+        - name: MOCK_DATABASE_PORT
+          value: {{ .Values.database.mock.port | quote }}
+        - name: MOCK_DATABASE_NAME
+          value: {{ .Values.database.mock.database | quote }}
+        - name: MOCK_DATABASE_USER
+          value: {{ .Values.database.mock.username | quote }}
+        - name: MOCK_DATABASE_PASSWORD
+          value: {{ .Values.database.mock.password | quote }}
+        
+        # MinIO blob storage configuration - mirrors ../docker/docker-compose.yml
+        - name: SYFTBOX_BLOB_REGION
+          value: {{ .Values.minio.region | quote }}
+        - name: SYFTBOX_BLOB_BUCKET_NAME
+          value: {{ .Values.minio.bucketName | quote }}
+        - name: SYFTBOX_BLOB_ENDPOINT
+          value: "http://{{ include "syftbox.fullname" . }}-minio:9000"
+        - name: SYFTBOX_BLOB_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "syftbox.fullname" . }}-minio-secret
+              key: access-key
+        - name: SYFTBOX_BLOB_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "syftbox.fullname" . }}-minio-secret
+              key: secret-key
+        
+        - name: PORT
+          value: {{ .Values.cacheServer.service.port | quote }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.cacheServer.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "syftbox.fullname" . }}-config
+---
+# Cache Server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "syftbox.fullname" . }}-cache-server
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    component: cache-server
+spec:
+  type: {{ .Values.cacheServer.service.type }}
+  ports:
+  - port: {{ .Values.cacheServer.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "syftbox.selectorLabels" . | nindent 4 }}
+    component: cache-server
+{{- end }}

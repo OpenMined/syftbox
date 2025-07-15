@@ -1,0 +1,51 @@
+# Environment files
+.env
+.env.local
+
+# Terraform files
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfvars
+.terraform/
+*.tfplan
+
+# Docker build context
+.dockerignore
+
+# Logs
+*.log
+
+# Temporary files
+/tmp/
+.tmp/
+
+# Kubernetes configs
+kubeconfig
+*.kubeconfig
+
+# Helm
+charts/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+
+# Secret files
+secrets/
+*.key
+*.pem
+*.p12
+
+# Build artifacts
+build/
+dist/

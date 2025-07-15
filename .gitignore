@@ -48,3 +48,8 @@ releases
 .env
 
 server.dev.yaml
+
+##Terraform
+
+.terraform.lock.hcl
+.terraform.tfstate.lock.info
