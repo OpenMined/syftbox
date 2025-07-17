@@ -45,10 +45,10 @@ func NewFileContent(path string) (*FileContent, error) {
 
 	return &FileContent{
 		FileMetadata: FileMetadata{
+			Path:         SyncPath(path),
 			Size:         size,
 			ETag:         fmt.Sprintf("%x", hasher.Sum(nil)),
 			Version:      "",
-			Path:         path,
 			LastModified: modTime,
 		},
 		Content: buffer.Bytes(),

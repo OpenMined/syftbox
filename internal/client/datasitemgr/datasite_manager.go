@@ -20,10 +20,15 @@ var (
 
 type DatasiteManagerOpts func(*DatasiteManager)
 
+type RuntimeConfig struct {
+	ClientURL   string
+	ClientToken string
+}
+
 type DatasiteManager struct {
 	datasite    *datasite.Datasite
 	status      DatasiteStatus
-	clientURL   string
+	runtimeCfg  *RuntimeConfig
 	datasiteErr error
 	mu          sync.RWMutex
 }
@@ -35,11 +40,11 @@ func New() *DatasiteManager {
 	return ds
 }
 
-func (d *DatasiteManager) SetClientURL(clientURL string) {
+func (d *DatasiteManager) SetRuntimeConfig(cfg *RuntimeConfig) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	d.clientURL = clientURL
+	d.runtimeCfg = cfg
 }
 
 func (d *DatasiteManager) Start(ctx context.Context) error {
@@ -116,8 +121,9 @@ func (d *DatasiteManager) newDatasite(ctx context.Context, cfg *config.Config) e
 	}
 
 	// patch config to use the correct client URL
-	if d.clientURL != "" {
-		cfg.ClientURL = d.clientURL
+	if d.runtimeCfg != nil {
+		cfg.ClientURL = d.runtimeCfg.ClientURL
+		cfg.ClientToken = d.runtimeCfg.ClientToken
 	}
 
 	d.status = DatasiteStatusProvisioning

@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/openmined/syftbox/internal/syftsdk"
 	"github.com/openmined/syftbox/internal/utils"
-	"resty.dev/v3"
 )
 
 func installFromArchive(ctx context.Context, parsedURL *url.URL, opts *AppInstallOpts, installDir string) error {
@@ -112,8 +112,6 @@ func gitlabArchiveUrl(repoUrl, branch, tag, commit string) (string, error) {
 
 // downloadFile downloads a file from the given URL and returns the path to the downloaded file
 func downloadFile(ctx context.Context, url string) (string, error) {
-	client := resty.New()
-
 	// Create a temporary file
 	tmpFile, err := os.CreateTemp("", "syftbox-app-*.zip")
 	if err != nil {
@@ -122,16 +120,17 @@ func downloadFile(ctx context.Context, url string) (string, error) {
 	defer tmpFile.Close()
 
 	// Download the file
-	resp, err := client.R().
+	resp, err := syftsdk.HTTPClient.R().
 		SetContext(ctx).
-		SetOutputFileName(tmpFile.Name()).
+		DisableAutoReadResponse().
+		SetOutput(tmpFile).
 		Get(url)
 	if err != nil {
 		return tmpFile.Name(), fmt.Errorf("http error: %w", err)
 	}
 
-	if !resp.IsSuccess() {
-		return tmpFile.Name(), fmt.Errorf("status %s", resp.Status())
+	if resp.IsErrorState() {
+		return "", fmt.Errorf("failed to download file: %s", resp.String())
 	}
 
 	return tmpFile.Name(), nil

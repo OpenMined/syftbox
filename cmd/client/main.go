@@ -32,14 +32,18 @@ var rootCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := loadConfig(cmd)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %s\n", red.Bold(true).Render("ERROR"), err)
+			slog.Error("syftbox config", "error", err)
 			os.Exit(1)
 		}
 
+		// not running any local server, so we don't need to set client_url or client_token
+		cfg.ClientURL = ""
+		cfg.ClientToken = ""
+
 		if err := cfg.Validate(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: syftbox config: %s\n", red.Bold(true).Render("ERROR"), err)
+			slog.Error("syftbox config", "error", err)
 			if cfg.Email == "" || cfg.DataDir == "" || cfg.RefreshToken == "" {
-				fmt.Fprintf(os.Stderr, "Have you logged in? Run `%s` to fix this\n", green.Render("syftbox login"))
+				fmt.Fprintf(os.Stderr, "SyftBox is not configured correctly. Please login again by running `%s`\n", green.Render("syftbox login"))
 			}
 			os.Exit(1)
 		}
@@ -52,7 +56,7 @@ var rootCmd = &cobra.Command{
 		// create client
 		c, err := client.New(cfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: starting client: %s\n", red.Bold(true).Render("ERROR"), err)
+			slog.Error("syftbox client", "error", err)
 			os.Exit(1)
 		}
 
@@ -60,7 +64,7 @@ var rootCmd = &cobra.Command{
 		defer slog.Info("Bye!")
 
 		if err := c.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
-			fmt.Fprintf(os.Stderr, "%s: syftbox client: %s\n", red.Bold(true).Render("ERROR"), err)
+			slog.Error("syftbox client start", "error", err)
 			os.Exit(1)
 		}
 	},
@@ -177,8 +181,9 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
 	v.BindPFlag("server_url", cmd.Flags().Lookup("server"))
 	v.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config"))
-	v.SetDefault("client_url", config.DefaultClientURL) // this is not used in standard mode
 	v.SetDefault("apps_enabled", config.DefaultAppsEnabled)
+	v.SetDefault("client_url", "") // this is not used in standard mode
+	v.SetDefault("client_token", "")
 	v.SetDefault("refresh_token", "")
 	v.SetDefault("access_token", "")
 }

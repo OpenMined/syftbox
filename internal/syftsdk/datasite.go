@@ -2,9 +2,8 @@ package syftsdk
 
 import (
 	"context"
-	"fmt"
 
-	"resty.dev/v3"
+	"github.com/imroc/req/v3"
 )
 
 const (
@@ -12,32 +11,24 @@ const (
 )
 
 type DatasiteAPI struct {
-	client *resty.Client
+	client *req.Client
 }
 
-func newDatasiteAPI(client *resty.Client) *DatasiteAPI {
+func newDatasiteAPI(client *req.Client) *DatasiteAPI {
 	return &DatasiteAPI{
 		client: client,
 	}
 }
 
-func (d *DatasiteAPI) GetView(ctx context.Context, params *DatasiteViewParams) (*DatasiteViewResponse, error) {
-	var resp DatasiteViewResponse
-	var sdkError SyftSDKError
-
+func (d *DatasiteAPI) GetView(ctx context.Context, params *DatasiteViewParams) (resp *DatasiteViewResponse, err error) {
 	res, err := d.client.R().
-		SetResult(&resp).
-		SetError(&sdkError).
 		SetContext(ctx).
+		SetSuccessResult(&resp).
 		Get(v1View)
 
-	if err != nil {
-		return nil, fmt.Errorf("sdk: datasite view: %w", err)
+	if err := handleAPIError(res, err, "datasite view"); err != nil {
+		return nil, err
 	}
 
-	if res.IsError() {
-		return nil, fmt.Errorf("sdk: datasite view: %s %s", res.Status(), sdkError.Error)
-	}
-
-	return &resp, nil
+	return resp, nil
 }

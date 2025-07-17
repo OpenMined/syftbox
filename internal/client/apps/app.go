@@ -30,7 +30,7 @@ func NewApp(info *AppInfo, configPath string) (*App, error) {
 		return nil, fmt.Errorf("invalid app: %s", info.ID)
 	}
 
-	runScript := GetRunScript(info.Path)
+	runScript := info.RunScriptPath()
 
 	// chmod +x the scripts
 	// get perms of the script
@@ -85,7 +85,7 @@ func (a *App) Info() *AppInfo {
 
 func (a *App) Start() error {
 	// in the app directory
-	logsDir := filepath.Join(a.info.Path, "logs")
+	logsDir := a.info.LogsDir()
 
 	// clean up old logs
 	if err := os.RemoveAll(logsDir); err != nil {

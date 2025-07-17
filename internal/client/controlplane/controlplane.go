@@ -1,4 +1,4 @@
-package client
+package controlplane
 
 import (
 	"context"
@@ -15,14 +15,14 @@ import (
 	"github.com/openmined/syftbox/internal/utils"
 )
 
-type ControlPlaneServer struct {
-	config      *ControlPlaneConfig
+type CPServer struct {
+	config      *CPServerConfig
 	server      *http.Server
 	datasiteMgr *datasitemgr.DatasiteManager
 	url         string
 }
 
-func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.DatasiteManager) (*ControlPlaneServer, error) {
+func NewControlPlaneServer(config *CPServerConfig, datasiteMgr *datasitemgr.DatasiteManager) (*CPServer, error) {
 	if config.AuthToken == "" {
 		config.AuthToken = utils.TokenHex(16)
 	}
@@ -32,7 +32,10 @@ func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.
 		return nil, fmt.Errorf("convert address to URL: %w", err)
 	}
 
-	datasiteMgr.SetClientURL(cpURL)
+	datasiteMgr.SetRuntimeConfig(&datasitemgr.RuntimeConfig{
+		ClientURL:   cpURL,
+		ClientToken: config.AuthToken,
+	})
 
 	routes := SetupRoutes(datasiteMgr, &RouteConfig{
 		Swagger:         config.EnableSwagger,
@@ -54,7 +57,7 @@ func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.
 		MaxHeaderBytes: 1 << 20, // 1 MB
 	}
 
-	return &ControlPlaneServer{
+	return &CPServer{
 		config:      config,
 		server:      httpServer,
 		datasiteMgr: datasiteMgr,
@@ -62,7 +65,7 @@ func NewControlPlaneServer(config *ControlPlaneConfig, datasiteMgr *datasitemgr.
 	}, nil
 }
 
-func (s *ControlPlaneServer) Start(ctx context.Context) error {
+func (s *CPServer) Start(ctx context.Context) error {
 	slog.Info("control plane start", "addr", s.url, "token", s.config.AuthToken)
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("failed to start server: %w", err)
@@ -71,7 +74,7 @@ func (s *ControlPlaneServer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (s *ControlPlaneServer) Stop(ctx context.Context) error {
+func (s *CPServer) Stop(ctx context.Context) error {
 	slog.Info("control plane stop")
 	return s.server.Shutdown(ctx)
 }

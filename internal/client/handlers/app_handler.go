@@ -257,7 +257,7 @@ func (h *AppHandler) Start(c *gin.Context) {
 	if err != nil {
 		var status int
 		switch {
-		case errors.Is(err, apps.ErrAlreadyRunning):
+		case errors.Is(err, apps.ErrAppAlreadyRunning):
 			status = http.StatusConflict
 		case errors.Is(err, apps.ErrAppNotFound):
 			status = http.StatusNotFound
@@ -311,7 +311,7 @@ func (h *AppHandler) Stop(c *gin.Context) {
 	app, err := scheduler.StopApp(appId)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if errors.Is(err, apps.ErrNotRunning) {
+		if errors.Is(err, apps.ErrAppNotRunning) {
 			status = http.StatusConflict
 		}
 		AbortWithError(c, status, ErrCodeStopFailed, err)

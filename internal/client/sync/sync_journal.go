@@ -30,11 +30,11 @@ CREATE INDEX IF NOT EXISTS idx_journal_last_modified ON sync_journal(last_modifi
 
 // dbFileMetadata is used for scanning from the database where time is stored as TEXT.
 type dbFileMetadata struct {
-	Path         string `db:"path"`
-	Size         int64  `db:"size"`
-	ETag         string `db:"etag"`
-	Version      string `db:"version"`
-	LastModified string `db:"last_modified"`
+	Path         SyncPath `db:"path"`
+	Size         int64    `db:"size"`
+	ETag         string   `db:"etag"`
+	Version      string   `db:"version"`
+	LastModified string   `db:"last_modified"`
 }
 
 // SyncJournal manages the persistent state of synced files using SQLite.
@@ -91,7 +91,7 @@ func (s *SyncJournal) Close() error {
 }
 
 // Get retrieves the metadata for a specific path.
-func (s *SyncJournal) Get(path string) (*FileMetadata, error) {
+func (s *SyncJournal) Get(path SyncPath) (*FileMetadata, error) {
 	var dbMeta dbFileMetadata
 	err := s.db.Get(&dbMeta, "SELECT path, size, etag, version, last_modified FROM sync_journal WHERE path = ?", path)
 	if err != nil {
@@ -118,7 +118,7 @@ func (s *SyncJournal) Get(path string) (*FileMetadata, error) {
 	return metadata, nil
 }
 
-func (s *SyncJournal) ContentsChanged(path string, etag string) (bool, error) {
+func (s *SyncJournal) ContentsChanged(path SyncPath, etag string) (bool, error) {
 	// select etag from sync_journal where path = ?
 	var dbEtag string
 	err := s.db.Get(&dbEtag, "SELECT etag FROM sync_journal WHERE path = ?", path)
@@ -151,13 +151,12 @@ func (s *SyncJournal) Set(state *FileMetadata) error {
 	if err != nil {
 		return fmt.Errorf("failed to set state for path %s: %w", state.Path, err)
 	}
-	slog.Debug("sync journal set", "path", state.Path, "etag", state.ETag)
 	return nil
 }
 
 // GetPaths retrieves all paths known to the journal.
-func (s *SyncJournal) GetPaths() ([]string, error) {
-	var paths []string
+func (s *SyncJournal) GetPaths() ([]SyncPath, error) {
+	var paths []SyncPath
 	err := s.db.Select(&paths, "SELECT path FROM sync_journal")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query paths: %w", err)
@@ -166,7 +165,7 @@ func (s *SyncJournal) GetPaths() ([]string, error) {
 }
 
 // GetState retrieves the entire state map from the journal.
-func (s *SyncJournal) GetState() (map[string]*FileMetadata, error) {
+func (s *SyncJournal) GetState() (map[SyncPath]*FileMetadata, error) {
 	var dbMetas []dbFileMetadata
 	err := s.db.Select(&dbMetas, "SELECT path, size, etag, version, last_modified FROM sync_journal")
 	if err != nil {
@@ -174,7 +173,7 @@ func (s *SyncJournal) GetState() (map[string]*FileMetadata, error) {
 	}
 
 	// Convert dbFileMetadata slice to the final map[string]*FileMetadata
-	state := make(map[string]*FileMetadata, len(dbMetas))
+	state := make(map[SyncPath]*FileMetadata, len(dbMetas))
 	for _, dbMeta := range dbMetas {
 		modTime, err := time.Parse(time.RFC3339, dbMeta.LastModified)
 		if err != nil {
@@ -204,7 +203,7 @@ func (s *SyncJournal) Count() (int, error) {
 }
 
 // Delete removes an entry from the journal by its key (path).
-func (s *SyncJournal) Delete(path string) error {
+func (s *SyncJournal) Delete(path SyncPath) error {
 	_, err := s.db.Exec("DELETE FROM sync_journal WHERE path = ?", path)
 	if err != nil {
 		return fmt.Errorf("failed to delete path %s: %w", path, err)
@@ -212,6 +211,7 @@ func (s *SyncJournal) Delete(path string) error {
 	return nil
 }
 
+// in rare cases when we want to destroy the journal & would want to start afresh
 func (s *SyncJournal) Destroy() error {
 	if err := s.Close(); err != nil {
 		return fmt.Errorf("failed to clear journal: %w", err)

@@ -2,7 +2,6 @@ package sync
 
 import (
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -11,32 +10,41 @@ import (
 // handlePriorityDownload processes a file write message received with high priority,
 func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	// unwrap the message
-	createMsg, _ := msg.Data.(syftmsg.FileWrite)
+	createMsg, ok := msg.Data.(syftmsg.FileWrite)
+	if !ok {
+		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", "invalid message data", "data", msg.Data)
+		return
+	}
+
+	syncRelPath := SyncPath(createMsg.Path)
 
 	// set sync status
-	se.syncStatus.SetSyncing(createMsg.Path, "priority download")
-	defer se.syncStatus.SetCompleted(createMsg.Path, "priority download")
-	slog.Info("sync priority", "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.ETag)
+	se.syncStatus.SetSyncing(syncRelPath)
+	slog.Info("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.ETag)
 
-	// write the file to the local datasite
+	// prep local path
 	localAbsPath := se.workspace.DatasiteAbsPath(createMsg.Path)
-	etag, err := writeFile(localAbsPath, createMsg.Content)
+
+	// a priority file was just downloaded, we don't wanna fire an event for THIS write
+	se.watcher.IgnoreOnce(localAbsPath)
+
+	// write the file to the local path
+	err := writeFileWithIntegrityCheck(localAbsPath, createMsg.Content, createMsg.ETag)
 	if err != nil {
-		slog.Error("sync priority", "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", err)
-		return
-	} else if etag != createMsg.ETag {
-		// Verify content integrity using ETag.
-		slog.Error("sync priority", "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "expected", createMsg.ETag, "actual", etag)
-		os.Remove(localAbsPath)
+		se.syncStatus.SetError(syncRelPath, err)
+		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", err)
 		return
 	}
 
 	// Update the sync journal
 	se.journal.Set(&FileMetadata{
-		Path:         createMsg.Path,
+		Path:         syncRelPath,
 		ETag:         createMsg.ETag,
 		Size:         createMsg.Length,
 		LastModified: time.Now(),
 		Version:      "",
 	})
+
+	// mark as completed
+	se.syncStatus.SetCompleted(syncRelPath)
 }

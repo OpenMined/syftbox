@@ -81,6 +81,11 @@ func (w *Workspace) Lock() error {
 }
 
 func (w *Workspace) Unlock() error {
+	// if this process hasn't locked the workspace, then don't delete the lock file
+	if !w.flock.Locked() {
+		return nil
+	}
+
 	if err := w.flock.Unlock(); err != nil {
 		return fmt.Errorf("failed to unlock workspace: %w", err)
 	}
@@ -116,17 +121,15 @@ func (w *Workspace) Setup() error {
 		slog.Warn("failed to set folder icon", "error", err)
 	}
 
-	// TODO: write a .syftignore file
-
 	// Setup ACL files
-	if err := w.createDefaultAcl(); err != nil {
+	if err := w.createDefaultACL(); err != nil {
 		return fmt.Errorf("failed to create default ACL: %w", err)
 	}
 
 	return nil
 }
 
-func (w *Workspace) createDefaultAcl() error {
+func (w *Workspace) createDefaultACL() error {
 	// Create root ACL file
 	if !aclspec.Exists(w.UserDir) {
 		rootRuleset := aclspec.NewRuleSet(
@@ -154,18 +157,21 @@ func (w *Workspace) createDefaultAcl() error {
 	return nil
 }
 
-func (w *Workspace) DatasiteAbsPath(path string) string {
-	return filepath.Join(w.DatasitesDir, path)
+// DatasiteAbsPath returns the absolute path to the datasite directory
+func (w *Workspace) DatasiteAbsPath(relPath string) string {
+	return filepath.Join(w.DatasitesDir, relPath)
 }
 
-func (w *Workspace) DatasiteRelPath(path string) (string, error) {
-	relPath, err := filepath.Rel(w.DatasitesDir, path)
+// DatasiteRelPath returns the relative path of a datasite from the workspace's datasites directory
+func (w *Workspace) DatasiteRelPath(absPath string) (string, error) {
+	relPath, err := filepath.Rel(w.DatasitesDir, absPath)
 	if err != nil {
 		return "", err
 	}
 	return NormPath(relPath), nil
 }
 
+// PathOwner returns the owner of the path
 func (w *Workspace) PathOwner(path string) string {
 	p, _ := w.DatasiteRelPath(path)
 	parts := strings.Split(p, pathSep)
@@ -175,11 +181,16 @@ func (w *Workspace) PathOwner(path string) string {
 	return parts[1]
 }
 
+func (w *Workspace) IsValidPath(path string) bool {
+	return IsValidPath(path)
+}
+
 func (w *Workspace) isLegacyWorkspace() bool {
-	// .data is missing & plugins exists
+	// a .metadata.json exists
 	return utils.FileExists(filepath.Join(w.Root, legacyMetadataFile))
 }
 
+// NormPath normalizes a path by cleaning it, replacing backslashes with slashes, and trimming leading slashes
 func NormPath(path string) string {
 	path = filepath.Clean(path)
 	path = strings.ReplaceAll(path, "\\", "/")

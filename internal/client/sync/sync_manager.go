@@ -13,16 +13,14 @@ type SyncManager struct {
 	sdk       *syftsdk.SyftSDK
 	workspace *workspace.Workspace
 	engine    *SyncEngine
-	watcher   *FileWatcher
 	ignore    *SyncIgnoreList
 	priority  *SyncPriorityList
 }
 
 func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK) (*SyncManager, error) {
-	watcher := NewFileWatcher(workspace.DatasitesDir)
-	ignore := NewSyncIgnoreList(workspace.DatasitesDir)
-	priority := NewSyncPriorityList(workspace.DatasitesDir)
-	engine, err := NewSyncEngine(workspace, sdk, ignore, priority, watcher)
+	ignoreList := NewSyncIgnoreList(workspace.DatasitesDir)
+	priorityList := NewSyncPriorityList(workspace.DatasitesDir)
+	engine, err := NewSyncEngine(workspace, sdk, ignoreList, priorityList)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sync engine: %w", err)
 	}
@@ -30,9 +28,8 @@ func NewManager(workspace *workspace.Workspace, sdk *syftsdk.SyftSDK) (*SyncMana
 	return &SyncManager{
 		sdk:       sdk,
 		workspace: workspace,
-		watcher:   watcher,
-		ignore:    ignore,
-		priority:  priority,
+		ignore:    ignoreList,
+		priority:  priorityList,
 		engine:    engine,
 	}, nil
 }
@@ -43,10 +40,6 @@ func (m *SyncManager) Start(ctx context.Context) error {
 	// load the ignore list
 	m.ignore.Load()
 
-	if err := m.watcher.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start watcher: %w", err)
-	}
-
 	if err := m.engine.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start engine: %w", err)
 	}
@@ -55,6 +48,5 @@ func (m *SyncManager) Start(ctx context.Context) error {
 
 func (m *SyncManager) Stop() error {
 	slog.Info("sync manager stop")
-	m.watcher.Stop()
 	return m.engine.Stop()
 }

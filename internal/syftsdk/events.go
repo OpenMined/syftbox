@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/imroc/req/v3"
 	"github.com/openmined/syftbox/internal/syftmsg"
-	"resty.dev/v3"
 )
 
 const (
@@ -26,7 +26,7 @@ const (
 
 // EventsAPI manages real-time event communication
 type EventsAPI struct {
-	client           *resty.Client
+	client           *req.Client
 	wsClient         *wsClient
 	messages         chan *syftmsg.Message
 	ctx              context.Context
@@ -37,7 +37,7 @@ type EventsAPI struct {
 }
 
 // newEventsAPI creates a new EventsAPI instance
-func newEventsAPI(client *resty.Client) *EventsAPI {
+func newEventsAPI(client *req.Client) *EventsAPI {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &EventsAPI{
@@ -92,7 +92,7 @@ func (e *EventsAPI) Send(msg *syftmsg.Message) error {
 
 	select {
 	case wsClient.msgTx <- msg:
-		slog.Debug("socketmgr tx", "id", msg.Id, "type", msg.Type)
+		slog.Debug("socketmgr SEND", "id", msg.Id, "type", msg.Type)
 		return nil
 	default:
 		return ErrEventsMessageQueueFull
@@ -130,10 +130,8 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 		return nil, fmt.Errorf("sdk: events: failed to get full url: %w", err)
 	}
 
-	// Connect with auth
-	headers := e.client.Header()
-	headers.Set("Authorization", fmt.Sprintf("%s %s", e.client.AuthScheme(), e.client.AuthToken()))
-
+	// Connect with auth in headers
+	headers := e.client.Headers.Clone()
 	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
 		HTTPHeader: headers, // this will include the auth token
 	})
@@ -193,17 +191,17 @@ func (e *EventsAPI) consumeMessages(wsClient *wsClient) {
 
 		case msg, ok := <-wsClient.msgRx:
 			if !ok {
-				slog.Debug("socketmgr rx closed")
+				slog.Debug("socketmgr RECV closed")
 				return
 			}
 
-			slog.Debug("socketmgr rx", "id", msg.Id, "type", msg.Type)
+			slog.Debug("socketmgr RECV", "id", msg.Id, "type", msg.Type)
 
 			select {
 			case e.messages <- msg:
 				// Successfully delivered
 			default:
-				slog.Warn("socketmgr rx buffer full. dropped", "id", msg.Id, "type", msg.Type)
+				slog.Warn("socketmgr RECV buffer full. dropped", "id", msg.Id, "type", msg.Type)
 			}
 		}
 	}
@@ -254,12 +252,12 @@ func (e *EventsAPI) reconnectWithBackoff() {
 // fullURL builds the complete WebSocket URL with query parameters
 func (e *EventsAPI) fullURL() (string, error) {
 	// get base url from client
-	baseURL, err := url.JoinPath(e.client.BaseURL(), eventsPath)
+	baseURL, err := url.JoinPath(e.client.BaseURL, eventsPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to join path: %w", err)
 	}
 	// get query params from client
-	queryParams := e.client.QueryParams()
+	queryParams := e.client.QueryParams
 	// append query params to base url
 	fullUrl := baseURL + "?" + queryParams.Encode()
 

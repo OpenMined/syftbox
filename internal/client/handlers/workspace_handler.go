@@ -170,16 +170,17 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 			}
 
 			existingItem := WorkspaceItem{
-				Id:          relPath,
-				Name:        filepath.Base(absPath),
-				Type:        itemType,
-				Path:        relPath,
-				CreatedAt:   existingInfo.ModTime(),
-				ModifiedAt:  existingInfo.ModTime(),
-				Size:        existingInfo.Size(),
-				SyncStatus:  SyncStatusHidden,
-				Permissions: []Permission{},
-				Children:    []WorkspaceItem{},
+				Id:           relPath,
+				Name:         filepath.Base(absPath),
+				Type:         itemType,
+				Path:         relPath,
+				AbsolutePath: absPath,
+				CreatedAt:    existingInfo.ModTime(),
+				ModifiedAt:   existingInfo.ModTime(),
+				Size:         existingInfo.Size(),
+				SyncStatus:   SyncStatusHidden,
+				Permissions:  []Permission{},
+				Children:     []WorkspaceItem{},
 			}
 
 			c.PureJSON(http.StatusConflict, &WorkspaceConflictError{
@@ -259,16 +260,17 @@ func (h *WorkspaceHandler) CreateItem(c *gin.Context) {
 
 	// Create response item
 	item := WorkspaceItem{
-		Id:          relPath,
-		Name:        filepath.Base(absPath),
-		Type:        WorkspaceItemType(req.Type),
-		Path:        relPath,
-		CreatedAt:   itemInfo.ModTime(),
-		ModifiedAt:  itemInfo.ModTime(),
-		Size:        itemInfo.Size(),
-		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
-		Permissions: []Permission{},   // TODO: Replace with actual permissions
-		Children:    []WorkspaceItem{},
+		Id:           relPath,
+		Name:         filepath.Base(absPath),
+		Type:         WorkspaceItemType(req.Type),
+		Path:         relPath,
+		AbsolutePath: absPath,
+		CreatedAt:    itemInfo.ModTime(),
+		ModifiedAt:   itemInfo.ModTime(),
+		Size:         itemInfo.Size(),
+		SyncStatus:   SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions:  []Permission{},   // TODO: Replace with actual permissions
+		Children:     []WorkspaceItem{},
 	}
 
 	c.PureJSON(http.StatusCreated, &WorkspaceItemCreateResponse{
@@ -573,16 +575,17 @@ func (h *WorkspaceHandler) MoveItems(c *gin.Context) {
 	}
 
 	item := WorkspaceItem{
-		Id:          relNewPath,
-		Name:        filepath.Base(absNewPath),
-		Type:        itemType,
-		Path:        relNewPath,
-		CreatedAt:   updatedInfo.ModTime(),
-		ModifiedAt:  updatedInfo.ModTime(),
-		Size:        updatedInfo.Size(),
-		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
-		Permissions: []Permission{},   // TODO: Replace with actual permissions
-		Children:    []WorkspaceItem{},
+		Id:           relNewPath,
+		Name:         filepath.Base(absNewPath),
+		Type:         itemType,
+		Path:         relNewPath,
+		AbsolutePath: absNewPath,
+		CreatedAt:    updatedInfo.ModTime(),
+		ModifiedAt:   updatedInfo.ModTime(),
+		Size:         updatedInfo.Size(),
+		SyncStatus:   SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions:  []Permission{},   // TODO: Replace with actual permissions
+		Children:     []WorkspaceItem{},
 	}
 
 	c.PureJSON(http.StatusOK, &WorkspaceItemMoveResponse{
@@ -612,16 +615,17 @@ func (h *WorkspaceHandler) listItems(path string, rootPath string, depth int) ([
 		relPath = filepath.Join("/", filepath.ToSlash(relPath))
 
 		item := WorkspaceItem{
-			Id:          relPath, // Using the relative path as the unique identifier
-			Name:        entry.Name(),
-			Type:        "file",
-			Path:        relPath,
-			CreatedAt:   info.ModTime(), // Using ModTime as CreatedAt since Go doesn't provide creation time
-			ModifiedAt:  info.ModTime(),
-			Size:        info.Size(),
-			SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
-			Permissions: []Permission{},   // TODO: Replace with actual permissions
-			Children:    []WorkspaceItem{},
+			Id:           relPath, // Using the relative path as the unique identifier
+			Name:         entry.Name(),
+			Type:         "file",
+			Path:         relPath,
+			AbsolutePath: absPath,
+			CreatedAt:    info.ModTime(), // Using ModTime as CreatedAt since Go doesn't provide creation time
+			ModifiedAt:   info.ModTime(),
+			Size:         info.Size(),
+			SyncStatus:   SyncStatusHidden, // TODO: Replace with actual sync status
+			Permissions:  []Permission{},   // TODO: Replace with actual permissions
+			Children:     []WorkspaceItem{},
 		}
 
 		if entry.IsDir() {
@@ -826,16 +830,17 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 			}
 
 			existingItem := WorkspaceItem{
-				Id:          relPath,
-				Name:        filepath.Base(absNewPath),
-				Type:        itemType,
-				Path:        relPath,
-				CreatedAt:   existingInfo.ModTime(),
-				ModifiedAt:  existingInfo.ModTime(),
-				Size:        existingInfo.Size(),
-				SyncStatus:  SyncStatusHidden,
-				Permissions: []Permission{},
-				Children:    []WorkspaceItem{},
+				Id:           relPath,
+				Name:         filepath.Base(absNewPath),
+				Type:         itemType,
+				Path:         relPath,
+				AbsolutePath: absNewPath,
+				CreatedAt:    existingInfo.ModTime(),
+				ModifiedAt:   existingInfo.ModTime(),
+				Size:         existingInfo.Size(),
+				SyncStatus:   SyncStatusHidden,
+				Permissions:  []Permission{},
+				Children:     []WorkspaceItem{},
 			}
 
 			c.PureJSON(http.StatusConflict, &WorkspaceConflictError{
@@ -902,16 +907,17 @@ func (h *WorkspaceHandler) CopyItems(c *gin.Context) {
 	}
 
 	item := WorkspaceItem{
-		Id:          relNewPath,
-		Name:        filepath.Base(absNewPath),
-		Type:        itemType,
-		Path:        relNewPath,
-		CreatedAt:   updatedInfo.ModTime(),
-		ModifiedAt:  updatedInfo.ModTime(),
-		Size:        updatedInfo.Size(),
-		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
-		Permissions: []Permission{},   // TODO: Replace with actual permissions
-		Children:    []WorkspaceItem{},
+		Id:           relNewPath,
+		Name:         filepath.Base(absNewPath),
+		Type:         itemType,
+		Path:         relNewPath,
+		AbsolutePath: absNewPath,
+		CreatedAt:    updatedInfo.ModTime(),
+		ModifiedAt:   updatedInfo.ModTime(),
+		Size:         updatedInfo.Size(),
+		SyncStatus:   SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions:  []Permission{},   // TODO: Replace with actual permissions
+		Children:     []WorkspaceItem{},
 	}
 
 	c.PureJSON(http.StatusOK, &WorkspaceItemCopyResponse{
@@ -1243,16 +1249,17 @@ func (h *WorkspaceHandler) UpdateContent(c *gin.Context) {
 
 	// Create response item
 	item := WorkspaceItem{
-		Id:          relPath,
-		Name:        filepath.Base(absPath),
-		Type:        WorkspaceItemTypeFile,
-		Path:        relPath,
-		CreatedAt:   updatedInfo.ModTime(),
-		ModifiedAt:  updatedInfo.ModTime(),
-		Size:        updatedInfo.Size(),
-		SyncStatus:  SyncStatusHidden, // TODO: Replace with actual sync status
-		Permissions: []Permission{},   // TODO: Replace with actual permissions
-		Children:    []WorkspaceItem{},
+		Id:           relPath,
+		Name:         filepath.Base(absPath),
+		Type:         WorkspaceItemTypeFile,
+		Path:         relPath,
+		AbsolutePath: absPath,
+		CreatedAt:    updatedInfo.ModTime(),
+		ModifiedAt:   updatedInfo.ModTime(),
+		Size:         updatedInfo.Size(),
+		SyncStatus:   SyncStatusHidden, // TODO: Replace with actual sync status
+		Permissions:  []Permission{},   // TODO: Replace with actual permissions
+		Children:     []WorkspaceItem{},
 	}
 
 	c.PureJSON(http.StatusOK, &item)

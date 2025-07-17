@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/openmined/syftbox/internal/client/apps"
 	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
 )
@@ -47,11 +46,13 @@ func (h *LogsHandler) getLogFilePath(appId string) string {
 	if err != nil {
 		return ""
 	}
-	appPath := filepath.Join(datasite.GetAppManager().AppsDir, appId)
-	if !apps.IsValidApp(appPath) {
+
+	appInfo, err := datasite.GetAppManager().GetAppByID(appId)
+	if err != nil {
 		return ""
 	}
-	return filepath.Join(appPath, "logs", "app.log")
+
+	return appInfo.LogFilePath()
 }
 
 // GetLogs handles GET requests to retrieve logs
@@ -433,8 +434,7 @@ func (h *LogsHandler) DownloadLogs(c *gin.Context) {
 
 	// Add app logs
 	for _, app := range apps {
-		appLogPath := filepath.Join(app.Path, "logs", "app.log")
-		if err := h.addFileToZip(zipWriter, appLogPath, fmt.Sprintf("%s.log", app.ID)); err != nil {
+		if err := h.addFileToZip(zipWriter, app.LogFilePath(), fmt.Sprintf("%s.log", app.ID)); err != nil {
 			// Log the error but continue with other apps
 			slog.Default().Warn("failed to add app logs to zip", "app", app.ID, "error", err)
 			continue

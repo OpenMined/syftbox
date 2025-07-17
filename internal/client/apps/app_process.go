@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	ErrAlreadyRunning = errors.New("process already running")
-	ErrNotRunning     = errors.New("process not running")
+	ErrAppAlreadyRunning = errors.New("app process already running")
+	ErrAppNotRunning     = errors.New("app process not running")
 )
 
 var (
@@ -100,7 +100,7 @@ func (p *AppProcess) SetStderr(w io.Writer) *AppProcess {
 // Start starts the subprocess
 func (p *AppProcess) Start() error {
 	if p.GetStatus() == StatusRunning {
-		return ErrAlreadyRunning
+		return ErrAppAlreadyRunning
 	}
 
 	p.procMu.Lock()
@@ -159,7 +159,7 @@ func (p *AppProcess) Stop() error {
 	state := p.GetStatus()
 
 	if state != StatusRunning {
-		return ErrNotRunning
+		return ErrAppNotRunning
 	}
 
 	// Kill the entire process group
@@ -173,7 +173,7 @@ func (p *AppProcess) Stop() error {
 // Wait blocks until the process exits and returns the exit code or error
 func (p *AppProcess) Wait() (int, error) {
 	if p.GetStatus() != StatusRunning {
-		return -1, ErrNotRunning
+		return -1, ErrAppNotRunning
 	}
 
 	// wait for the process to exit

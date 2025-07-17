@@ -1,4 +1,4 @@
-package client
+package controlplane
 
 import (
 	"log/slog"
@@ -125,10 +125,10 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	return r.Handler()
 }
 
-func init() {
-	gin.SetMode(gin.ReleaseMode)
-}
-
 func IndexHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, version.Detailed())
+}
+
+func init() {
+	gin.SetMode(gin.ReleaseMode)
 }

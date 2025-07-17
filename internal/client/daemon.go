@@ -7,18 +7,19 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/openmined/syftbox/internal/client/controlplane"
 	"github.com/openmined/syftbox/internal/client/datasitemgr"
 	"golang.org/x/sync/errgroup"
 )
 
 type ClientDaemon struct {
 	mgr *datasitemgr.DatasiteManager
-	cps *ControlPlaneServer
+	cps *controlplane.CPServer
 }
 
-func NewClientDaemon(config *ControlPlaneConfig) (*ClientDaemon, error) {
+func NewClientDaemon(config *controlplane.CPServerConfig) (*ClientDaemon, error) {
 	mgr := datasitemgr.New()
-	cps, err := NewControlPlaneServer(config, mgr)
+	cps, err := controlplane.NewControlPlaneServer(config, mgr)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +60,6 @@ func (c *ClientDaemon) Start(ctx context.Context) error {
 	})
 
 	if err := eg.Wait(); err != nil && !errors.Is(err, context.Canceled) {
-		slog.Error("client daemon failure", "error", err)
 		return err
 	}
 

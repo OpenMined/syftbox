@@ -34,16 +34,17 @@ type WorkspaceItemsRequest struct {
 
 // WorkspaceItem represents a file or folder in the workspace
 type WorkspaceItem struct {
-	Id          string            `json:"id"`
-	Name        string            `json:"name"`
-	Type        WorkspaceItemType `json:"type"`
-	Path        string            `json:"path"`
-	CreatedAt   time.Time         `json:"createdAt"`
-	ModifiedAt  time.Time         `json:"modifiedAt"`
-	Size        int64             `json:"size"`
-	SyncStatus  SyncStatus        `json:"syncStatus"`
-	Permissions []Permission      `json:"permissions"`
-	Children    []WorkspaceItem   `json:"children"`
+	Id           string            `json:"id"`
+	Name         string            `json:"name"`
+	Type         WorkspaceItemType `json:"type"`
+	Path         string            `json:"path"`
+	AbsolutePath string            `json:"absolutePath"`
+	CreatedAt    time.Time         `json:"createdAt"`
+	ModifiedAt   time.Time         `json:"modifiedAt"`
+	Size         int64             `json:"size"`
+	SyncStatus   SyncStatus        `json:"syncStatus"`
+	Permissions  []Permission      `json:"permissions"`
+	Children     []WorkspaceItem   `json:"children"`
 }
 
 // NOTE:

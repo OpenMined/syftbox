@@ -1,37 +1,21 @@
 package sync
 
-type OpType uint8
-
-var opTypeNames = []string{
-	"WriteRemote",
-	"WriteLocal",
-	"DeleteRemote",
-	"DeleteLocal",
-	"RenameRemote",
-	"RenameLocal",
-	"Conflict",
-	"Error",
-}
+type OpType string
 
 const (
-	OpWriteRemote OpType = iota
-	OpWriteLocal
-	OpDeleteRemote
-	OpDeleteLocal
-	OpRenameRemote
-	OpRenameLocal
-	OpConflict
-	OpError
+	OpWriteRemote  OpType = "WriteRemote"
+	OpWriteLocal   OpType = "WriteLocal"
+	OpDeleteRemote OpType = "DeleteRemote"
+	OpDeleteLocal  OpType = "DeleteLocal"
+	OpConflict     OpType = "Conflict"
+	OpError        OpType = "Error"
+	OpSkipped      OpType = "Skipped"
 )
 
 type SyncOperation struct {
-	Op         OpType
-	RelPath    string // Datasite relative path
+	Type       OpType
+	RelPath    SyncPath
 	Local      *FileMetadata
 	Remote     *FileMetadata
 	LastSynced *FileMetadata
-}
-
-func (op OpType) String() string {
-	return opTypeNames[op]
 }
