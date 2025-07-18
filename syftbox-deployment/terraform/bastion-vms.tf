@@ -200,31 +200,31 @@ SCRIPT
 
 # Output the bastion access commands
 output "bastion_high_iap_ssh_command" {
-  description = "Command to SSH to High pod bastion via IAP"
-  value       = "gcloud compute ssh ${google_compute_instance.bastion_high.name} --zone=${var.zone} --tunnel-through-iap --project=${var.project_id}"
+  description = "Command to SSH to High pod bastion via internal hostname"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion_high.name} --project ${var.project_id} --zone ${var.zone} -- -o Hostname=nic0.${google_compute_instance.bastion_high.name}.${var.zone}.${substr(var.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com"
 }
 
 output "bastion_low_iap_ssh_command" {
-  description = "Command to SSH to Low pod bastion via IAP"
-  value       = "gcloud compute ssh ${google_compute_instance.bastion_low.name} --zone=${var.zone} --tunnel-through-iap --project=${var.project_id}"
+  description = "Command to SSH to Low pod bastion via internal hostname"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion_low.name} --project ${var.project_id} --zone ${var.zone} -- -o Hostname=nic0.${google_compute_instance.bastion_low.name}.${var.zone}.${substr(var.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com"
 }
 
 output "bastion_ds_vm_iap_ssh_command" {
-  description = "Command to SSH to DS VM bastion via IAP (if enabled)"
-  value       = var.enable_ds_vm && !var.ds_vm_public_ip ? "gcloud compute ssh ${google_compute_instance.bastion_ds_vm[0].name} --zone=${var.zone} --tunnel-through-iap --project=${var.project_id}" : "DS VM bastion not created (DS VM disabled or has public IP)"
+  description = "Command to SSH to DS VM bastion via internal hostname (if enabled)"
+  value       = var.enable_ds_vm && !var.ds_vm_public_ip ? "gcloud compute ssh ${google_compute_instance.bastion_ds_vm[0].name} --project ${var.project_id} --zone ${var.zone} -- -o Hostname=nic0.${google_compute_instance.bastion_ds_vm[0].name}.${var.zone}.${substr(var.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com" : "DS VM bastion not created (DS VM disabled or has public IP)"
 }
 
 output "high_pod_jupyter_tunnel_command" {
-  description = "Command to tunnel to High pod Jupyter"
-  value       = "gcloud compute ssh ${google_compute_instance.bastion_high.name} --zone=${var.zone} --tunnel-through-iap --project=${var.project_id} -- -L 8889:localhost:8889 -N"
+  description = "Command to tunnel to High pod Jupyter via internal hostname"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion_high.name} --project ${var.project_id} --zone ${var.zone} -- -o Hostname=nic0.${google_compute_instance.bastion_high.name}.${var.zone}.${substr(var.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com -L 8889:localhost:8889 -N"
 }
 
 output "low_pod_jupyter_tunnel_command" {
-  description = "Command to tunnel to Low pod Jupyter"
-  value       = "gcloud compute ssh ${google_compute_instance.bastion_low.name} --zone=${var.zone} --tunnel-through-iap --project=${var.project_id} -- -L 8888:localhost:8888 -N"
+  description = "Command to tunnel to Low pod Jupyter via internal hostname"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion_low.name} --project ${var.project_id} --zone ${var.zone} -- -o Hostname=nic0.${google_compute_instance.bastion_low.name}.${var.zone}.${substr(var.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com -L 8888:localhost:8888 -N"
 }
 
 output "ds_vm_jupyter_tunnel_command" {
-  description = "Command to tunnel to DS VM Jupyter (if bastion enabled)"
-  value       = var.enable_ds_vm && !var.ds_vm_public_ip ? "gcloud compute ssh ${google_compute_instance.bastion_ds_vm[0].name} --zone=${var.zone} --tunnel-through-iap --project=${var.project_id} -- -L 8888:localhost:8888 -N" : "DS VM bastion not available (DS VM disabled or has public IP)"
+  description = "Command to tunnel to DS VM Jupyter via internal hostname (if bastion enabled)"
+  value       = var.enable_ds_vm && !var.ds_vm_public_ip ? "gcloud compute ssh ${google_compute_instance.bastion_ds_vm[0].name} --project ${var.project_id} --zone ${var.zone} -- -o Hostname=nic0.${google_compute_instance.bastion_ds_vm[0].name}.${var.zone}.${substr(var.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com -L 8888:localhost:8888 -N" : "DS VM bastion not available (DS VM disabled or has public IP)"
 }

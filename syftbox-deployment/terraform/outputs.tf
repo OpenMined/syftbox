@@ -63,11 +63,11 @@ output "bastion_zone" {
 }
 
 output "bastion_iap_ssh_command" {
-  description = "Command to SSH to bastion host via IAP"
-  value       = "gcloud compute ssh ${google_compute_instance.bastion.name} --zone=${google_compute_instance.bastion.zone} --tunnel-through-iap --project=${var.project_id}"
+  description = "Command to SSH to bastion host via internal hostname"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion.name} --project ${var.project_id} --zone ${google_compute_instance.bastion.zone} -- -o Hostname=nic0.${google_compute_instance.bastion.name}.${google_compute_instance.bastion.zone}.${substr(google_compute_instance.bastion.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com"
 }
 
 output "bastion_iap_tunnel_command" {
-  description = "Example command to create IAP tunnel for Jupyter access"
-  value       = "gcloud compute ssh ${google_compute_instance.bastion.name} --zone=${google_compute_instance.bastion.zone} --tunnel-through-iap --project=${var.project_id} -- -L 8888:localhost:8888 -N"
+  description = "Example command to create tunnel for Jupyter access via internal hostname"
+  value       = "gcloud compute ssh ${google_compute_instance.bastion.name} --project ${var.project_id} --zone ${google_compute_instance.bastion.zone} -- -o Hostname=nic0.${google_compute_instance.bastion.name}.${google_compute_instance.bastion.zone}.${substr(google_compute_instance.bastion.zone, -1, 1)}.${var.project_id}.internal.gcpnode.com -L 8888:localhost:8888 -N"
 }

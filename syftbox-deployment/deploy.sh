@@ -60,6 +60,18 @@ print_info() {
     echo -e "${BLUE}→ $1${NC}"
 }
 
+# Generate internal GCP hostname for bastion SSH
+generate_bastion_hostname() {
+    local jumpbox_node_name="$1"
+    local project_name="$2"
+    local jumpbox_zone="$3"
+    
+    # Extract zone suffix (e.g., "us-central1-a" -> "c")
+    local zone_suffix="${jumpbox_zone##*-}"
+    
+    echo "nic0.${jumpbox_node_name}.${jumpbox_zone}.${zone_suffix}.${project_name}.internal.gcpnode.com"
+}
+
 # State checking functions for continue/resume functionality
 check_terraform_state() {
     if [ -f "$TERRAFORM_DIR/terraform.tfstate" ] && [ -s "$TERRAFORM_DIR/terraform.tfstate" ]; then
@@ -516,21 +528,38 @@ get_access_info() {
     kubectl get pods -n syftbox
     echo ""
     
+    # Generate bastion hostname for internal SSH
+    local bastion_name="${CLUSTER_NAME:-syftbox-cluster}-bastion"
+    local bastion_zone="${ZONE:-us-central1-a}"
+    local bastion_hostname=$(generate_bastion_hostname "$bastion_name" "$PROJECT_ID" "$bastion_zone")
+    
     echo "High Pod (Private) - Jupyter Lab on port 8889:"
     echo "  - Local access: kubectl port-forward -n syftbox svc/syftbox-high 8889:8889"
-    echo "  - Via bastion: gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --tunnel-through-iap -- -L 8889:localhost:8889 -N"
+    echo "  - Via bastion: gcloud compute ssh $bastion_name --project $PROJECT_ID --zone $bastion_zone -- -o Hostname=$bastion_hostname -L 8889:localhost:8889 -N"
     echo "  - Then open: http://localhost:8889"
     echo ""
     
     echo "Low Pod (Public) - API on port 80, Jupyter via /jupyter/:"
     echo "  - API: kubectl port-forward -n syftbox svc/syftbox-low 8080:80"
     echo "  - Jupyter: kubectl port-forward -n syftbox svc/syftbox-low 8888:8888"
-    echo "  - Via bastion: gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --tunnel-through-iap -- -L 8080:localhost:80 -L 8888:localhost:8888 -N"
+    echo "  - Via bastion: gcloud compute ssh $bastion_name --project $PROJECT_ID --zone $bastion_zone -- -o Hostname=$bastion_hostname -L 8080:localhost:80 -L 8888:localhost:8888 -N"
     echo "  - Then open: http://localhost:8080 (API) or http://localhost:8888 (Jupyter)"
     echo ""
     
     if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
         echo "Cache Server (internal): http://syftbox-cache-server.syftbox:8080"
+        echo ""
+    fi
+    
+    # Show DS VM access if enabled
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        echo "Data Scientist VM - Jupyter Lab on port 8888:"
+        if [ "${DS_VM_PUBLIC_IP}" == "true" ]; then
+            echo "  - Public IP access: [Check kubectl get svc syftbox-ds-vm for external IP]"
+        else
+            echo "  - Via bastion: gcloud compute ssh $bastion_name --project $PROJECT_ID --zone $bastion_zone -- -o Hostname=$bastion_hostname -L 8888:localhost:8888 -N"
+        fi
+        echo "  - Then open: http://localhost:8888"
         echo ""
     fi
     
@@ -542,7 +571,18 @@ get_access_info() {
     echo "  kubectl exec -it deploy/syftbox-high -n syftbox -- db-connect"
     echo ""
     echo "Bastion host access (for port forwarding):"
-    echo "  gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --tunnel-through-iap"
+    echo "  gcloud compute ssh $bastion_name --project $PROJECT_ID --zone $bastion_zone -- -o Hostname=$bastion_hostname"
+    echo ""
+    
+    # Show Terraform outputs for quick reference
+    echo "Terraform Output Commands (for copy/paste):"
+    echo "  Main bastion SSH: terraform output -raw bastion_iap_ssh_command"
+    echo "  Main bastion tunnel: terraform output -raw bastion_iap_tunnel_command"
+    echo "  High pod tunnel: terraform output -raw high_pod_jupyter_tunnel_command"
+    echo "  Low pod tunnel: terraform output -raw low_pod_jupyter_tunnel_command"
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        echo "  DS VM tunnel: terraform output -raw ds_vm_jupyter_tunnel_command"
+    fi
 }
 
 # Cleanup/destroy everything
@@ -749,6 +789,7 @@ Commands:
   status                 - Show deployment status
   wait-for-db            - Wait for database to be ready (useful after terraform apply)
   debug-db               - Debug database connection issues and show all credentials
+  access-info            - Show access information for all deployed services
   help                   - Show this help message
 
 Environment Variables:
@@ -878,6 +919,14 @@ main() {
         debug-db)
             setup_project_id
             debug_database_connection
+            ;;
+        access-info)
+            setup_project_id
+            # Auto-detect deployed components
+            export DEPLOY_CACHE_SERVER=$(kubectl get deployment syftbox-cache-server -n syftbox &>/dev/null && echo "true" || echo "false")
+            export DEPLOY_DS_VM=$(kubectl get deployment syftbox-ds-vm -n syftbox &>/dev/null && echo "true" || echo "false")
+            export DS_VM_PUBLIC_IP=$(kubectl get svc syftbox-ds-vm -n syftbox -o jsonpath='{.spec.type}' 2>/dev/null | grep -q "LoadBalancer" && echo "true" || echo "false")
+            get_access_info
             ;;
         help)
             show_help
