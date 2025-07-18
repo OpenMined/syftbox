@@ -92,9 +92,6 @@ RUN uv pip install \
     statsmodels \
     xgboost \
     lightgbm \
-    # Deep learning (CPU versions)
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    torchvision --index-url https://download.pytorch.org/whl/cpu \
     # Data processing
     openpyxl \
     xlrd \
@@ -108,6 +105,9 @@ RUN uv pip install \
     pytest \
     black \
     pylint
+
+# Install PyTorch CPU version separately
+RUN uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Create appuser for running services
 RUN useradd -m -s /bin/bash -u 1000 appuser

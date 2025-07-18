@@ -17,12 +17,16 @@ TERRAFORM_DIR="$SCRIPT_DIR/terraform"
 # Build context is the SyftBox repo root (parent of deployment directory)
 BUILD_CONTEXT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Get Artifact Registry URL from Terraform outputs if available
-if [ -f "$TERRAFORM_DIR/terraform.tfstate" ]; then
-    ARTIFACT_REGISTRY_URL=$(cd "$TERRAFORM_DIR" && terraform output -raw artifact_registry_url 2>/dev/null || echo "")
-fi
+# Docker Hub configuration
+DOCKER_ORGANIZATION="${DOCKER_ORGANIZATION:-openmined}"
+REGISTRY="docker.io/${DOCKER_ORGANIZATION}"
 
-REGISTRY="${ARTIFACT_REGISTRY_URL:-us-central1-docker.pkg.dev/${PROJECT_ID}/syftbox}"
+# Parse command line arguments
+FORCE_BUILD=false
+if [ "$1" = "--force" ]; then
+    FORCE_BUILD=true
+    shift
+fi
 
 # Helper functions
 print_success() {
@@ -40,9 +44,8 @@ print_info() {
 # Cleanup function
 cleanup() {
     # Clean up any temporary files created during build
-    if [ -f "$BUILD_CONTEXT/requirements.txt" ]; then
-        rm -f "$BUILD_CONTEXT/requirements.txt"
-    fi
+    # (Currently no temporary files to clean up)
+    :
 }
 
 # Set trap for cleanup
@@ -74,18 +77,33 @@ build_deployment_images() {
     docker build -t "$REGISTRY/syftbox-high:latest" \
         -f "$DOCKER_DIR/Dockerfile.high" "$DOCKER_DIR"
     
-    # Build Low pod image
-    print_info "Building syftbox-low pod..."
-    docker build -t "$REGISTRY/syftbox-low:latest" \
-        -f "$DOCKER_DIR/Dockerfile.low" "$DOCKER_DIR"
+    # Build Low pod image (with SyftBox client)
+    if [ -f "$BUILD_CONTEXT/go.mod" ] && [ -f "$BUILD_CONTEXT/go.sum" ]; then
+        print_info "Building syftbox-low pod (with SyftBox client)..."
+        docker build -t "$REGISTRY/syftbox-low:latest" \
+            -f "$DOCKER_DIR/Dockerfile.low-syftbox" "$BUILD_CONTEXT"
+    else
+        print_error "SyftBox source not found at $BUILD_CONTEXT - cannot build Low pod with SyftBox"
+        print_error "Low pod with SyftBox requires SyftBox source code to build the client"
+        exit 1
+    fi
+    
+    # Build DS VM image (requires SyftBox source)
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        if [ -f "$BUILD_CONTEXT/go.mod" ] && [ -f "$BUILD_CONTEXT/go.sum" ]; then
+            print_info "Building syftbox-ds-vm pod..."
+            docker build -t "$REGISTRY/syftbox-ds-vm:latest" \
+                -f "$DOCKER_DIR/Dockerfile.ds-vm" "$BUILD_CONTEXT"
+        else
+            print_error "SyftBox source not found at $BUILD_CONTEXT - cannot build DS VM"
+            print_error "DS VM requires SyftBox source code to build the client"
+            exit 1
+        fi
+    fi
     
     # Only build cache server and data owner images if cache server is enabled
     if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
         print_info "Building cache server images..."
-        # Copy requirements file into build context for legacy images
-        if [ -f "$DOCKER_DIR/requirements.txt" ]; then
-            cp "$DOCKER_DIR/requirements.txt" "$BUILD_CONTEXT/requirements.txt"
-        fi
         
         # Build cache server image (from syftbox source)
         print_info "Building syftbox-cache-server..."
@@ -101,35 +119,77 @@ build_deployment_images() {
     fi
 }
 
-# Login to Artifact Registry
-login_to_registry() {
-    print_info "Logging in to GCP Artifact Registry..."
+# Check if images already exist on Docker Hub
+check_images_exist() {
+    print_info "Checking if images already exist on Docker Hub..."
     
-    # Check if PROJECT_ID is set
-    if [ -z "$PROJECT_ID" ]; then
-        print_error "PROJECT_ID environment variable is not set"
-        exit 1
+    local images=(
+        "$REGISTRY/syftbox-high:latest"
+        "$REGISTRY/syftbox-low:latest"
+    )
+    
+    # Add DS VM image if enabled
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        images+=(
+            "$REGISTRY/syftbox-ds-vm:latest"
+        )
     fi
     
-    print_info "Current gcloud account: $(gcloud config get-value account 2>/dev/null || echo 'not set')"
-    print_info "Current gcloud project: $(gcloud config get-value project 2>/dev/null || echo 'not set')"
+    # Add cache server images if enabled
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        images+=(
+            "$REGISTRY/syftbox-cache-server:latest"
+            "$REGISTRY/syftbox-dataowner:latest"
+        )
+    fi
     
-    # Check if already configured
-    if grep -q "us-central1-docker.pkg.dev" ~/.docker/config.json 2>/dev/null; then
-        print_info "Docker already configured for Artifact Registry"
-    else
-        # Configure Docker to use gcloud as credential helper (with explicit yes to avoid prompt)
-        print_info "Configuring Docker for Artifact Registry..."
-        if ! yes | gcloud auth configure-docker us-central1-docker.pkg.dev; then
-            print_error "Failed to configure Docker for Artifact Registry. Please ensure:"
-            echo "  1. You are logged in to GCP: gcloud auth login"
-            echo "  2. You have application default credentials: gcloud auth application-default login"
-            echo "  3. You have push permissions to the Artifact Registry"
-            exit 1
+    local all_exist=true
+    for image in "${images[@]}"; do
+        if docker manifest inspect "$image" &>/dev/null; then
+            print_success "Image $image exists on Docker Hub"
+        else
+            print_info "Image $image does not exist on Docker Hub"
+            all_exist=false
         fi
+    done
+    
+    if [ "$all_exist" = true ] && [ "$FORCE_BUILD" != true ]; then
+        print_success "All images already exist on Docker Hub. Use --force to rebuild."
+        echo ""
+        echo "Images available at:"
+        for image in "${images[@]}"; do
+            echo "  - $image"
+        done
+        exit 0
+    fi
+}
+
+# Login to Docker Hub
+login_to_registry() {
+    print_info "Checking Docker Hub authentication..."
+    
+    # Check if already logged in by testing a simple command
+    if docker info >/dev/null 2>&1; then
+        print_info "Using existing Docker authentication"
+        print_info "Pushing to organization: $DOCKER_ORGANIZATION"
+        print_success "Docker authentication ready"
+        return 0
     fi
     
-    print_success "Docker configured for Artifact Registry"
+    # If not logged in, try to login with credentials
+    if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
+        print_info "Logging in as user: $DOCKER_USERNAME"
+        print_info "Pushing to organization: $DOCKER_ORGANIZATION"
+        
+        # Login to Docker Hub
+        echo "$DOCKER_PASSWORD" | docker login docker.io --username "$DOCKER_USERNAME" --password-stdin
+        
+        print_success "Successfully logged in to Docker Hub"
+    else
+        print_info "No credentials provided - assuming already logged in"
+        print_info "Pushing to organization: $DOCKER_ORGANIZATION"
+        print_warning "If push fails, run: docker login docker.io"
+    fi
 }
 
 # Push images
@@ -140,6 +200,13 @@ push_images() {
         "$REGISTRY/syftbox-high:latest"
         "$REGISTRY/syftbox-low:latest"
     )
+    
+    # Add DS VM image if enabled
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        images+=(
+            "$REGISTRY/syftbox-ds-vm:latest"
+        )
+    fi
     
     # Add cache server images if enabled
     if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
@@ -165,6 +232,13 @@ verify_images() {
         "$REGISTRY/syftbox-low:latest"
     )
     
+    # Add DS VM image if enabled
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        images+=(
+            "$REGISTRY/syftbox-ds-vm:latest"
+        )
+    fi
+    
     # Add cache server images if enabled
     if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
         images+=(
@@ -187,6 +261,9 @@ verify_images() {
 main() {
     print_info "Starting Docker build and push process..."
     
+    # Check if images already exist (skip if --force is used)
+    check_images_exist
+    
     # Prepare build context and build deployment images
     prepare_build_context
     build_deployment_images
@@ -201,8 +278,12 @@ main() {
     print_success "All images built and pushed successfully!"
     echo ""
     echo "Images available at:"
-    echo "  - $REGISTRY/syftbox-cache-server:latest (cache server - no DB dependencies)"
-    echo "  - $REGISTRY/syftbox-dataowner:latest (data owner with Jupyter/Python tools)"
+    echo "  - $REGISTRY/syftbox-high:latest (high pod - private operations)"
+    echo "  - $REGISTRY/syftbox-low:latest (low pod - web services + SyftBox)"
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        echo "  - $REGISTRY/syftbox-cache-server:latest (cache server - no DB dependencies)"
+        echo "  - $REGISTRY/syftbox-dataowner:latest (data owner with Jupyter/Python tools)"
+    fi
 }
 
 # Run main function

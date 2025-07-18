@@ -145,12 +145,18 @@ setup_project_id() {
     export PROJECT_ID
 }
 
-# Build and push Docker images
+# Build and push Docker images (optional - use pre-built images by default)
 build_and_push_images() {
     print_header "Building and Pushing Docker Images"
     
-    # Execute build script
-    "$SCRIPT_DIR/build-and-push.sh"
+    if [ "${BUILD_IMAGES}" == "true" ]; then
+        print_info "Building and pushing new Docker images..."
+        "$SCRIPT_DIR/build-images.sh" --force
+    else
+        print_info "Using pre-built images from Docker Hub: docker.io/openmined"
+        print_info "To build new images, run: ./build-images.sh"
+        print_info "To force rebuild during deploy, use: --build-images flag"
+    fi
 }
 
 # Deploy infrastructure with Terraform
@@ -215,7 +221,9 @@ deploy_syftbox() {
     # Get database info from Terraform outputs
     local private_db_host=$(terraform output -raw private_database_host)
     local private_db_password=$(terraform output -raw private_database_password)
-    local artifact_registry_url=$(terraform output -raw artifact_registry_url)
+    
+    # Use Docker Hub images by default
+    local image_registry="${IMAGE_REGISTRY:-docker.io/openmined}"
     
     cd "$SCRIPT_DIR"
     
@@ -223,7 +231,7 @@ deploy_syftbox() {
     local helm_cmd="helm upgrade --install syftbox \"$HELM_DIR/syftbox\" \
         --namespace syftbox \
         --create-namespace \
-        --set global.imageRegistry=\"$artifact_registry_url\" \
+        --set global.imageRegistry=\"$image_registry\" \
         --set database.enabled=true \
         --set database.external=true \
         --set database.host=\"$private_db_host\" \
@@ -415,6 +423,7 @@ Commands:
     --with-ds-vm         - Include Data Scientist VM pod
     --ds-vm-public-ip    - Give DS VM a public IP (no bastion needed)
     --with-all           - Include cache server, mock database, and DS VM
+    --build-images       - Build and push Docker images during deployment
   destroy                - Destroy all resources
   status                 - Show deployment status
   help                   - Show this help message
@@ -472,6 +481,11 @@ main() {
                         DEPLOY_MOCK_DATABASE="true"
                         DEPLOY_DS_VM="true"
                         print_info "All components deployment enabled (cache server, mock database, DS VM)"
+                        shift
+                        ;;
+                    --build-images)
+                        BUILD_IMAGES="true"
+                        print_info "Will build and push Docker images during deployment"
                         shift
                         ;;
                     *)

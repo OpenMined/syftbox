@@ -71,13 +71,29 @@ COPY --from=builder /app/syftbox /usr/local/bin/syftbox
 RUN mkdir -p /home/syftbox/.syftbox /home/syftbox/notebooks /home/syftbox/data /home/syftbox/.jupyter && \
     chown -R syftbox:syftbox /home/syftbox
 
-# Copy requirements file and install Python packages using uv
-COPY requirements.txt /tmp/requirements.txt
-
 # Create a virtual environment and install packages
 RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN uv pip install -r /tmp/requirements.txt
+
+# Install Python packages directly
+RUN uv pip install \
+    # Jupyter ecosystem
+    jupyter>=1.0.0 \
+    jupyterlab>=4.0.0 \
+    notebook>=7.0.0 \
+    ipython-sql>=0.5.0 \
+    # Data science libraries
+    pandas>=2.0.0 \
+    numpy>=1.24.0 \
+    matplotlib>=3.6.0 \
+    seaborn>=0.12.0 \
+    scikit-learn>=1.4.0 \
+    plotly>=5.0.0 \
+    # Database connectivity
+    psycopg2-binary>=2.9.0 \
+    sqlalchemy>=2.0.0 \
+    # HTTP utilities
+    requests>=2.28.0
 
 # Switch to syftbox user after package installation
 USER syftbox

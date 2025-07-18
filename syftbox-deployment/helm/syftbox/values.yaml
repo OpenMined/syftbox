@@ -1,6 +1,6 @@
 # Global configuration
 global:
-  imageRegistry: us-central1-docker.pkg.dev/PROJECT_ID/syftbox
+  imageRegistry: docker.io/openmined
   namespace: syftbox
   imagePullPolicy: Always
   environment: PROD  # DEV, PROD
@@ -46,7 +46,7 @@ lowPod:
   enabled: true
   replicaCount: 1
   image:
-    repository: syftbox-low-syftbox
+    repository: syftbox-low
     tag: latest
     pullPolicy: Always
   service:

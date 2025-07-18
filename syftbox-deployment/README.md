@@ -102,6 +102,7 @@ cp .env.example .env
 
 ```bash
 # Deploy all 4 pods (High, Low, DS VM, Cache Server)
+# Uses pre-built Docker images from Docker Hub
 ./deploy.sh deploy
 
 # Deploy with DS VM public IP (no bastion needed for DS VM)
@@ -109,9 +110,97 @@ cp .env.example .env
 
 # Deploy with mock database (for testing)
 ./deploy.sh deploy --with-mock-db
+
+# Build new images and deploy (optional)
+./deploy.sh deploy --build-images
 ```
 
-### 3. Verify Deployment
+### 3. Building and Pushing Images to Docker Hub
+
+The deployment uses pre-built images from Docker Hub (`docker.io/openmined/syftbox-test`). 
+
+#### **Requirements for Building:**
+
+⚠️ **Important**: Building SyftBox images requires the SyftBox source code. The build script must be run from the **SyftBox deployment directory** which should be inside the SyftBox repository.
+
+**Directory Structure:**
+```
+syftbox/                          # SyftBox main repository
+├── go.mod                        # Required for building
+├── go.sum                        # Required for building
+├── cmd/client/                   # SyftBox client source
+├── syftbox-deployment/          # This deployment directory
+│   ├── build-images.sh          # Build script
+│   ├── deploy.sh                # Deploy script
+│   └── docker/                  # Dockerfiles
+└── ...
+```
+
+#### **For OpenMined Team Members:**
+
+To build and push new images to the `openmined/syftbox-test` repository:
+
+```bash
+# 1. Ensure you're in the SyftBox deployment directory
+cd syftbox/syftbox-deployment
+
+# 2. Get Docker Hub credentials from OpenMined team
+export DOCKER_USERNAME=your_openmined_username
+export DOCKER_PASSWORD=your_docker_hub_token
+
+# 3. Build and push all images
+./build-images.sh
+
+# 4. Force rebuild existing images
+./build-images.sh --force
+
+# 5. Deploy using your newly built images
+./deploy.sh deploy
+```
+
+#### **For External Users:**
+
+To build and push to your own Docker Hub repository:
+
+```bash
+# 1. Ensure you're in the SyftBox deployment directory
+cd syftbox/syftbox-deployment
+
+# 2. Set your Docker Hub credentials
+export DOCKER_USERNAME=your_username
+export DOCKER_PASSWORD=your_token
+export DOCKER_REPOSITORY=your_username/your_repo
+
+# 3. Build and push images
+./build-images.sh
+
+# 4. Deploy using your custom images
+./deploy.sh deploy
+# or
+IMAGE_REGISTRY=docker.io/your_username/your_repo ./deploy.sh deploy
+```
+
+### 4. Available Docker Images
+
+The following pre-built images are available at Docker Hub:
+
+| Image | Purpose | Docker Hub URL |
+|-------|---------|----------------|
+| `syftbox-high` | High pod - private operations | `docker.io/openmined/syftbox-test/syftbox-high:latest` |
+| `syftbox-low` | Low pod - web services + SyftBox | `docker.io/openmined/syftbox-test/syftbox-low:latest` |
+| `syftbox-ds-vm` | Data Scientist VM + SyftBox | `docker.io/openmined/syftbox-test/syftbox-ds-vm:latest` |
+| `syftbox-cache-server` | Cache server (local-only) | `docker.io/openmined/syftbox-test/syftbox-cache-server:latest` |
+| `syftbox-dataowner` | Legacy data owner | `docker.io/openmined/syftbox-test/syftbox-dataowner:latest` |
+
+You can pull these images directly:
+```bash
+docker pull docker.io/openmined/syftbox-test/syftbox-high:latest
+docker pull docker.io/openmined/syftbox-test/syftbox-low:latest
+docker pull docker.io/openmined/syftbox-test/syftbox-ds-vm:latest
+docker pull docker.io/openmined/syftbox-test/syftbox-cache-server:latest
+```
+
+### 5. Verify Deployment
 ```bash
 # Check all pods are running
 kubectl get pods -n syftbox
@@ -256,6 +345,16 @@ gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
 | `--ds-vm-public-ip` | Give DS VM public IP | false |
 | `--with-mock-db` | Deploy mock database | false |
 | `--with-cache` | Enable cache server | true |
+| `--build-images` | Build and push Docker images during deployment | false |
+
+### Docker Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `IMAGE_REGISTRY` | Docker image registry | `docker.io/openmined/syftbox-test` |
+| `DOCKER_USERNAME` | Docker Hub username | (required for building) |
+| `DOCKER_PASSWORD` | Docker Hub password/token | (required for building) |
+| `DOCKER_REPOSITORY` | Docker Hub repository | `openmined/syftbox-test` |
 
 ### Email Configuration
 ```bash
