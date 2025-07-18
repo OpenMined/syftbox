@@ -11,16 +11,17 @@ A secure 4-pod deployment system for SyftBox on Google Cloud Platform (GCP) with
 # With Data Scientist VM public IP (no bastion needed for DS VM)
 ./deploy.sh deploy --with-ds-vm --ds-vm-public-ip
 
-# Access High Pod Jupyter (always private)
-gcloud compute ssh syftbox-cluster-bastion-high \
-  --zone=us-central1-a --tunnel-through-iap \
-  -- -L 8889:localhost:8889 -N
-# Then open: http://localhost:8889/lab
-
 # Access Low Pod Jupyter (always private)
+# Run this command and leave it running:
+gcloud compute ssh syftbox-cluster-bastion-low \
+  --zone=us-central1-a --tunnel-through-iap \
+  --command="kubectl port-forward -n syftbox service/syftbox-low 8888:80 --address=0.0.0.0"
+
+# Then in a new terminal, create the tunnel:
 gcloud compute ssh syftbox-cluster-bastion-low \
   --zone=us-central1-a --tunnel-through-iap \
   -- -L 8888:localhost:8888 -N
+
 # Then open: http://localhost:8888/jupyter/
 ```
 
@@ -130,7 +131,12 @@ All pods use **bastion access** for security, except DS VM can optionally have p
 
 ### High Pod (Private - Sensitive Work)
 ```bash
-# Create tunnel to High pod
+# Terminal 1: Set up port forwarding on bastion (leave running)
+gcloud compute ssh syftbox-cluster-bastion-high \
+  --zone=us-central1-a --tunnel-through-iap \
+  --command="kubectl port-forward -n syftbox service/syftbox-high 8889:8889 --address=0.0.0.0"
+
+# Terminal 2: Create tunnel to bastion
 gcloud compute ssh syftbox-cluster-bastion-high \
   --zone=us-central1-a --tunnel-through-iap \
   -- -L 8889:localhost:8889 -N
@@ -140,7 +146,12 @@ gcloud compute ssh syftbox-cluster-bastion-high \
 
 ### Low Pod (SyftBox Client)
 ```bash
-# Create tunnel to Low pod
+# Terminal 1: Set up port forwarding on bastion (leave running)
+gcloud compute ssh syftbox-cluster-bastion-low \
+  --zone=us-central1-a --tunnel-through-iap \
+  --command="kubectl port-forward -n syftbox service/syftbox-low 8888:80 --address=0.0.0.0"
+
+# Terminal 2: Create tunnel to bastion
 gcloud compute ssh syftbox-cluster-bastion-low \
   --zone=us-central1-a --tunnel-through-iap \
   -- -L 8888:localhost:8888 -N
@@ -152,7 +163,12 @@ gcloud compute ssh syftbox-cluster-bastion-low \
 
 **Option 1: Bastion Access (Default)**
 ```bash
-# Create tunnel to DS VM
+# Terminal 1: Set up port forwarding on bastion (leave running)
+gcloud compute ssh syftbox-cluster-bastion-ds-vm \
+  --zone=us-central1-a --tunnel-through-iap \
+  --command="kubectl port-forward -n syftbox service/syftbox-ds-vm 8888:8888 --address=0.0.0.0"
+
+# Terminal 2: Create tunnel to bastion
 gcloud compute ssh syftbox-cluster-bastion-ds-vm \
   --zone=us-central1-a --tunnel-through-iap \
   -- -L 8888:localhost:8888 -N
