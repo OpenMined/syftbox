@@ -311,23 +311,84 @@ deploy_syftbox() {
     
     cd "$TERRAFORM_DIR"
     
-    # Get database info from Terraform outputs
+    # Get database info from Terraform outputs with fallback to direct GCP queries
     print_info "Getting database information from Terraform outputs..."
     local private_db_host=$(terraform output -raw private_database_host 2>/dev/null)
     local private_db_password=$(terraform output -raw private_database_password 2>/dev/null)
     
     if [ -z "$private_db_host" ] || [ -z "$private_db_password" ]; then
-        print_error "Could not get database information from Terraform outputs"
-        print_info "Checking Terraform state..."
-        terraform show -no-color | head -20
-        print_info "Available outputs:"
-        terraform output 2>/dev/null || echo "No outputs available"
-        print_error "Database appears to not be deployed yet. Please check Terraform deployment."
-        exit 1
+        print_warning "Could not get database information from Terraform outputs"
+        print_info "Falling back to direct GCP resource queries..."
+        
+        # Fallback: Get database info directly from GCP and Terraform state
+        local db_instance_name="${CLUSTER_NAME:-syftbox-cluster}-private-db"
+        
+        # Get database host directly from GCP
+        print_info "Querying database instance directly from GCP..."
+        local db_status=$(gcloud sql instances describe "$db_instance_name" --format="value(state)" 2>/dev/null || echo "NOT_FOUND")
+        
+        if [ "$db_status" = "NOT_FOUND" ]; then
+            print_error "Database instance $db_instance_name not found in GCP"
+            print_info "Available SQL instances:"
+            gcloud sql instances list --format="table(name,state,region)" 2>/dev/null || echo "No instances found"
+            print_error "Database appears to not be deployed yet. Please check Terraform deployment."
+            exit 1
+        elif [ "$db_status" = "PENDING_CREATE" ]; then
+            print_warning "Database instance $db_instance_name is still being created (status: $db_status)"
+            print_info "This usually takes 5-10 minutes. Please wait and try again."
+            print_info "You can check status with: gcloud sql instances describe $db_instance_name"
+            print_info "Once ready, re-run deployment with: ./deploy.sh deploy --continue [your-flags]"
+            exit 1
+        elif [ "$db_status" = "RUNNABLE" ]; then
+            print_success "Database instance is ready, attempting to get connection details..."
+            
+            # Get private IP directly from GCP
+            private_db_host=$(gcloud sql instances describe "$db_instance_name" --format="value(ipAddresses[0].ipAddress)" 2>/dev/null)
+            
+            if [ -z "$private_db_host" ]; then
+                print_error "Could not get private IP address from database instance"
+                print_info "Database instance details:"
+                gcloud sql instances describe "$db_instance_name" --format="table(name,state,ipAddresses[].ipAddress,ipAddresses[].type)" 2>/dev/null
+                exit 1
+            fi
+            
+            # Get password from Terraform state directly
+            print_info "Extracting password from Terraform state..."
+            cd "$TERRAFORM_DIR"
+            private_db_password=$(terraform state show 'random_password.private_db_password' 2>/dev/null | grep -E '^\s*result\s*=' | cut -d'"' -f2)
+            cd "$SCRIPT_DIR"
+            
+            if [ -z "$private_db_password" ]; then
+                print_error "Could not extract database password from Terraform state"
+                print_info "Available Terraform state resources:"
+                cd "$TERRAFORM_DIR"
+                terraform state list | grep -E "(password|db)" || echo "No password resources found"
+                cd "$SCRIPT_DIR"
+                print_error "Database password not available. Please check Terraform state."
+                exit 1
+            fi
+            
+            print_success "Successfully retrieved database credentials via fallback method"
+            print_info "Database Host: $private_db_host"
+            print_info "Database Password: [retrieved from Terraform state]"
+        else
+            print_error "Database instance $db_instance_name is in unexpected state: $db_status"
+            print_info "Database instance details:"
+            gcloud sql instances describe "$db_instance_name" --format="table(name,state,settings.tier)" 2>/dev/null
+            exit 1
+        fi
     fi
     
     print_success "Database host: $private_db_host"
     print_success "Database password: [hidden]"
+    
+    # Show full database connection details for debugging
+    print_info "Database Connection Details:"
+    echo "  Host: $private_db_host"
+    echo "  Port: 5432"
+    echo "  Database: syftbox_private"
+    echo "  Username: syftbox"
+    echo "  Password: [hidden - available in Terraform state]"
     
     # Verify database instance is ready
     print_info "Verifying database instance is ready..."
@@ -335,9 +396,16 @@ deploy_syftbox() {
     local db_status=$(gcloud sql instances describe "$db_instance_name" --format="value(state)" 2>/dev/null || echo "NOT_FOUND")
     
     if [ "$db_status" != "RUNNABLE" ]; then
-        print_error "Database instance $db_instance_name is not ready (status: $db_status)"
-        print_info "Checking database instance..."
-        gcloud sql instances describe "$db_instance_name" --format="table(name,state,settings.tier)" 2>/dev/null || echo "Database instance not found"
+        if [ "$db_status" = "PENDING_CREATE" ]; then
+            print_warning "Database instance $db_instance_name is still being created"
+            print_info "This can take 5-10 minutes. Current status: $db_status"
+            print_info "You can monitor with: gcloud sql instances describe $db_instance_name"
+            print_info "Once ready, re-run with: ./deploy.sh deploy --continue [your-flags]"
+        else
+            print_error "Database instance $db_instance_name is not ready (status: $db_status)"
+            print_info "Checking database instance..."
+            gcloud sql instances describe "$db_instance_name" --format="table(name,state,settings.tier)" 2>/dev/null || echo "Database instance not found"
+        fi
         print_error "Please wait for database to be ready before deploying SyftBox"
         exit 1
     fi
@@ -531,6 +599,136 @@ show_status() {
     kubectl get svc -n syftbox 2>/dev/null | grep LoadBalancer || print_warning "No LoadBalancer services"
 }
 
+# Wait for database to be ready
+wait_for_database() {
+    print_header "Waiting for Database to be Ready"
+    
+    local db_instance_name="${CLUSTER_NAME:-syftbox-cluster}-private-db"
+    local max_wait=1200  # 20 minutes max
+    local wait_time=0
+    local check_interval=30  # Check every 30 seconds
+    
+    while [ $wait_time -lt $max_wait ]; do
+        local db_status=$(gcloud sql instances describe "$db_instance_name" --format="value(state)" 2>/dev/null || echo "NOT_FOUND")
+        
+        case "$db_status" in
+            "RUNNABLE")
+                print_success "Database instance $db_instance_name is ready!"
+                print_info "You can now continue deployment with: ./deploy.sh deploy --continue [your-flags]"
+                return 0
+                ;;
+            "PENDING_CREATE")
+                print_info "Database still creating... ($((wait_time/60))m ${wait_time}s elapsed)"
+                ;;
+            "NOT_FOUND")
+                print_error "Database instance $db_instance_name not found"
+                print_info "Please run terraform apply first"
+                return 1
+                ;;
+            *)
+                print_warning "Database in unexpected state: $db_status"
+                ;;
+        esac
+        
+        sleep $check_interval
+        wait_time=$((wait_time + check_interval))
+    done
+    
+    print_error "Timeout waiting for database to be ready after $((max_wait/60)) minutes"
+    print_info "Check database status manually: gcloud sql instances describe $db_instance_name"
+    return 1
+}
+
+# Debug database connection
+debug_database_connection() {
+    print_header "Database Connection Debug Information"
+    
+    local db_instance_name="${CLUSTER_NAME:-syftbox-cluster}-private-db"
+    
+    # 1. Check if database instance exists
+    print_info "1. Checking database instance in GCP..."
+    local db_status=$(gcloud sql instances describe "$db_instance_name" --format="value(state)" 2>/dev/null || echo "NOT_FOUND")
+    
+    if [ "$db_status" = "NOT_FOUND" ]; then
+        print_error "Database instance $db_instance_name not found"
+        print_info "Available SQL instances:"
+        gcloud sql instances list --format="table(name,state,region)" 2>/dev/null || echo "No instances found"
+        return 1
+    else
+        print_success "Database instance found with status: $db_status"
+    fi
+    
+    # 2. Show database instance details
+    print_info "2. Database instance details:"
+    gcloud sql instances describe "$db_instance_name" --format="table(name,state,ipAddresses[].ipAddress,ipAddresses[].type,settings.tier)" 2>/dev/null
+    
+    # 3. Check Terraform outputs
+    print_info "3. Checking Terraform outputs..."
+    cd "$TERRAFORM_DIR"
+    echo "Available outputs:"
+    terraform output 2>/dev/null || echo "No outputs available"
+    
+    # 4. Try to get database info from Terraform outputs
+    print_info "4. Testing Terraform output commands..."
+    local tf_host=$(terraform output -raw private_database_host 2>/dev/null)
+    local tf_password=$(terraform output -raw private_database_password 2>/dev/null)
+    
+    if [ -n "$tf_host" ]; then
+        print_success "Terraform output private_database_host: $tf_host"
+    else
+        print_error "Terraform output private_database_host: FAILED"
+    fi
+    
+    if [ -n "$tf_password" ]; then
+        print_success "Terraform output private_database_password: [available]"
+    else
+        print_error "Terraform output private_database_password: FAILED"
+    fi
+    
+    # 5. Try fallback method
+    print_info "5. Testing fallback method..."
+    if [ "$db_status" = "RUNNABLE" ]; then
+        local gcp_host=$(gcloud sql instances describe "$db_instance_name" --format="value(ipAddresses[0].ipAddress)" 2>/dev/null)
+        local state_password=$(terraform state show 'random_password.private_db_password' 2>/dev/null | grep -E '^\s*result\s*=' | cut -d'"' -f2)
+        
+        if [ -n "$gcp_host" ]; then
+            print_success "GCP direct query host: $gcp_host"
+        else
+            print_error "GCP direct query host: FAILED"
+        fi
+        
+        if [ -n "$state_password" ]; then
+            print_success "Terraform state password: [available]"
+        else
+            print_error "Terraform state password: FAILED"
+        fi
+    else
+        print_warning "Database not in RUNNABLE state, skipping fallback test"
+    fi
+    
+    # 6. Show Terraform state resources
+    print_info "6. Terraform state resources:"
+    echo "Database-related resources:"
+    terraform state list | grep -E "(database|password|sql)" || echo "No database resources found"
+    
+    cd "$SCRIPT_DIR"
+    
+    # 7. Show what credentials would be used
+    print_info "7. Database credentials that would be used:"
+    echo "  Instance Name: $db_instance_name"
+    echo "  Database Name: syftbox_private"
+    echo "  Username: syftbox"
+    echo "  Port: 5432"
+    echo "  Host: $([ -n "$tf_host" ] && echo "$tf_host" || echo "$gcp_host")"
+    echo "  Password: $([ -n "$tf_password" ] && echo "[from terraform output]" || echo "[from terraform state]")"
+    
+    print_info "8. Manual commands to get credentials:"
+    echo "  Get host: gcloud sql instances describe $db_instance_name --format='value(ipAddresses[0].ipAddress)'"
+    echo "  Get password: terraform state show 'random_password.private_db_password' | grep result"
+    echo "  List outputs: terraform output"
+    echo "  Refresh outputs: terraform refresh && terraform apply"
+}
+
 # Show help
 show_help() {
     cat <<EOF
@@ -549,6 +747,8 @@ Commands:
     --continue           - Continue failed deployment, skip completed steps
   destroy                - Destroy all resources
   status                 - Show deployment status
+  wait-for-db            - Wait for database to be ready (useful after terraform apply)
+  debug-db               - Debug database connection issues and show all credentials
   help                   - Show this help message
 
 Environment Variables:
@@ -670,6 +870,14 @@ main() {
             ;;
         status)
             show_status
+            ;;
+        wait-for-db)
+            setup_project_id
+            wait_for_database
+            ;;
+        debug-db)
+            setup_project_id
+            debug_database_connection
             ;;
         help)
             show_help
