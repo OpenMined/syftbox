@@ -63,7 +63,7 @@ print_info() {
 check_prerequisites() {
     print_header "Checking Prerequisites"
     
-    local required_tools=("gcloud" "docker" "terraform" "helm" "kubectl")
+    local required_tools=("gcloud" "terraform" "helm" "kubectl")
     local missing_tools=()
     
     for tool in "${required_tools[@]}"; do
