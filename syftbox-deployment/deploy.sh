@@ -859,7 +859,7 @@ main() {
             if [ "$CONTINUE_DEPLOYMENT" = "true" ] && [ "$DATABASE_DONE" = "true" ]; then
                 print_info "Skipping database initialization - already complete"
             else
-                init_database
+                echo "skipping database initialization - this is only needed for first-time deployments"
             fi
             
             get_access_info
