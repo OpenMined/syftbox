@@ -14,25 +14,9 @@ output "private_database_host" {
   value       = google_sql_database_instance.private.private_ip_address
 }
 
-output "mock_database_host" {
-  description = "Mock Cloud SQL instance private IP address"
-  value       = google_sql_database_instance.mock.private_ip_address
-}
-
-output "mock_database_public_ip" {
-  description = "Mock Cloud SQL instance public IP address"
-  value       = google_sql_database_instance.mock.public_ip_address
-}
-
 output "private_database_password" {
   description = "Private database password"
   value       = random_password.private_db_password.result
-  sensitive   = true
-}
-
-output "mock_database_password" {
-  description = "Mock database password"
-  value       = random_password.mock_db_password.result
   sensitive   = true
 }
 
@@ -41,9 +25,26 @@ output "private_database_connection_name" {
   value       = google_sql_database_instance.private.connection_name
 }
 
+# Mock database outputs (only if enabled)
+output "mock_database_host" {
+  description = "Mock Cloud SQL instance private IP address"
+  value       = var.enable_mock_database ? google_sql_database_instance.mock[0].private_ip_address : ""
+}
+
+output "mock_database_public_ip" {
+  description = "Mock Cloud SQL instance public IP address"
+  value       = var.enable_mock_database ? google_sql_database_instance.mock[0].public_ip_address : ""
+}
+
+output "mock_database_password" {
+  description = "Mock database password"
+  value       = var.enable_mock_database ? random_password.mock_db_password.result : ""
+  sensitive   = true
+}
+
 output "mock_database_connection_name" {
   description = "Mock Cloud SQL connection name"
-  value       = google_sql_database_instance.mock.connection_name
+  value       = var.enable_mock_database ? google_sql_database_instance.mock[0].connection_name : ""
 }
 
 output "artifact_registry_url" {

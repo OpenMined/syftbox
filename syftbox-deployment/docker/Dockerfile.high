@@ -1,0 +1,132 @@
+# High (Private) Pod Dockerfile
+# This pod has outbound connections only, can reach Low pod and private database
+# No inbound connections allowed
+
+FROM python:3.11-slim
+
+# Install system dependencies and tools for pod bootstrapping
+RUN apt-get update && apt-get install -y \
+    # PostgreSQL client for database connections
+    postgresql-client \
+    # Basic utilities
+    curl \
+    wget \
+    vim \
+    nano \
+    git \
+    jq \
+    htop \
+    net-tools \
+    iputils-ping \
+    dnsutils \
+    telnet \
+    # Build tools for Python packages
+    build-essential \
+    gcc \
+    g++ \
+    # SSL/TLS support
+    ca-certificates \
+    openssl \
+    # Process management
+    supervisor \
+    # Shell
+    bash \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH
+ENV PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
+
+# Create working directory
+WORKDIR /app
+
+# Create virtual environment using uv
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python packages for data science and development
+RUN uv pip install \
+    # Jupyter ecosystem
+    jupyterlab==4.0.9 \
+    jupyter \
+    ipykernel \
+    ipywidgets \
+    # Data science libraries
+    numpy \
+    pandas \
+    scipy \
+    scikit-learn \
+    matplotlib \
+    seaborn \
+    plotly \
+    # Database connectivity
+    psycopg2-binary \
+    sqlalchemy \
+    # HTTP clients
+    requests \
+    httpx \
+    # Utilities
+    python-dotenv \
+    pyyaml \
+    # Development tools
+    ipdb \
+    black \
+    pylint \
+    pytest
+
+# Create non-root user
+RUN useradd -m -s /bin/bash -u 1000 appuser
+
+# Create necessary directories
+RUN mkdir -p /home/appuser/notebooks /home/appuser/data /home/appuser/.jupyter && \
+    chown -R appuser:appuser /home/appuser
+
+# Configure Jupyter Lab (no authentication for internal use)
+USER appuser
+RUN jupyter lab --generate-config && \
+    echo "c.ServerApp.ip = '0.0.0.0'" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.allow_root = False" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.token = ''" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.password = ''" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.open_browser = False" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.notebook_dir = '/home/appuser/notebooks'" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.port = 8889" >> /home/appuser/.jupyter/jupyter_lab_config.py
+
+# Switch back to root for system configurations
+USER root
+
+# Create database connection helper for private database
+RUN echo '#!/bin/bash' > /usr/local/bin/db-connect && \
+    echo 'PGPASSWORD="${DATABASE_PASSWORD}" psql -h "${DATABASE_HOST}" -p "${DATABASE_PORT:-5432}" -U "${DATABASE_USER:-postgres}" -d "${DATABASE_NAME:-syftbox}" "$@"' >> /usr/local/bin/db-connect && \
+    chmod +x /usr/local/bin/db-connect
+
+# Create health check script
+RUN echo '#!/bin/bash' > /usr/local/bin/health-check && \
+    echo 'echo "High pod is healthy"' >> /usr/local/bin/health-check && \
+    echo 'exit 0' >> /usr/local/bin/health-check && \
+    chmod +x /usr/local/bin/health-check
+
+# Create entrypoint script
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'echo "Starting High (Private) Pod..."' >> /entrypoint.sh && \
+    echo 'echo "Database connection available via: db-connect"' >> /entrypoint.sh && \
+    echo 'echo "Starting Jupyter Lab on port 8888..."' >> /entrypoint.sh && \
+    echo 'exec "$@"' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Switch to non-root user
+USER appuser
+
+# Set working directory
+WORKDIR /home/appuser
+
+# Expose Jupyter port (internal only)
+EXPOSE 8889
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command runs Jupyter Lab
+CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8889"]

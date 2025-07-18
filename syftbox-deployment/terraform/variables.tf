@@ -51,6 +51,36 @@ variable "database_deletion_protection" {
   default     = false
 }
 
+variable "enable_mock_database" {
+  description = "Enable mock database (for testing/public data)"
+  type        = bool
+  default     = false
+}
+
+variable "enable_ds_vm" {
+  description = "Enable Data Scientist VM pod"
+  type        = bool
+  default     = false
+}
+
+variable "ds_vm_public_ip" {
+  description = "Give Data Scientist VM pod a public IP (LoadBalancer service). If false, uses bastion VM."
+  type        = bool
+  default     = false
+}
+
+variable "low_pod_email" {
+  description = "Email address for Low pod SyftBox client"
+  type        = string
+  default     = "lowpod@syftbox.local"
+}
+
+variable "ds_vm_email" {
+  description = "Email address for Data Scientist VM SyftBox client"
+  type        = string
+  default     = "datascientist@syftbox.local"
+}
+
 # variable "bastion_allowed_ips" {
 #   description = "IP addresses allowed to SSH to bastion host"
 #   type        = list(string)

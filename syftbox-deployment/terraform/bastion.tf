@@ -48,10 +48,21 @@ Available commands:
 - helm: Helm chart management  
 - gcloud: Google Cloud CLI
 
-To access Jupyter:
-kubectl port-forward svc/syftbox-data-owner 8888:8888 -n syftbox
+To access Jupyter Labs:
 
-Then access http://localhost:8888 from your SSH tunnel.
+# High Pod (Private) - Jupyter on port 8889
+kubectl port-forward svc/syftbox-high 8889:8889 -n syftbox
+
+# Low Pod (Public) - Jupyter on port 8888
+kubectl port-forward svc/syftbox-low 8888:8888 -n syftbox
+
+# API access (Low Pod)
+kubectl port-forward svc/syftbox-low 8080:80 -n syftbox
+
+Then access from your SSH tunnel:
+- High Pod Jupyter: http://localhost:8889
+- Low Pod Jupyter: http://localhost:8888
+- Low Pod API: http://localhost:8080
 
 MOTD
   EOF

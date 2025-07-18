@@ -1,15 +1,10 @@
-# Random passwords for databases
+# Random password for database
 resource "random_password" "private_db_password" {
   length  = 16
   special = true
 }
 
-resource "random_password" "mock_db_password" {
-  length  = 16
-  special = true
-}
-
-# PRIVATE PostgreSQL instance - only accessible by data owner pod
+# PRIVATE PostgreSQL instance - only accessible by High pod
 resource "google_sql_database_instance" "private" {
   name             = "${var.cluster_name}-private-db"
   database_version = "POSTGRES_15"
@@ -43,8 +38,27 @@ resource "google_sql_database_instance" "private" {
   depends_on = [google_service_networking_connection.private_vpc_connection]
 }
 
-# MOCK PostgreSQL instance - accessible by external VMs
+# Private database
+resource "google_sql_database" "private_syftbox" {
+  name     = "syftbox_private"
+  instance = google_sql_database_instance.private.name
+}
+
+# Private database user
+resource "google_sql_user" "private_syftbox" {
+  name     = "syftbox"
+  instance = google_sql_database_instance.private.name
+  password = random_password.private_db_password.result
+}
+
+# Mock database resources (for testing/public data)
+resource "random_password" "mock_db_password" {
+  length  = 16
+  special = true
+}
+
 resource "google_sql_database_instance" "mock" {
+  count            = var.enable_mock_database ? 1 : 0
   name             = "${var.cluster_name}-mock-db"
   database_version = "POSTGRES_15"
   region           = var.region
@@ -83,28 +97,17 @@ resource "google_sql_database_instance" "mock" {
   depends_on = [google_service_networking_connection.private_vpc_connection]
 }
 
-# Private database
-resource "google_sql_database" "private_syftbox" {
-  name     = "syftbox_private"
-  instance = google_sql_database_instance.private.name
-}
-
-# Mock database
+# Mock database (only if enabled)
 resource "google_sql_database" "mock_syftbox" {
+  count    = var.enable_mock_database ? 1 : 0
   name     = "syftbox_mock"
-  instance = google_sql_database_instance.mock.name
+  instance = google_sql_database_instance.mock[0].name
 }
 
-# Private database user
-resource "google_sql_user" "private_syftbox" {
-  name     = "syftbox_private"
-  instance = google_sql_database_instance.private.name
-  password = random_password.private_db_password.result
-}
-
-# Mock database user
+# Mock database user (only if enabled)
 resource "google_sql_user" "mock_syftbox" {
+  count    = var.enable_mock_database ? 1 : 0
   name     = "syftbox_mock"
-  instance = google_sql_database_instance.mock.name
+  instance = google_sql_database_instance.mock[0].name
   password = random_password.mock_db_password.result
 }

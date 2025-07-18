@@ -23,6 +23,12 @@ DEFAULT_ZONE="us-central1-a"
 DEFAULT_CLUSTER_NAME="syftbox-cluster"
 DEFAULT_PROJECT_ID=""
 DEFAULT_EMAIL="dataowner@syftbox.local"
+DEFAULT_LOW_POD_EMAIL="lowpod@syftbox.local"
+DEFAULT_DS_VM_EMAIL="datascientist@syftbox.local"
+DEPLOY_CACHE_SERVER="false"
+DEPLOY_MOCK_DATABASE="false"
+DEPLOY_DS_VM="false"
+DS_VM_PUBLIC_IP="false"
 
 # Load environment variables
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -163,6 +169,11 @@ project_id = "$PROJECT_ID"
 region = "${REGION:-$DEFAULT_REGION}"
 zone = "${ZONE:-$DEFAULT_ZONE}"
 cluster_name = "${CLUSTER_NAME:-$DEFAULT_CLUSTER_NAME}"
+enable_mock_database = ${DEPLOY_MOCK_DATABASE:-false}
+enable_ds_vm = ${DEPLOY_DS_VM:-false}
+ds_vm_public_ip = ${DS_VM_PUBLIC_IP:-false}
+low_pod_email = "${LOW_POD_EMAIL:-$DEFAULT_LOW_POD_EMAIL}"
+ds_vm_email = "${DS_VM_EMAIL:-$DEFAULT_DS_VM_EMAIL}"
 EOF
     
     # Plan and apply
@@ -204,24 +215,84 @@ deploy_syftbox() {
     # Get database info from Terraform outputs
     local private_db_host=$(terraform output -raw private_database_host)
     local private_db_password=$(terraform output -raw private_database_password)
-    local mock_db_host=$(terraform output -raw mock_database_host)
-    local mock_db_password=$(terraform output -raw mock_database_password)
     local artifact_registry_url=$(terraform output -raw artifact_registry_url)
     
     cd "$SCRIPT_DIR"
     
-    # Install/upgrade Helm chart
-    print_success "Installing SyftBox Helm chart..."
-    helm upgrade --install syftbox "$HELM_DIR/syftbox" \
+    # Base helm command
+    local helm_cmd="helm upgrade --install syftbox \"$HELM_DIR/syftbox\" \
         --namespace syftbox \
         --create-namespace \
-        --set global.imageRegistry="$artifact_registry_url" \
-        --set database.private.host="$private_db_host" \
-        --set database.private.password="$private_db_password" \
-        --set database.mock.host="$mock_db_host" \
-        --set database.mock.password="$mock_db_password" \
-        --set dataOwner.syftbox.email="${EMAIL:-$DEFAULT_EMAIL}" \
-        --wait
+        --set global.imageRegistry=\"$artifact_registry_url\" \
+        --set database.enabled=true \
+        --set database.external=true \
+        --set database.host=\"$private_db_host\" \
+        --set database.password=\"$private_db_password\" \
+        --set database.username=\"syftbox\" \
+        --set database.name=\"syftbox_private\" \
+        --set database.port=\"5432\" \
+        --set highPod.enabled=true \
+        --set lowPod.enabled=true \
+        --set lowPod.syftbox.email=\"${LOW_POD_EMAIL:-$DEFAULT_LOW_POD_EMAIL}\" \
+        --set networkPolicies.enabled=true"
+    
+    # Add cache server settings if enabled
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        print_info "Cache server deployment enabled"
+        helm_cmd="$helm_cmd \
+            --set cacheServer.enabled=true \
+            --set dataOwner.enabled=false"  # dataOwner should NOT be enabled when cache server is enabled
+    else
+        print_info "Cache server deployment disabled"
+        helm_cmd="$helm_cmd \
+            --set cacheServer.enabled=false \
+            --set dataOwner.enabled=false"
+    fi
+    
+    # Add Data Scientist VM settings if enabled
+    if [ "${DEPLOY_DS_VM}" == "true" ]; then
+        print_info "Data Scientist VM deployment enabled"
+        helm_cmd="$helm_cmd \
+            --set dsVm.enabled=true \
+            --set dsVm.syftbox.email=\"${DS_VM_EMAIL:-$DEFAULT_DS_VM_EMAIL}\""
+        
+        # Configure DS VM service type based on public IP setting
+        if [ "${DS_VM_PUBLIC_IP}" == "true" ]; then
+            print_info "Data Scientist VM configured with public IP (LoadBalancer)"
+            helm_cmd="$helm_cmd \
+                --set dsVm.service.type=LoadBalancer \
+                --set dsVm.publicIp.enabled=true"
+        else
+            print_info "Data Scientist VM configured with bastion access (ClusterIP)"
+            helm_cmd="$helm_cmd \
+                --set dsVm.service.type=ClusterIP \
+                --set dsVm.publicIp.enabled=false"
+        fi
+    else
+        helm_cmd="$helm_cmd \
+            --set dsVm.enabled=false"
+    fi
+    
+    # Add mock database settings if enabled
+    if [ "${DEPLOY_MOCK_DATABASE}" == "true" ]; then
+        print_info "Mock database enabled"
+        local mock_db_host=$(terraform output -raw mock_database_host 2>/dev/null || echo "")
+        local mock_db_password=$(terraform output -raw mock_database_password 2>/dev/null || echo "")
+        helm_cmd="$helm_cmd \
+            --set database.mock.enabled=true \
+            --set database.mock.host=\"$mock_db_host\" \
+            --set database.mock.password=\"$mock_db_password\""
+    else
+        helm_cmd="$helm_cmd \
+            --set database.mock.enabled=false"
+    fi
+    
+    # Add wait flag
+    helm_cmd="$helm_cmd --wait"
+    
+    # Install/upgrade Helm chart
+    print_success "Installing SyftBox Helm chart..."
+    eval $helm_cmd
 }
 
 # Initialize database
@@ -241,17 +312,39 @@ get_access_info() {
     
     echo -e "${GREEN}SyftBox deployment complete!${NC}"
     echo ""
-    echo "Data Owner Services:"
-    echo "  - SyftBox: http://${data_owner_ip}:7938"
-    echo "  - Jupyter Lab: http://${data_owner_ip}:8888"
+    
+    # Show pod information
+    echo "Deployed Pods:"
+    kubectl get pods -n syftbox
     echo ""
-    echo "Cache Server (internal): http://syftbox-cache-server.syftbox:8080"
+    
+    echo "High Pod (Private) - Jupyter Lab on port 8889:"
+    echo "  - Local access: kubectl port-forward -n syftbox svc/syftbox-high 8889:8889"
+    echo "  - Via bastion: gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --tunnel-through-iap -- -L 8889:localhost:8889 -N"
+    echo "  - Then open: http://localhost:8889"
     echo ""
-    echo "To access the data owner pod:"
-    echo "  kubectl exec -it deploy/syftbox-data-owner -n syftbox -- bash"
+    
+    echo "Low Pod (Public) - API on port 80, Jupyter via /jupyter/:"
+    echo "  - API: kubectl port-forward -n syftbox svc/syftbox-low 8080:80"
+    echo "  - Jupyter: kubectl port-forward -n syftbox svc/syftbox-low 8888:8888"
+    echo "  - Via bastion: gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --tunnel-through-iap -- -L 8080:localhost:80 -L 8888:localhost:8888 -N"
+    echo "  - Then open: http://localhost:8080 (API) or http://localhost:8888 (Jupyter)"
     echo ""
-    echo "To connect to the database from the pod:"
-    echo "  db-connect"
+    
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        echo "Cache Server (internal): http://syftbox-cache-server.syftbox:8080"
+        echo ""
+    fi
+    
+    echo "To access pods directly:"
+    echo "  kubectl exec -it deploy/syftbox-high -n syftbox -- bash"
+    echo "  kubectl exec -it deploy/syftbox-low -n syftbox -- bash"
+    echo ""
+    echo "To connect to the database from High pod:"
+    echo "  kubectl exec -it deploy/syftbox-high -n syftbox -- db-connect"
+    echo ""
+    echo "Bastion host access (for port forwarding):"
+    echo "  gcloud compute ssh syftbox-cluster-bastion --zone=us-central1-a --tunnel-through-iap"
 }
 
 # Cleanup/destroy everything
@@ -313,20 +406,31 @@ show_help() {
     cat <<EOF
 SyftBox GCP Deployment Script
 
-Usage: $0 <command>
+Usage: $0 <command> [options]
 
 Commands:
-  deploy    - Deploy complete SyftBox infrastructure
-  destroy   - Destroy all resources
-  status    - Show deployment status
-  help      - Show this help message
+  deploy [options]       - Deploy SyftBox infrastructure
+    --with-cache         - Include cache server pods
+    --with-mock-db       - Include mock database (for testing)
+    --with-ds-vm         - Include Data Scientist VM pod
+    --ds-vm-public-ip    - Give DS VM a public IP (no bastion needed)
+    --with-all           - Include cache server, mock database, and DS VM
+  destroy                - Destroy all resources
+  status                 - Show deployment status
+  help                   - Show this help message
 
 Environment Variables:
-  PROJECT_ID    - GCP project ID (required)
-  EMAIL         - Email for syftbox client (default: dataowner@syftbox.local)
-  REGION        - GCP region (default: us-central1)
-  ZONE          - GCP zone (default: us-central1-a)
-  CLUSTER_NAME  - GKE cluster name (default: syftbox-cluster)
+  PROJECT_ID            - GCP project ID (required)
+  EMAIL                 - Email for syftbox client (default: dataowner@syftbox.local)
+  LOW_POD_EMAIL         - Email for Low pod SyftBox client (default: lowpod@syftbox.local)
+  DS_VM_EMAIL           - Email for DS VM SyftBox client (default: datascientist@syftbox.local)
+  REGION                - GCP region (default: us-central1)
+  ZONE                  - GCP zone (default: us-central1-a)
+  DEPLOY_CACHE_SERVER   - Deploy cache server (default: false)
+  DEPLOY_MOCK_DATABASE  - Deploy mock database (default: false)
+  DEPLOY_DS_VM          - Deploy Data Scientist VM (default: false)
+  DS_VM_PUBLIC_IP       - Give DS VM public IP (default: false)
+  CLUSTER_NAME          - GKE cluster name (default: syftbox-cluster)
 
 Example:
   export PROJECT_ID=my-gcp-project
@@ -339,6 +443,44 @@ EOF
 main() {
     case "${1:-help}" in
         deploy)
+            # Parse all flags
+            shift  # Remove 'deploy' from arguments
+            while [[ $# -gt 0 ]]; do
+                case $1 in
+                    --with-cache)
+                        DEPLOY_CACHE_SERVER="true"
+                        print_info "Cache server deployment enabled"
+                        shift
+                        ;;
+                    --with-mock-db)
+                        DEPLOY_MOCK_DATABASE="true"
+                        print_info "Mock database deployment enabled"
+                        shift
+                        ;;
+                    --with-ds-vm)
+                        DEPLOY_DS_VM="true"
+                        print_info "Data Scientist VM deployment enabled"
+                        shift
+                        ;;
+                    --ds-vm-public-ip)
+                        DS_VM_PUBLIC_IP="true"
+                        print_info "Data Scientist VM will have public IP (no bastion)"
+                        shift
+                        ;;
+                    --with-all)
+                        DEPLOY_CACHE_SERVER="true"
+                        DEPLOY_MOCK_DATABASE="true"
+                        DEPLOY_DS_VM="true"
+                        print_info "All components deployment enabled (cache server, mock database, DS VM)"
+                        shift
+                        ;;
+                    *)
+                        print_error "Unknown flag: $1"
+                        show_help
+                        exit 1
+                        ;;
+                esac
+            done
             check_prerequisites
             setup_project_id
             deploy_infrastructure

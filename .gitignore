@@ -53,3 +53,4 @@ server.dev.yaml
 
 .terraform.lock.hcl
 .terraform.tfstate.lock.info
+CLAUDE.md

@@ -75,3 +75,14 @@ MinIO endpoint URL for blob storage
 {{- define "syftbox.minioEndpoint" -}}
 http://{{ include "syftbox.fullname" . }}-minio:9000
 {{- end }}
+
+{{/*
+Create the name of the service account to use
+*/}}
+{{- define "syftbox.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create }}
+{{- default (include "syftbox.fullname" .) .Values.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.serviceAccount.name }}
+{{- end }}
+{{- end }}

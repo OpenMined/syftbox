@@ -33,6 +33,12 @@ resource "google_container_node_pool" "primary_nodes" {
   cluster    = google_container_cluster.primary.name
   node_count = var.node_count
   
+  # Management configuration
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+  
   node_config {
     machine_type = var.machine_type
     disk_size_gb = 30
@@ -41,20 +47,14 @@ resource "google_container_node_pool" "primary_nodes" {
     # Tags for firewall rules
     tags = ["syftbox"]
     
+    # Labels for the nodes
+    labels = {
+      environment = "syftbox"
+    }
+    
     # OAuth scopes
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform"
     ]
-    
-    # Labels
-    labels = {
-      environment = "syftbox"
-    }
-  }
-  
-  # Management settings
-  management {
-    auto_repair  = true
-    auto_upgrade = true
   }
 }

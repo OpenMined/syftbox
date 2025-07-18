@@ -1,0 +1,189 @@
+{{- if .Values.dsVm.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "syftbox.fullname" . }}-ds-vm
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+spec:
+  replicas: {{ .Values.dsVm.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ds-vm-pod
+  template:
+    metadata:
+      labels:
+        {{- include "syftbox.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ds-vm-pod
+        pod-type: ds-vm
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "syftbox.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.dsVm.podSecurityContext | nindent 8 }}
+      containers:
+      - name: ds-vm
+        securityContext:
+          {{- toYaml .Values.dsVm.securityContext | nindent 12 }}
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.dsVm.image.repository }}:{{ .Values.dsVm.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.dsVm.image.pullPolicy }}
+        ports:
+        - name: jupyter
+          containerPort: 8888
+          protocol: TCP
+        - name: syftbox
+          containerPort: 7938
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /api
+            port: jupyter
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api
+            port: jupyter
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: POD_TYPE
+          value: "ds-vm"
+        # SyftBox client configuration for Data Scientist VM
+        - name: SYFTBOX_DS_EMAIL
+          value: {{ .Values.dsVm.syftbox.email | quote }}
+        - name: SYFTBOX_SERVER_URL
+          value: "http://{{ include "syftbox.fullname" . }}-cache-server:{{ .Values.cacheServer.service.port }}"
+        # No database access for DS VM pod
+        resources:
+          {{- toYaml .Values.dsVm.resources | nindent 12 }}
+        volumeMounts:
+        - name: data
+          mountPath: /home/appuser/data
+        - name: notebooks
+          mountPath: /home/appuser/notebooks
+        - name: syftbox-data
+          mountPath: /home/appuser/syftbox-data
+      volumes:
+      - name: data
+        {{- if .Values.dsVm.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "syftbox.fullname" . }}-ds-vm-data
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: notebooks
+        {{- if .Values.dsVm.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "syftbox.fullname" . }}-ds-vm-notebooks
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      - name: syftbox-data
+        {{- if .Values.dsVm.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ include "syftbox.fullname" . }}-ds-vm-syftbox
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+      {{- with .Values.dsVm.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dsVm.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dsVm.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "syftbox.fullname" . }}-ds-vm
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+spec:
+  type: {{ .Values.dsVm.service.type }}
+  ports:
+    - port: {{ .Values.dsVm.service.port }}
+      targetPort: jupyter
+      protocol: TCP
+      name: jupyter
+    - port: 7938
+      targetPort: syftbox
+      protocol: TCP
+      name: syftbox
+  selector:
+    {{- include "syftbox.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+{{- if .Values.dsVm.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "syftbox.fullname" . }}-ds-vm-data
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.dsVm.persistence.dataSize }}
+  {{- if .Values.dsVm.persistence.storageClass }}
+  storageClassName: {{ .Values.dsVm.persistence.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "syftbox.fullname" . }}-ds-vm-notebooks
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.dsVm.persistence.notebooksSize }}
+  {{- if .Values.dsVm.persistence.storageClass }}
+  storageClassName: {{ .Values.dsVm.persistence.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "syftbox.fullname" . }}-ds-vm-syftbox
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.dsVm.persistence.syftboxSize }}
+  {{- if .Values.dsVm.persistence.storageClass }}
+  storageClassName: {{ .Values.dsVm.persistence.storageClass }}
+  {{- end }}
+{{- end }}
+{{- end }}

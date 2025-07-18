@@ -23,33 +23,34 @@ data:
     syftbox:
       server_url: {{ include "syftbox.cacheServerUrl" . }}
     database:
-      # Private database configuration for data owner
-      private:
-        host: {{ .Values.database.private.host }}
-        port: {{ .Values.database.private.port }}
-        database: {{ .Values.database.private.database }}
-        username: {{ .Values.database.private.username }}
-        url: {{ include "syftbox.privateDatabaseUrl" . }}
-      # Mock database configuration (for reference only)
+      # Private database configuration
+      host: {{ .Values.database.host }}
+      port: {{ .Values.database.port }}
+      database: {{ .Values.database.name }}
+      username: {{ .Values.database.username }}
+      {{- if .Values.database.mock.enabled }}
+      # Mock database configuration (if enabled)
       mock:
         host: {{ .Values.database.mock.host }}
         port: {{ .Values.database.mock.port }}
-        database: {{ .Values.database.mock.database }}
+        database: {{ .Values.database.mock.name }}
         username: {{ .Values.database.mock.username }}
-        url: {{ include "syftbox.mockDatabaseUrl" . }}
+      {{- end }}
   
   # Database helper scripts
-  db-connect-private.sh: |
+  db-connect.sh: |
     #!/bin/bash
-    # Private database connection helper (for data owner)
-    export PGPASSWORD="{{ .Values.database.private.password }}"
-    psql -h "{{ .Values.database.private.host }}" -p "{{ .Values.database.private.port }}" -U "{{ .Values.database.private.username }}" -d "{{ .Values.database.private.database }}" "$@"
+    # Private database connection helper (for High pod)
+    export PGPASSWORD="{{ .Values.database.password }}"
+    psql -h "{{ .Values.database.host }}" -p "{{ .Values.database.port }}" -U "{{ .Values.database.username }}" -d "{{ .Values.database.name }}" "$@"
   
+  {{- if .Values.database.mock.enabled }}
   db-connect-mock.sh: |
     #!/bin/bash
     # Mock database connection helper (for cache server)
     export PGPASSWORD="{{ .Values.database.mock.password }}"
-    psql -h "{{ .Values.database.mock.host }}" -p "{{ .Values.database.mock.port }}" -U "{{ .Values.database.mock.username }}" -d "{{ .Values.database.mock.database }}" "$@"
+    psql -h "{{ .Values.database.mock.host }}" -p "{{ .Values.database.mock.port }}" -U "{{ .Values.database.mock.username }}" -d "{{ .Values.database.mock.name }}" "$@"
+  {{- end }}
   
   # Legacy database helper script (uses private database for backward compatibility)
   db-connect.sh: |

@@ -52,32 +52,53 @@ trap cleanup EXIT
 prepare_build_context() {
     print_info "Preparing build context..."
     
-    # Validate that we have the SyftBox repository structure
-    if [ ! -f "$BUILD_CONTEXT/go.mod" ] || [ ! -f "$BUILD_CONTEXT/go.sum" ]; then
-        print_error "SyftBox repository structure not found at: $BUILD_CONTEXT"
-        print_error "Expected to find go.mod and go.sum in the parent directory of the deployment."
-        exit 1
+    # Only validate SyftBox repository structure if cache server is enabled
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        # Validate that we have the SyftBox repository structure for cache server/data owner builds
+        if [ ! -f "$BUILD_CONTEXT/go.mod" ] || [ ! -f "$BUILD_CONTEXT/go.sum" ]; then
+            print_error "SyftBox repository structure not found at: $BUILD_CONTEXT"
+            print_error "Expected to find go.mod and go.sum in the parent directory of the deployment."
+            exit 1
+        fi
     fi
     
-    print_success "Build context ready at: $BUILD_CONTEXT"
+    print_success "Build context ready"
 }
 
-# Build deployment images directly from source
+# Build deployment images
 build_deployment_images() {
-    print_info "Building deployment images from source..."
+    print_info "Building deployment images..."
     
-    # Copy requirements file into build context
-    cp "$DOCKER_DIR/requirements.txt" "$BUILD_CONTEXT/requirements.txt"
+    # Build High pod image
+    print_info "Building syftbox-high pod..."
+    docker build -t "$REGISTRY/syftbox-high:latest" \
+        -f "$DOCKER_DIR/Dockerfile.high" "$DOCKER_DIR"
     
-    # Build cache server image (from syftbox source)
-    print_info "Building syftbox-cache-server..."
-    docker build -t "$REGISTRY/syftbox-cache-server:latest" \
-        -f "$DOCKER_DIR/Dockerfile.server" "$BUILD_CONTEXT"
+    # Build Low pod image
+    print_info "Building syftbox-low pod..."
+    docker build -t "$REGISTRY/syftbox-low:latest" \
+        -f "$DOCKER_DIR/Dockerfile.low" "$DOCKER_DIR"
     
-    # Build data owner client image (from syftbox source)
-    print_info "Building syftbox-dataowner..."
-    docker build -t "$REGISTRY/syftbox-dataowner:latest" \
-        -f "$DOCKER_DIR/Dockerfile.dataowner" "$BUILD_CONTEXT"
+    # Only build cache server and data owner images if cache server is enabled
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        print_info "Building cache server images..."
+        # Copy requirements file into build context for legacy images
+        if [ -f "$DOCKER_DIR/requirements.txt" ]; then
+            cp "$DOCKER_DIR/requirements.txt" "$BUILD_CONTEXT/requirements.txt"
+        fi
+        
+        # Build cache server image (from syftbox source)
+        print_info "Building syftbox-cache-server..."
+        docker build -t "$REGISTRY/syftbox-cache-server:latest" \
+            -f "$DOCKER_DIR/Dockerfile.server" "$BUILD_CONTEXT"
+        
+        # Build data owner client image (from syftbox source)
+        print_info "Building syftbox-dataowner..."
+        docker build -t "$REGISTRY/syftbox-dataowner:latest" \
+            -f "$DOCKER_DIR/Dockerfile.dataowner" "$BUILD_CONTEXT"
+    else
+        print_info "Cache server disabled - skipping cache server image builds"
+    fi
 }
 
 # Login to Artifact Registry
@@ -116,9 +137,17 @@ push_images() {
     print_info "Pushing images to registry..."
     
     local images=(
-        "$REGISTRY/syftbox-cache-server:latest"
-        "$REGISTRY/syftbox-dataowner:latest"
+        "$REGISTRY/syftbox-high:latest"
+        "$REGISTRY/syftbox-low:latest"
     )
+    
+    # Add cache server images if enabled
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        images+=(
+            "$REGISTRY/syftbox-cache-server:latest"
+            "$REGISTRY/syftbox-dataowner:latest"
+        )
+    fi
     
     for image in "${images[@]}"; do
         print_info "Pushing $image..."
@@ -132,9 +161,17 @@ verify_images() {
     print_info "Verifying images..."
     
     local images=(
-        "$REGISTRY/syftbox-cache-server:latest"
-        "$REGISTRY/syftbox-dataowner:latest"
+        "$REGISTRY/syftbox-high:latest"
+        "$REGISTRY/syftbox-low:latest"
     )
+    
+    # Add cache server images if enabled
+    if [ "${DEPLOY_CACHE_SERVER}" == "true" ]; then
+        images+=(
+            "$REGISTRY/syftbox-cache-server:latest"
+            "$REGISTRY/syftbox-dataowner:latest"
+        )
+    fi
     
     for image in "${images[@]}"; do
         if docker image inspect "$image" &>/dev/null; then

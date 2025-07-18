@@ -1,3 +1,4 @@
+{{- if .Values.minio.enabled }}
 # MinIO deployment - mirrors ../docker/docker-compose.yml MinIO service
 apiVersion: apps/v1
 kind: StatefulSet
@@ -68,9 +69,9 @@ spec:
       accessModes: ["ReadWriteOnce"]
       resources:
         requests:
-          storage: {{ .Values.minio.storage.size }}
-      {{- if .Values.minio.storage.storageClassName }}
-      storageClassName: {{ .Values.minio.storage.storageClassName }}
+          storage: {{ .Values.minio.persistence.size }}
+      {{- if .Values.minio.persistence.storageClass }}
+      storageClassName: {{ .Values.minio.persistence.storageClass }}
       {{- end }}
 ---
 # MinIO Service
@@ -106,9 +107,9 @@ metadata:
     app.kubernetes.io/component: minio
 type: Opaque
 data:
-  root-password: {{ .Values.minio.rootPassword | b64enc }}
-  access-key: {{ .Values.minio.accessKey | b64enc }}
-  secret-key: {{ .Values.minio.secretKey | b64enc }}
+  root-password: {{ .Values.minio.auth.rootPassword | b64enc }}
+  access-key: {{ .Values.minio.auth.rootUser | b64enc }}
+  secret-key: {{ .Values.minio.auth.rootPassword | b64enc }}
 ---
 # MinIO Init ConfigMap
 apiVersion: v1
@@ -181,3 +182,4 @@ spec:
           defaultMode: 0755
       - name: mc-config
         emptyDir: {}
+{{- end }}

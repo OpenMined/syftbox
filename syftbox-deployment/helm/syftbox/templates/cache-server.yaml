@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
       - name: server
-        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.cacheServer.repository }}:{{ .Values.images.cacheServer.tag }}"
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.cacheServer.image.repository }}:{{ .Values.cacheServer.image.tag }}"
         imagePullPolicy: {{ .Values.global.imagePullPolicy }}
         ports:
         - name: http
@@ -41,19 +41,7 @@ spec:
         - name: SYFTBOX_HTTP_DOMAIN
           value: {{ .Values.cacheServer.domain | quote }}
         
-        # Mock database configuration (for caching)
-        - name: DATABASE_URL
-          value: {{ include "syftbox.mockDatabaseUrl" . }}
-        - name: MOCK_DATABASE_HOST
-          value: {{ .Values.database.mock.host | quote }}
-        - name: MOCK_DATABASE_PORT
-          value: {{ .Values.database.mock.port | quote }}
-        - name: MOCK_DATABASE_NAME
-          value: {{ .Values.database.mock.database | quote }}
-        - name: MOCK_DATABASE_USER
-          value: {{ .Values.database.mock.username | quote }}
-        - name: MOCK_DATABASE_PASSWORD
-          value: {{ .Values.database.mock.password | quote }}
+        # No database configuration - Cache server runs locally without DB
         
         # MinIO blob storage configuration - mirrors ../docker/docker-compose.yml
         - name: SYFTBOX_BLOB_REGION

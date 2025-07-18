@@ -1,0 +1,254 @@
+# Data Scientist VM Pod with SyftBox Client
+# This pod runs a SyftBox client + Jupyter Lab for data science work
+# Multi-stage build: Go binary first, then Python environment
+
+# Build stage for SyftBox client
+FROM golang:1.24.3-alpine AS syftbox-builder
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod and sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the client binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o syftbox ./cmd/client
+
+# Final stage - Python environment for data science + SyftBox
+FROM python:3.11-slim
+
+# Install system dependencies and tools for data science
+RUN apt-get update && apt-get install -y \
+    # Basic utilities
+    curl \
+    wget \
+    vim \
+    nano \
+    git \
+    jq \
+    htop \
+    net-tools \
+    iputils-ping \
+    dnsutils \
+    # Build tools for Python packages with scientific libraries
+    build-essential \
+    gcc \
+    g++ \
+    gfortran \
+    # Linear algebra libraries
+    libblas-dev \
+    liblapack-dev \
+    libatlas-base-dev \
+    # SSL/TLS support
+    ca-certificates \
+    openssl \
+    # Process management
+    supervisor \
+    # Shell
+    bash \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH
+ENV PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
+
+# Copy SyftBox binary from builder stage
+COPY --from=syftbox-builder /app/syftbox /usr/local/bin/syftbox
+
+# Create working directory
+WORKDIR /app
+
+# Create virtual environment using uv
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install comprehensive data science Python packages
+RUN uv pip install \
+    # Jupyter ecosystem
+    jupyterlab==4.0.9 \
+    jupyter \
+    ipykernel \
+    # Core data science libraries
+    pandas \
+    numpy \
+    scipy \
+    scikit-learn \
+    matplotlib \
+    seaborn \
+    plotly \
+    # Advanced analytics
+    statsmodels \
+    xgboost \
+    lightgbm \
+    # Deep learning (CPU versions)
+    torch --index-url https://download.pytorch.org/whl/cpu \
+    torchvision --index-url https://download.pytorch.org/whl/cpu \
+    # Data processing
+    openpyxl \
+    xlrd \
+    # HTTP utilities for data access
+    requests \
+    httpx \
+    # Utilities
+    python-dotenv \
+    pyyaml \
+    # Development tools
+    pytest \
+    black \
+    pylint
+
+# Create appuser for running services
+RUN useradd -m -s /bin/bash -u 1000 appuser
+
+# Create necessary directories
+RUN mkdir -p /home/appuser/notebooks /home/appuser/data /home/appuser/.jupyter \
+    /home/appuser/.syftbox /home/appuser/syftbox-data && \
+    chown -R appuser:appuser /home/appuser
+
+# Configure Jupyter Lab for data science work
+USER appuser
+RUN jupyter lab --generate-config && \
+    echo "c.ServerApp.ip = '0.0.0.0'" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.allow_root = False" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.token = ''" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.password = ''" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.open_browser = False" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.notebook_dir = '/home/appuser/notebooks'" >> /home/appuser/.jupyter/jupyter_lab_config.py
+
+# Switch back to root for system configurations
+USER root
+
+# Create SyftBox client setup script for DS VM
+RUN echo '#!/bin/bash' > /usr/local/bin/setup-syftbox-client && \
+    echo 'set -e' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'echo "Setting up SyftBox client for Data Scientist VM..."' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo '# Set default values' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'EMAIL="${SYFTBOX_DS_EMAIL:-datascientist@syftbox.local}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'SERVER_URL="${SYFTBOX_SERVER_URL:-http://syftbox-cache-server:8080}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'DATA_DIR="/home/appuser/syftbox-data"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'CONFIG_DIR="/home/appuser/.syftbox"' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo '# Create config directory' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'mkdir -p "${CONFIG_DIR}" "${DATA_DIR}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'chown -R appuser:appuser "${CONFIG_DIR}" "${DATA_DIR}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo '# Create SyftBox config file' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'cat > "${CONFIG_DIR}/config.json" << EOF' >> /usr/local/bin/setup-syftbox-client && \
+    echo '{' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "data_dir": "${DATA_DIR}",' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "email": "${EMAIL}",' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "server_url": "${SERVER_URL}",' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "client_url": "http://localhost:7938"' >> /usr/local/bin/setup-syftbox-client && \
+    echo '}' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'EOF' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'chown appuser:appuser "${CONFIG_DIR}/config.json"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'echo "SyftBox client configured for DS VM with email: ${EMAIL}"' >> /usr/local/bin/setup-syftbox-client && \
+    chmod +x /usr/local/bin/setup-syftbox-client
+
+# Create sample data science notebook
+RUN echo '{' > /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '  "cells": [' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '    {' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "cell_type": "markdown",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "metadata": {},' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "source": [' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "# Data Scientist VM - SyftBox Integration\\n",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "\\n",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "This notebook demonstrates data science capabilities with SyftBox integration.\\n"' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      ]' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '    },' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '    {' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "cell_type": "code",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "metadata": {},' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "source": [' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "import pandas as pd\\n",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "import numpy as np\\n",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "import matplotlib.pyplot as plt\\n",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "\\n",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '        "print(\\"Data Science VM ready with SyftBox!\\")\\n"' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      ],' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "execution_count": null,' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "outputs": []' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '    }' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '  ],' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '  "metadata": {' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '    "kernelspec": {' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "display_name": "Python 3",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "language": "python",' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '      "name": "python3"' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '    }' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '  },' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '  "nbformat": 4,' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '  "nbformat_minor": 4' >> /home/appuser/notebooks/data_science_example.ipynb && \
+    echo '}' >> /home/appuser/notebooks/data_science_example.ipynb
+
+# Create supervisord configuration for DS VM
+RUN echo '[supervisord]' > /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'nodaemon=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'logfile=/tmp/supervisord.log' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'pidfile=/tmp/supervisord.pid' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=root' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:jupyter]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/opt/venv/bin/jupyter lab --ip=0.0.0.0 --port=8888' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'directory=/home/appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'environment=HOME="/home/appuser"' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:syftbox-setup]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/usr/local/bin/setup-syftbox-client' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=false' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'startsecs=0' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=root' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:syftbox-client]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/usr/local/bin/syftbox client --config-path=/home/appuser/.syftbox/config.json' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'directory=/home/appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'depends_on=syftbox-setup' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'environment=HOME="/home/appuser"' >> /etc/supervisor/conf.d/supervisord.conf
+
+# Set proper ownership for all appuser files
+RUN chown -R appuser:appuser /home/appuser
+
+# Create health check script
+RUN echo '#!/bin/bash' > /usr/local/bin/health-check && \
+    echo 'curl -f http://localhost:8888/api || exit 1' >> /usr/local/bin/health-check && \
+    chmod +x /usr/local/bin/health-check
+
+# Create entrypoint script
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'echo "Starting Data Scientist VM with SyftBox..."' >> /entrypoint.sh && \
+    echo 'echo "Jupyter Lab will be available on port 8888"' >> /entrypoint.sh && \
+    echo 'echo "SyftBox client will connect to: ${SYFTBOX_SERVER_URL:-http://syftbox-cache-server:8080}"' >> /entrypoint.sh && \
+    echo 'echo "SyftBox email: ${SYFTBOX_DS_EMAIL:-datascientist@syftbox.local}"' >> /entrypoint.sh && \
+    echo 'exec "$@"' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Expose ports - Jupyter (8888), SyftBox daemon (7938)
+EXPOSE 8888 7938
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command runs supervisord to manage all services
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
