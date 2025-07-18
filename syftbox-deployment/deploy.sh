@@ -29,6 +29,7 @@ DEPLOY_CACHE_SERVER="false"
 DEPLOY_MOCK_DATABASE="false"
 DEPLOY_DS_VM="false"
 DS_VM_PUBLIC_IP="false"
+CONTINUE_DEPLOYMENT="false"
 
 # Load environment variables
 if [ -f "$SCRIPT_DIR/.env" ]; then
@@ -57,6 +58,98 @@ print_warning() {
 
 print_info() {
     echo -e "${BLUE}→ $1${NC}"
+}
+
+# State checking functions for continue/resume functionality
+check_terraform_state() {
+    if [ -f "$TERRAFORM_DIR/terraform.tfstate" ] && [ -s "$TERRAFORM_DIR/terraform.tfstate" ]; then
+        cd "$TERRAFORM_DIR"
+        # Check if infrastructure exists
+        if terraform show -no-color 2>/dev/null | grep -q "google_container_cluster"; then
+            print_success "Terraform infrastructure already deployed"
+            cd "$SCRIPT_DIR"
+            return 0
+        fi
+        cd "$SCRIPT_DIR"
+    fi
+    return 1
+}
+
+check_kubectl_configured() {
+    if kubectl cluster-info &>/dev/null && kubectl get namespace syftbox &>/dev/null; then
+        print_success "kubectl already configured for syftbox namespace"
+        return 0
+    fi
+    return 1
+}
+
+check_syftbox_deployed() {
+    if kubectl get deployment -n syftbox &>/dev/null; then
+        local deployments=$(kubectl get deployment -n syftbox -o name 2>/dev/null | wc -l)
+        if [ "$deployments" -gt 0 ]; then
+            print_success "SyftBox already deployed ($deployments deployments found)"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+check_database_initialized() {
+    if kubectl get job -n syftbox -l app=database-init &>/dev/null; then
+        local completed=$(kubectl get job -n syftbox -l app=database-init -o jsonpath='{.items[0].status.succeeded}' 2>/dev/null || echo "0")
+        if [ "$completed" = "1" ]; then
+            print_success "Database already initialized"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+check_deployment_state() {
+    print_header "Checking Current Deployment State"
+    
+    local terraform_done=false
+    local kubectl_done=false
+    local syftbox_done=false
+    local database_done=false
+    
+    if check_terraform_state; then
+        terraform_done=true
+    else
+        print_info "Terraform infrastructure not found or incomplete"
+    fi
+    
+    if check_kubectl_configured; then
+        kubectl_done=true
+    else
+        print_info "kubectl not configured for syftbox namespace"
+    fi
+    
+    if check_syftbox_deployed; then
+        syftbox_done=true
+    else
+        print_info "SyftBox not deployed yet"
+    fi
+    
+    if check_database_initialized; then
+        database_done=true
+    else
+        print_info "Database not initialized yet"
+    fi
+    
+    # Return state as global variables
+    export TERRAFORM_DONE=$terraform_done
+    export KUBECTL_DONE=$kubectl_done
+    export SYFTBOX_DONE=$syftbox_done
+    export DATABASE_DONE=$database_done
+    
+    echo ""
+    print_info "Deployment State Summary:"
+    echo "  Infrastructure (Terraform): $([ "$terraform_done" = true ] && echo "✓ Complete" || echo "✗ Pending")"
+    echo "  Kubernetes Config: $([ "$kubectl_done" = true ] && echo "✓ Complete" || echo "✗ Pending")"
+    echo "  SyftBox Deployment: $([ "$syftbox_done" = true ] && echo "✓ Complete" || echo "✗ Pending")"
+    echo "  Database Initialization: $([ "$database_done" = true ] && echo "✓ Complete" || echo "✗ Pending")"
+    echo ""
 }
 
 # Check prerequisites
@@ -219,8 +312,37 @@ deploy_syftbox() {
     cd "$TERRAFORM_DIR"
     
     # Get database info from Terraform outputs
-    local private_db_host=$(terraform output -raw private_database_host)
-    local private_db_password=$(terraform output -raw private_database_password)
+    print_info "Getting database information from Terraform outputs..."
+    local private_db_host=$(terraform output -raw private_database_host 2>/dev/null)
+    local private_db_password=$(terraform output -raw private_database_password 2>/dev/null)
+    
+    if [ -z "$private_db_host" ] || [ -z "$private_db_password" ]; then
+        print_error "Could not get database information from Terraform outputs"
+        print_info "Checking Terraform state..."
+        terraform show -no-color | head -20
+        print_info "Available outputs:"
+        terraform output 2>/dev/null || echo "No outputs available"
+        print_error "Database appears to not be deployed yet. Please check Terraform deployment."
+        exit 1
+    fi
+    
+    print_success "Database host: $private_db_host"
+    print_success "Database password: [hidden]"
+    
+    # Verify database instance is ready
+    print_info "Verifying database instance is ready..."
+    local db_instance_name="${CLUSTER_NAME:-syftbox-cluster}-private-db"
+    local db_status=$(gcloud sql instances describe "$db_instance_name" --format="value(state)" 2>/dev/null || echo "NOT_FOUND")
+    
+    if [ "$db_status" != "RUNNABLE" ]; then
+        print_error "Database instance $db_instance_name is not ready (status: $db_status)"
+        print_info "Checking database instance..."
+        gcloud sql instances describe "$db_instance_name" --format="table(name,state,settings.tier)" 2>/dev/null || echo "Database instance not found"
+        print_error "Please wait for database to be ready before deploying SyftBox"
+        exit 1
+    fi
+    
+    print_success "Database instance is ready"
     
     # Use Docker Hub images by default
     local image_registry="${IMAGE_REGISTRY:-docker.io/openmined}"
@@ -424,6 +546,7 @@ Commands:
     --ds-vm-public-ip    - Give DS VM a public IP (no bastion needed)
     --with-all           - Include cache server, mock database, and DS VM
     --build-images       - Build and push Docker images during deployment
+    --continue           - Continue failed deployment, skip completed steps
   destroy                - Destroy all resources
   status                 - Show deployment status
   help                   - Show this help message
@@ -488,6 +611,11 @@ main() {
                         print_info "Will build and push Docker images during deployment"
                         shift
                         ;;
+                    --continue)
+                        CONTINUE_DEPLOYMENT="true"
+                        print_info "Continue mode enabled - will skip completed steps"
+                        shift
+                        ;;
                     *)
                         print_error "Unknown flag: $1"
                         show_help
@@ -497,11 +625,43 @@ main() {
             done
             check_prerequisites
             setup_project_id
-            deploy_infrastructure
+            
+            # Check current state if continue mode is enabled
+            if [ "$CONTINUE_DEPLOYMENT" = "true" ]; then
+                check_deployment_state
+            fi
+            
+            # Deploy infrastructure (skip if already done)
+            if [ "$CONTINUE_DEPLOYMENT" = "true" ] && [ "$TERRAFORM_DONE" = "true" ]; then
+                print_info "Skipping infrastructure deployment - already complete"
+            else
+                deploy_infrastructure
+            fi
+            
+            # Build images (always optional)
             build_and_push_images
-            configure_kubectl
-            deploy_syftbox
-            init_database
+            
+            # Configure kubectl (skip if already done)
+            if [ "$CONTINUE_DEPLOYMENT" = "true" ] && [ "$KUBECTL_DONE" = "true" ]; then
+                print_info "Skipping kubectl configuration - already complete"
+            else
+                configure_kubectl
+            fi
+            
+            # Deploy SyftBox (skip if already done)
+            if [ "$CONTINUE_DEPLOYMENT" = "true" ] && [ "$SYFTBOX_DONE" = "true" ]; then
+                print_info "Skipping SyftBox deployment - already complete"
+            else
+                deploy_syftbox
+            fi
+            
+            # Initialize database (skip if already done)
+            if [ "$CONTINUE_DEPLOYMENT" = "true" ] && [ "$DATABASE_DONE" = "true" ]; then
+                print_info "Skipping database initialization - already complete"
+            else
+                init_database
+            fi
+            
             get_access_info
             ;;
         destroy)
