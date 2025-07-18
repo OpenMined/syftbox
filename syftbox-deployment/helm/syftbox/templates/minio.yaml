@@ -27,7 +27,7 @@ spec:
         command: ["minio", "server", "/data", "--console-address", ":9001"]
         env:
         - name: MINIO_ROOT_USER
-          value: {{ .Values.minio.rootUser | quote }}
+          value: {{ .Values.minio.auth.rootUser | quote }}
         - name: MINIO_ROOT_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -164,7 +164,7 @@ spec:
         command: ["/bin/sh", "/scripts/init.sh"]
         env:
         - name: MINIO_ROOT_USER
-          value: {{ .Values.minio.rootUser | quote }}
+          value: {{ .Values.minio.auth.rootUser | quote }}
         - name: MINIO_ROOT_PASSWORD
           valueFrom:
             secretKeyRef:

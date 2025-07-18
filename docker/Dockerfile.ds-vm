@@ -220,7 +220,7 @@ RUN echo '[supervisord]' > /etc/supervisor/conf.d/supervisord.conf && \
     echo 'user=root' >> /etc/supervisor/conf.d/supervisord.conf && \
     echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
     echo '[program:syftbox-client]' >> /etc/supervisor/conf.d/supervisord.conf && \
-    echo 'command=/usr/local/bin/syftbox client --config-path=/home/appuser/.syftbox/config.json' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/usr/local/bin/syftbox daemon --config=/home/appuser/.syftbox/config.json' >> /etc/supervisor/conf.d/supervisord.conf && \
     echo 'directory=/home/appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
     echo 'user=appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
     echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \

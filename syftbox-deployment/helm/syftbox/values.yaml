@@ -7,7 +7,7 @@ global:
 
 # High Pod (Private) configuration
 highPod:
-  enabled: true
+  enabled: true  # High pod always enabled by default
   replicaCount: 1
   image:
     repository: syftbox-high
@@ -50,7 +50,7 @@ lowPod:
     tag: latest
     pullPolicy: Always
   service:
-    type: LoadBalancer  # Can be accessed from internet
+    type: ClusterIP  # Internal only - access via bastion
     port: 80
   # SyftBox client configuration
   syftbox:
@@ -68,14 +68,14 @@ lowPod:
     notebooksSize: 5Gi
     storageClass: standard
   podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    fsGroup: 1000
+    runAsNonRoot: false
+    runAsUser: 0
+    fsGroup: 0
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: false
-    runAsNonRoot: true
-    runAsUser: 1000
+    runAsNonRoot: false
+    runAsUser: 0
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -111,14 +111,14 @@ dsVm:
     syftboxSize: 5Gi  # Separate volume for SyftBox data
     storageClass: standard
   podSecurityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-    fsGroup: 1000
+    runAsNonRoot: false
+    runAsUser: 0
+    fsGroup: 0
   securityContext:
     allowPrivilegeEscalation: false
     readOnlyRootFilesystem: false
-    runAsNonRoot: true
-    runAsUser: 1000
+    runAsNonRoot: false
+    runAsUser: 0
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -159,6 +159,10 @@ networkPolicies:
   # Examples:
   # - "1.2.3.4/32"  # Single IP
   # - "10.0.0.0/8"  # IP range
+
+# Ingress configuration
+ingress:
+  enabled: false
 
 # Cache Server configuration (local cluster only)
 cacheServer:
@@ -225,11 +229,15 @@ dataOwner:
 
 # MinIO (Object Storage)
 minio:
-  enabled: false  # Disabled for new architecture
+  enabled: true  # Enable MinIO for cache server
   auth:
     rootUser: syftbox
     rootPassword: changeMe123!
   defaultBuckets: syftbox
+  bucketName: syftbox  # Required for cache server
+  region: us-central1  # Required for cache server
+  accessKey: syftbox-access
+  secretKey: syftbox-secret-key
   persistence:
     enabled: true
     size: 10Gi
