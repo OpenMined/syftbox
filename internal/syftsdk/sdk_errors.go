@@ -107,17 +107,18 @@ func (e *PresignedURLError) Error() string {
 var _ SDKError = (*PresignedURLError)(nil)
 
 // handleAPIError is a helper function that handles the common error pattern
-func handleAPIError(resp *req.Response, err error, operation string) error {
-	if err != nil {
-		return fmt.Errorf("api error: %s %w", operation, err)
+func handleAPIError(resp *req.Response, requestErr error, operation string) error {
+	if requestErr != nil {
+		return fmt.Errorf("http request error: %s %w", operation, requestErr)
 	}
 
+	// got a response, but api returned an error
 	if resp.IsErrorState() {
 		if err, ok := resp.ErrorResult().(*APIError); ok {
 			return fmt.Errorf("%s %w", operation, err)
 		}
 
-		return fmt.Errorf("http error: %s %s", operation, resp.Dump())
+		return fmt.Errorf("api error: %s %s", operation, resp.Dump())
 	}
 
 	return nil
