@@ -183,8 +183,8 @@ func (d *DatasiteService) ReloadVanityDomains(email string) error {
 
 // handleBlobChange handles blob change notifications and reloads settings if needed
 func (d *DatasiteService) handleBlobChange(key string, eventType blob.BlobEventType) {
-	// ignore events other than put and delete
-	if eventType&(blob.BlobEventPut|blob.BlobEventDelete) == 0 {
+	// ignore events other than put and delete or non-acl files
+	if eventType&(blob.BlobEventPut|blob.BlobEventDelete) == 0 || !strings.Contains(key, aclspec.ACLFileName) {
 		return
 	}
 
@@ -235,6 +235,7 @@ func (d *DatasiteService) addDefaultHashMapping(email string) {
 	hashDomain := hash + "." + d.domain
 
 	// Map it to /public by default
+	d.subdomainMapping.AddMapping(email)
 	d.subdomainMapping.AddVanityDomain(hashDomain, email, "/public")
 	slog.Debug("added default domain", "datasite", email, "domain", hashDomain, "path", "/public")
 }
