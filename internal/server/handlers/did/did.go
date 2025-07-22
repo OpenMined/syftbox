@@ -24,7 +24,7 @@ func (h *DIDHandler) GetDID(c *gin.Context) {
 
 	// check if user is a valid email
 	if !utils.IsValidEmail(user) {
-		api.ServeErrorHTML(c, http.StatusBadRequest, "Invalid Request", "Not a valid email address.")
+		api.ServeErrorHTML(c, http.StatusBadRequest, "Invalid Request", "<b><code>"+user+"</code></b> is not a valid user.")
 		return
 	}
 
