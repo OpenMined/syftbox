@@ -16,17 +16,17 @@ import (
 )
 
 var (
-	ErrPollTimeout = errors.New("poll timeout")
-	ErrNoRequest   = errors.New("no request found")
+	ErrPollTimeout     = errors.New("poll timeout")
+	ErrRequestNotFound = errors.New("request not found")
 )
 
 // Config holds the service configuration
 type Config struct {
-	DefaultTimeoutMs    int
-	MaxTimeoutMs        int
+	DefaultTimeout      time.Duration
+	MaxTimeout          time.Duration
+	ObjectPollInterval  time.Duration
+	RequestCheckTimeout time.Duration
 	MaxBodySize         int64
-	PollIntervalMs      int
-	RequestChkTimeoutMs int
 }
 
 // SendService handles the business logic for message sending and polling
@@ -40,11 +40,11 @@ type SendService struct {
 func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) *SendService {
 	if cfg == nil {
 		cfg = &Config{
-			DefaultTimeoutMs:    1000,    // 1000 ms
-			MaxTimeoutMs:        10000,   // 10 seconds
+			DefaultTimeout:      1 * time.Second,
+			MaxTimeout:          10 * time.Second,
+			ObjectPollInterval:  200 * time.Millisecond,
+			RequestCheckTimeout: 200 * time.Millisecond,
 			MaxBodySize:         4 << 20, // 4MB
-			PollIntervalMs:      500,     // 500 ms
-			RequestChkTimeoutMs: 200,     // 200 ms
 		}
 	}
 	return &SendService{dispatcher: dispatch, store: store, cfg: cfg}
@@ -119,9 +119,11 @@ func (s *SendService) handleOnlineMessage(
 		fmt.Sprintf("%s.response", httpMsg.Id),
 	)
 
-	timeout := req.Timeout
-	if timeout <= 0 {
-		timeout = s.cfg.DefaultTimeoutMs
+	var timeout time.Duration
+	if req.Timeout > 0 {
+		timeout = time.Duration(req.Timeout) * time.Millisecond
+	} else {
+		timeout = s.cfg.DefaultTimeout
 	}
 
 	object, err := s.pollForObject(ctx, blobPath, timeout)
@@ -168,11 +170,11 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	// Validate if the corresponding request exists
 	requestBlobPath := path.Join(req.SyftURL.ToLocalPath(), fmt.Sprintf("%s.request", req.RequestID))
 
-	_, err := s.pollForObject(ctx, requestBlobPath, s.cfg.RequestChkTimeoutMs)
+	_, err := s.pollForObject(ctx, requestBlobPath, s.cfg.RequestCheckTimeout)
 
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
-			return nil, ErrNoRequest
+			return nil, ErrRequestNotFound
 		}
 		return nil, err
 	}
@@ -181,9 +183,11 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	responseFileName := fmt.Sprintf("%s.response", req.RequestID)
 	responseBlobPath := path.Join(req.SyftURL.ToLocalPath(), responseFileName)
 
-	timeout := req.Timeout
-	if timeout <= 0 {
-		timeout = s.cfg.DefaultTimeoutMs
+	var timeout time.Duration
+	if req.Timeout > 0 {
+		timeout = time.Duration(req.Timeout) * time.Millisecond
+	} else {
+		timeout = s.cfg.DefaultTimeout
 	}
 
 	object, err := s.pollForObject(ctx, responseBlobPath, timeout)
@@ -217,28 +221,32 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 }
 
 // pollForObject polls for an object in blob storage
-func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeout int) (io.ReadCloser, error) {
+func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeout time.Duration) (io.ReadCloser, error) {
 	startTime := time.Now()
-	maxTimeout := time.Duration(timeout) * time.Millisecond
 
 	for {
-		if time.Since(startTime) > maxTimeout {
+		if time.Since(startTime) > timeout {
 			return nil, ErrPollTimeout
 		}
 
 		object, err := s.store.GetMsg(ctx, blobPath)
 		if err != nil {
-			slog.Error("Failed to get object from backend", "error", err, "blobPath", blobPath)
-			continue
-		}
-		if object != nil {
+			// if message not found, return immediately - no need to retry
+			if errors.Is(err, ErrMsgNotFound) {
+				return nil, ErrMsgNotFound
+			}
+			// For other errors, return immediately as they are likely permanent
+			slog.Error("poll for object failed", "error", err, "blobPath", blobPath)
+			return nil, err
+		} else if object != nil {
 			return object, nil
 		}
 
+		// Always sleep between polling attempts
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(s.cfg.PollIntervalMs) * time.Millisecond):
+		case <-time.After(s.cfg.ObjectPollInterval):
 			continue
 		}
 	}

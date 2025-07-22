@@ -387,7 +387,7 @@ func TestSendHandler_PollForResponse_NotFound(t *testing.T) {
 	c, w := createTestContext("GET", "/send/poll/", nil, query_params, headers)
 
 	// Mock expectations
-	mockService.On("PollForResponse", mock.Anything, mock.Anything).Return(nil, ErrNoRequest)
+	mockService.On("PollForResponse", mock.Anything, mock.Anything).Return(nil, ErrRequestNotFound)
 
 	// Execute
 	handler.PollForResponse(c)

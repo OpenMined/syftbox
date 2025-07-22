@@ -49,7 +49,7 @@ type Headers map[string]string
 type MessageRequest struct {
 	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
 	From    string           `form:"x-syft-from" binding:"required"` // The sender of the message
-	Timeout int              `form:"timeout" binding:"gte=0"`        // The timeout for the request
+	Timeout int              `form:"timeout" binding:"gte=0"`        // The timeout for the request in milliseconds
 	AsRaw   bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
 	Method  string           // Will be set from request method
 	Headers Headers          // Will be set from request headers
@@ -73,7 +73,7 @@ type PollObjectRequest struct {
 	RequestID string           `form:"x-syft-request-id" binding:"required"`
 	From      string           `form:"x-syft-from" binding:"required"`
 	SyftURL   utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
-	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"`
+	Timeout   int              `form:"timeout,omitempty" binding:"gte=0"` // Timeout in milliseconds
 	UserAgent string           `form:"user-agent,omitempty"`
 	AsRaw     bool             `form:"x-syft-raw" default:"false"` // If true, the request body will be read and sent as is
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"reflect"
@@ -58,11 +57,11 @@ func TestNewSendService(t *testing.T) {
 	dispatcher := &MockMessageDispatcher{}
 	store := &MockRPCMsgStore{}
 	cfg := &Config{
-		DefaultTimeoutMs:    2000,
-		MaxTimeoutMs:        20000,
+		DefaultTimeout:      2 * time.Second,
+		MaxTimeout:          20 * time.Second,
 		MaxBodySize:         8 << 20,
-		PollIntervalMs:      1000,
-		RequestChkTimeoutMs: 400,
+		ObjectPollInterval:  1 * time.Second,
+		RequestCheckTimeout: 400 * time.Millisecond,
 	}
 
 	service := NewSendService(dispatcher, store, cfg)
@@ -73,11 +72,11 @@ func TestNewSendService(t *testing.T) {
 	service = NewSendService(dispatcher, store, nil)
 	assert.NotNil(t, service)
 	assert.NotNil(t, service.cfg)
-	assert.Equal(t, 1000, service.cfg.DefaultTimeoutMs)
-	assert.Equal(t, 10000, service.cfg.MaxTimeoutMs)
+	assert.Equal(t, 1*time.Second, service.cfg.DefaultTimeout)
+	assert.Equal(t, 10*time.Second, service.cfg.MaxTimeout)
 	assert.Equal(t, int64(4<<20), service.cfg.MaxBodySize)
-	assert.Equal(t, 500, service.cfg.PollIntervalMs)
-	assert.Equal(t, 200, service.cfg.RequestChkTimeoutMs)
+	assert.Equal(t, 200*time.Millisecond, service.cfg.ObjectPollInterval)
+	assert.Equal(t, 200*time.Millisecond, service.cfg.RequestCheckTimeout)
 }
 
 func TestSendService_SendMessage_Online(t *testing.T) {
@@ -354,13 +353,13 @@ func TestSendService_PollForResponse_NoRequest(t *testing.T) {
 		SyftURL:   *syftURL,
 	}
 
-	// Mock GetMsg to return error for request
-	store.On("GetMsg", mock.Anything, mock.Anything).Return(nil, errors.New("not found"))
+	// Mock GetMsg to return ErrMsgNotFound for request
+	store.On("GetMsg", mock.Anything, mock.Anything).Return(nil, ErrMsgNotFound)
 
 	// Call PollForResponse
 	result, err := service.PollForResponse(context.Background(), req)
 	assert.Error(t, err)
-	assert.Equal(t, ErrNoRequest, err)
+	assert.Equal(t, ErrMsgNotFound, err)
 	assert.Nil(t, result)
 
 	// Verify mock expectations
@@ -371,11 +370,11 @@ func TestSendService_PollForResponse_Timeout(t *testing.T) {
 	dispatcher := &MockMessageDispatcher{}
 	store := &MockRPCMsgStore{}
 	cfg := &Config{
-		DefaultTimeoutMs:    100,
-		MaxTimeoutMs:        1000,
+		DefaultTimeout:      100 * time.Millisecond,
+		MaxTimeout:          1000 * time.Millisecond,
 		MaxBodySize:         4 << 20,
-		PollIntervalMs:      50,
-		RequestChkTimeoutMs: 50,
+		ObjectPollInterval:  50 * time.Millisecond,
+		RequestCheckTimeout: 50 * time.Millisecond,
 	}
 	service := NewSendService(dispatcher, store, cfg)
 
@@ -390,7 +389,7 @@ func TestSendService_PollForResponse_Timeout(t *testing.T) {
 		RequestID: requestID,
 		From:      from,
 		SyftURL:   *syftURL,
-		Timeout:   100,
+		Timeout:   100, // 100 milliseconds
 	}
 
 	// Create response message for request check
@@ -415,7 +414,7 @@ func TestSendService_PollForResponse_Timeout(t *testing.T) {
 	})).Return(io.NopCloser(bytes.NewReader(requestBytes)), nil)
 	store.On("GetMsg", mock.Anything, mock.MatchedBy(func(path string) bool {
 		return path == syftURL.ToLocalPath()+"/"+requestID+".response"
-	})).Return(nil, errors.New("not found"))
+	})).Return(nil, ErrPollTimeout)
 
 	// Call PollForResponse
 	result, err := service.PollForResponse(context.Background(), req)

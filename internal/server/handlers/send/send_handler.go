@@ -132,7 +132,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			if req.Timeout > 0 {
 				refreshInterval = req.Timeout / 1000
 			} else {
-				refreshInterval = h.service.GetConfig().DefaultTimeoutMs / 1000
+				refreshInterval = int(h.service.GetConfig().DefaultTimeout.Seconds())
 			}
 
 			// add poll url as location header and retry after header
@@ -158,7 +158,7 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			}
 		}
 
-		if errors.Is(err, ErrNoRequest) {
+		if errors.Is(err, ErrRequestNotFound) {
 			ctx.PureJSON(http.StatusNotFound, APIError{
 				Error:     ErrorNotFound,
 				Message:   "No request found.",
