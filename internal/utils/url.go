@@ -115,7 +115,6 @@ func (s *SyftBoxURL) Validate() error {
 
 // UnmarshalParam implements gin.UnmarshalParam for automatic query param binding
 func (s *SyftBoxURL) UnmarshalParam(param string) error {
-	slog.Debug("Unmarshalling syft url", "url", param)
 	parsed, err := FromSyftURL(param)
 	if err != nil {
 		slog.Error("Failed to parse syft url", "error", err, "url", param)
