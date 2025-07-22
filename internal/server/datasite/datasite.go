@@ -184,7 +184,11 @@ func (d *DatasiteService) ReloadVanityDomains(email string) error {
 // handleBlobChange handles blob change notifications and reloads settings if needed
 func (d *DatasiteService) handleBlobChange(key string, eventType blob.BlobEventType) {
 	// ignore events other than put and delete or non-acl files
-	if eventType&(blob.BlobEventPut|blob.BlobEventDelete) == 0 || !strings.Contains(key, aclspec.ACLFileName) {
+	if eventType&(blob.BlobEventPut|blob.BlobEventDelete) == 0 {
+		return
+	}
+
+	if !strings.Contains(key, aclspec.ACLFileName) && !strings.Contains(key, SettingsFileName) {
 		return
 	}
 

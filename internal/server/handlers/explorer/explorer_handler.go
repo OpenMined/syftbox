@@ -5,7 +5,6 @@ import (
 	"io"
 	"log/slog"
 	"maps"
-	"mime"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -23,6 +22,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/server/middlewares"
+	"github.com/openmined/syftbox/internal/utils"
 )
 
 //go:embed index.html.tmpl
@@ -235,25 +235,16 @@ func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	defer resp.Body.Close()
 
 	// resp.ContentType may not have the correct MIME type
-	contentType := e.detectContentType(key)
+	contentType := utils.DetectContentType(key)
 	c.Header("Content-Type", contentType)
 	c.Status(http.StatusOK)
 
 	// Stream response body directly
 	_, err = io.Copy(c.Writer, resp.Body)
 	if err != nil {
-		api.Serve500HTML(c, fmt.Errorf("failed to stream file: %w", err))
+		api.Serve500HTML(c, fmt.Errorf("failed to read file: %w", err))
 		return
 	}
-}
-
-func (e *ExplorerHandler) detectContentType(key string) string {
-	if isTextLike(key) {
-		return "text/plain; charset=utf-8"
-	} else if mimeType := mime.TypeByExtension(filepath.Ext(key)); mimeType != "" {
-		return mimeType
-	}
-	return "application/octet-stream"
 }
 
 func datasiteFromPath(path string) string {
@@ -262,11 +253,4 @@ func datasiteFromPath(path string) string {
 		return parts[0]
 	}
 	return ""
-}
-
-func isTextLike(key string) bool {
-	return strings.HasSuffix(key, ".yaml") ||
-		strings.HasSuffix(key, ".yml") ||
-		strings.HasSuffix(key, ".toml") ||
-		strings.HasSuffix(key, ".md")
 }
