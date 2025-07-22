@@ -57,24 +57,54 @@ type SDKError interface {
 	ErrorMessage() string
 }
 
-type APIError struct {
+// BaseError provides common error functionality
+type BaseError struct {
 	Code    string `json:"code"`
 	Message string `json:"error"`
+}
+
+func (e *BaseError) ErrorCode() string    { return e.Code }
+func (e *BaseError) ErrorMessage() string { return e.Message }
+
+// APIError represents SyftBox API errors
+type APIError struct {
+	BaseError
+}
+
+func NewAPIError(code, message string) *APIError {
+	return &APIError{
+		BaseError: BaseError{
+			Code:    code,
+			Message: message,
+		},
+	}
 }
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("api error: %s - %s", e.Code, e.Message)
 }
 
-func (e *APIError) ErrorCode() string {
-	return e.Code
-}
-
-func (e *APIError) ErrorMessage() string {
-	return e.Message
-}
-
 var _ SDKError = (*APIError)(nil)
+
+// PresignedURLError represents presigned URL specific errors
+type PresignedURLError struct {
+	BaseError
+}
+
+func NewPresignedURLError(code, message string) *PresignedURLError {
+	return &PresignedURLError{
+		BaseError: BaseError{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
+
+func (e *PresignedURLError) Error() string {
+	return fmt.Sprintf("presigned url error: %s - %s", e.Code, e.Message)
+}
+
+var _ SDKError = (*PresignedURLError)(nil)
 
 // handleAPIError is a helper function that handles the common error pattern
 func handleAPIError(resp *req.Response, err error, operation string) error {

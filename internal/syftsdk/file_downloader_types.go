@@ -6,6 +6,7 @@ const (
 )
 
 const (
+	CodePresignedURLErrors    = "E_PRESIGNED_URL"            // prefix for all presigned url errors
 	CodePresignedURLExpired   = "E_PRESIGNED_URL_EXPIRED"    // presigned URL has expired
 	CodePresignedURLInvalid   = "E_PRESIGNED_URL_INVALID"    // presigned URL is malformed or invalid
 	CodePresignedURLForbidden = "E_PRESIGNED_URL_FORBIDDEN"  // access denied to presigned URL
