@@ -14,6 +14,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
 	"github.com/openmined/syftbox/internal/server/handlers/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/datasite"
+	"github.com/openmined/syftbox/internal/server/handlers/did"
 	"github.com/openmined/syftbox/internal/server/handlers/explorer"
 	"github.com/openmined/syftbox/internal/server/handlers/install"
 	"github.com/openmined/syftbox/internal/server/handlers/send"
@@ -58,6 +59,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	authH := auth.New(svc.Auth)
 	aclH := acl.NewACLHandler(svc.ACL)
 	sendH := send.New(send.NewWSMsgDispatcher(hub), send.NewBlobMsgStore(svc.Blob))
+	didH := did.NewDIDHandler(svc.Blob)
 
 	// --------------------------- routes ---------------------------
 
@@ -71,6 +73,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	r.GET("/install.ps1", install.ServePS1)
 	r.GET("/datasites/*filepath", explorerH.Handler)
 	r.StaticFS("/releases", http.Dir("./releases"))
+	r.GET("/users/:user/did.json", didH.GetDID)
 
 	auth := r.Group("/auth")
 	auth.Use(middlewares.RateLimiter("10-M")) // 10 req/min
