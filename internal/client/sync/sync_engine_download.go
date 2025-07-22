@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -57,8 +58,14 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 	for res := range results {
 		syncRelPath := SyncPath(res.Path)
 		if res.Error != nil {
-			slog.Warn("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Failed", "path", res.Path, "error", res.Error)
-			se.syncStatus.SetError(syncRelPath, res.Error)
+			var sdkErr syftsdk.SDKError
+			if errors.As(res.Error, &sdkErr) && strings.HasPrefix(sdkErr.ErrorCode(), syftsdk.CodePresignedURLErrors) {
+				slog.Warn("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Ignored", "path", res.Path, "error", sdkErr)
+				se.syncStatus.SetCompletedAndRemove(syncRelPath)
+			} else {
+				slog.Error("sync error", "type", SyncStandard, "op", OpWriteLocal, "status", "Error", "path", res.Path, "error", res.Error)
+				se.syncStatus.SetError(syncRelPath, res.Error)
+			}
 			continue
 		}
 

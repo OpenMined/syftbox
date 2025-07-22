@@ -50,7 +50,6 @@ func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 			if user == "" {
 				user = ctx.Query("x-syft-from")
 			}
-			slog.Debug("Attempting to access with user", "user", user)
 			if user == "guest@syft.org" {
 				ctx.Set("user", user)
 				ctx.Next()

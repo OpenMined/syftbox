@@ -145,8 +145,26 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 }
 
 func (se *SyncEngine) Stop() error {
-	slog.Info("sync stop")
+	// Stop the file watcher first to prevent new operations
 	se.watcher.Stop()
+
+	// Wait for all sync operations to complete with timeout
+	slog.Info("sync stopping")
+	done := make(chan struct{})
+	go func() {
+		se.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		slog.Warn("sync operations did not complete within timeout, proceeding with shutdown")
+	}
+
+	slog.Info("sync stopped")
+
+	// Now it's safe to close resources
 	se.syncStatus.Close()
 	return se.journal.Close()
 }

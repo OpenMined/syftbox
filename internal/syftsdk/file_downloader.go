@@ -3,6 +3,8 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,7 +46,13 @@ func DownloadFile(ctx context.Context, job *DownloadJob) (string, error) {
 
 	if resp.IsErrorState() {
 		var errorCode string
-		respStr := resp.String()
+
+		// the error body is actually dumped in the destPath because of SetOutputFile (lol)
+		respContent, err := os.ReadFile(destPath)
+		respStr := string(respContent)
+		if err != nil {
+			slog.Error("download error", "url", job.URL, "error", err)
+		}
 
 		// presigned url specific errors
 		switch resp.GetStatusCode() {
@@ -52,25 +60,27 @@ func DownloadFile(ctx context.Context, job *DownloadJob) (string, error) {
 			// Check if it's an expiration error
 			if strings.Contains(respStr, "expired") {
 				errorCode = CodePresignedURLExpired
+				respStr = "expired"
 			} else if strings.Contains(respStr, "SignatureDoesNotMatch") {
 				errorCode = CodePresignedURLInvalid
+				respStr = "invalid"
 			} else {
 				errorCode = CodePresignedURLForbidden
+				respStr = "access denied"
 			}
 		case 404:
 			errorCode = CodePresignedURLNotFound
+			respStr = "not found"
 		case 429:
 			errorCode = CodePresignedURLRateLimit
+			respStr = "rate limit exceeded"
 		case 500, 502, 503, 504:
 			errorCode = CodeInternalError
 		default:
 			errorCode = CodeUnknownError
 		}
 
-		return "", fmt.Errorf("sdk: download file: '%s': %w", job.URL, &APIError{
-			Code:    errorCode,
-			Message: resp.String(),
-		})
+		return "", fmt.Errorf("sdk: download file: '%s': %w", job.URL, NewPresignedURLError(errorCode, respStr))
 	}
 
 	return destPath, nil

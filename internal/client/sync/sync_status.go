@@ -201,7 +201,7 @@ func (s *SyncStatus) SetError(path SyncPath, err error) {
 	// what an awful place to log this
 	// log max allowed error count reached, file will be ignored
 	if status.ErrorCount >= maxRetryCount {
-		slog.Error("sync", "status", "Error", "path", path, "count", status.ErrorCount, "error", "error limit reached. file will be ignored.")
+		slog.Error("sync", "status", "Error", "path", path, "count", status.ErrorCount, "error", "retry limit reached. file will be excluded from syncing")
 	}
 
 	s.broadcastEvent(path, status)
@@ -363,6 +363,6 @@ func (s *SyncStatus) Close() {
 		close(sub)
 	}
 
-	s.eventSubs = nil
-	s.files = nil
+	s.eventSubs = make([]chan *SyncStatusEvent, 0)
+	s.files = make(map[SyncPath]*PathStatus)
 }
