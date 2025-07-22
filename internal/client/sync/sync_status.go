@@ -363,6 +363,6 @@ func (s *SyncStatus) Close() {
 		close(sub)
 	}
 
-	s.eventSubs = nil
-	s.files = nil
+	s.eventSubs = make([]chan *SyncStatusEvent, 0)
+	s.files = make(map[SyncPath]*PathStatus)
 }
