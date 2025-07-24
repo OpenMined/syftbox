@@ -2,6 +2,7 @@ package send
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -53,70 +54,75 @@ func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) 
 // SendMessage handles sending a message to a user
 func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error) {
 
-	// Create the HTTP message
+	// create an RPC message
+	rpcMsg, err := syftmsg.NewSyftRPCMessage(
+		req.From,
+		req.SyftURL,
+		syftmsg.SyftMethod(req.Method),
+		bodyBytes,
+		req.Headers,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RPC message: %w", err)
+	}
+
+	rpcMsgBytes, err := rpcMsg.MarshalJSON()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal RPC message: %w", err)
+	}
+
+	etag := fmt.Sprintf("%x", md5.Sum(rpcMsgBytes))
 
 	msg := syftmsg.NewHttpMsg(
 		req.From,
 		req.SyftURL,
 		req.Method,
-		bodyBytes,
+		rpcMsgBytes,
 		req.Headers,
-		syftmsg.HttpMsgTypeRequest,
+		rpcMsg.ID.String(),
+		etag,
 	)
-
-	httpMsg := msg.Data.(*syftmsg.HttpMsg)
 
 	// TODO: Check if user has permission to send message to this application
 
 	// Dispatch the message to the user via websocket
-	if ok := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg); !ok {
-		// If the message is not sent via websocket, handle it as an offline message
-		return s.handleOfflineMessage(ctx, req, httpMsg)
+	dispatched := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg)
+
+	// relative rpc request file path to datasite
+	relPath := path.Join(
+		req.SyftURL.ToLocalPath(),
+		fmt.Sprintf("%s.%s", rpcMsg.ID.String(), "request"),
+	)
+
+	// Store the request in blob storage
+	err = s.store.StoreMsg(ctx, relPath, rpcMsgBytes)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to store RPC request: %w", err)
+	}
+
+	// If the message is not dispatched via websocket, return the poll url
+	if !dispatched {
+		return &SendResult{
+			Status:    http.StatusAccepted,
+			RequestID: rpcMsg.ID.String(),
+			PollURL:   s.constructPollURL(rpcMsg.ID.String(), req.SyftURL, req.From, req.AsRaw),
+		}, nil
 	}
 
 	// If the message is sent via websocket, handle the response
-	return s.handleOnlineMessage(ctx, req, httpMsg)
+	return s.checkForResponse(ctx, req, rpcMsg)
 }
 
-// handleOfflineMessage handles sending a message when the user is offline
-func (s *SendService) handleOfflineMessage(
+// checkForResponse handles sending a message when the user is online
+func (s *SendService) checkForResponse(
 	ctx context.Context,
 	req *MessageRequest,
-	httpMsg *syftmsg.HttpMsg,
+	rpcMsg *syftmsg.SyftRPCMessage,
 ) (*SendResult, error) {
-	blobPath := path.Join(
-		req.SyftURL.ToLocalPath(),
-		fmt.Sprintf("%s.%s", httpMsg.Id, httpMsg.Type),
-	)
-
-	// Create the RPC message
-	rpcMsg, err := syftmsg.NewSyftRPCMessage(*httpMsg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create RPCMsg: %w", err)
-	}
-
-	// Save the RPC message to blob storage
-	if err := s.store.StoreMsg(ctx, blobPath, *rpcMsg); err != nil {
-		return nil, fmt.Errorf("failed to save message to blob storage: %w", err)
-	}
-
-	slog.Info("saved message to blob storage", "blobPath", blobPath)
-	return &SendResult{
-		Status:    http.StatusAccepted,
-		RequestID: httpMsg.Id,
-		PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL, req.From, req.AsRaw),
-	}, nil
-}
-
-// handleOnlineMessage handles sending a message when the user is online
-func (s *SendService) handleOnlineMessage(
-	ctx context.Context,
-	req *MessageRequest,
-	httpMsg *syftmsg.HttpMsg,
-) (*SendResult, error) {
-	blobPath := path.Join(
-		req.SyftURL.ToLocalPath(),
-		fmt.Sprintf("%s.response", httpMsg.Id),
+	responseRelPath := path.Join(
+		rpcMsg.URL.ToLocalPath(),
+		fmt.Sprintf("%s.response", rpcMsg.ID.String()),
 	)
 
 	var timeout time.Duration
@@ -126,13 +132,13 @@ func (s *SendService) handleOnlineMessage(
 		timeout = s.cfg.DefaultTimeout
 	}
 
-	object, err := s.pollForObject(ctx, blobPath, timeout)
+	object, err := s.pollForObject(ctx, responseRelPath, timeout)
 	if err != nil {
 		if errors.Is(err, ErrPollTimeout) {
 			return &SendResult{
 				Status:    http.StatusAccepted,
-				RequestID: httpMsg.Id,
-				PollURL:   s.constructPollURL(httpMsg.Id, req.SyftURL, req.From, req.AsRaw),
+				RequestID: rpcMsg.ID.String(),
+				PollURL:   s.constructPollURL(rpcMsg.ID.String(), req.SyftURL, req.From, req.AsRaw),
 			}, nil
 		}
 		return nil, err
@@ -154,12 +160,12 @@ func (s *SendService) handleOnlineMessage(
 		req.SyftURL.Datasite,
 		req.SyftURL.AppName,
 		req.SyftURL.Endpoint,
-		httpMsg.Id,
+		rpcMsg.ID.String(),
 	)
 
 	return &SendResult{
 		Status:    http.StatusOK,
-		RequestID: httpMsg.Id,
+		RequestID: rpcMsg.ID.String(),
 		Response:  responseBody,
 	}, nil
 }
@@ -170,10 +176,9 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	// Validate if the corresponding request exists
 	requestBlobPath := path.Join(req.SyftURL.ToLocalPath(), fmt.Sprintf("%s.request", req.RequestID))
 
-	_, err := s.pollForObject(ctx, requestBlobPath, s.cfg.RequestCheckTimeout)
-
+	_, err := s.store.GetMsg(ctx, requestBlobPath)
 	if err != nil {
-		if errors.Is(err, ErrPollTimeout) {
+		if errors.Is(err, ErrMsgNotFound) {
 			return nil, ErrRequestNotFound
 		}
 		return nil, err
@@ -220,26 +225,26 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	}, nil
 }
 
-// pollForObject polls for an object in blob storage
+// pollForObject polls for an object in blob storage until the timeout is reached
+// if the object is found, it returns the object
 func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeout time.Duration) (io.ReadCloser, error) {
+
+	// start the timer
 	startTime := time.Now()
 
 	for {
-		if time.Since(startTime) > timeout {
-			return nil, ErrPollTimeout
-		}
-
 		object, err := s.store.GetMsg(ctx, blobPath)
-		if err != nil {
-			// if message not found, return immediately - no need to retry
-			if errors.Is(err, ErrMsgNotFound) {
-				return nil, ErrMsgNotFound
-			}
-			// For other errors, return immediately as they are likely permanent
+		if err == nil && object != nil {
+			return object, nil
+		}
+		// If the error is not "not found", log and return immediately (permanent error)
+		if err != nil && !errors.Is(err, ErrMsgNotFound) {
 			slog.Error("poll for object failed", "error", err, "blobPath", blobPath)
 			return nil, err
-		} else if object != nil {
-			return object, nil
+		}
+
+		if time.Since(startTime) > timeout {
+			return nil, ErrPollTimeout
 		}
 
 		// Always sleep between polling attempts
@@ -292,6 +297,7 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 
 	// Otherwise, unmarshal it as a SyftRPCMessage
 	var rpcMsg syftmsg.SyftRPCMessage
+
 	err := json.Unmarshal(bodyBytes, &rpcMsg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)

@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -516,11 +515,13 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 
 	// Option 3: Fallback to Size (more reliable than ModTime)
 	if f1.Size != f2.Size {
+		slog.Debug("hasModified", "f1.Size", f1.Size, "f2.Size", f2.Size)
 		return true
 	}
 
 	// Option 4: Fallback to ModTime (use cautiously, with tolerance?)
 	if f1.LastModified != f2.LastModified {
+		slog.Debug("hasModified", "f1.LastModified", f1.LastModified, "f2.LastModified", f2.LastModified)
 		return true
 	}
 
@@ -624,65 +625,6 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 			go se.handlePriorityUpload(path)
 		}
 	}
-}
-
-func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
-	slog.Debug("processHttpMessage", "msgType", msg.Type, "msgId", msg.Id)
-	httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
-	if !ok {
-		slog.Error("processHttpMessage: invalid type assertion for msg.Data",
-			"msgType", msg.Type,
-			"msgId", msg.Id,
-			"dataType", fmt.Sprintf("%T", msg.Data))
-		return
-	}
-
-	slog.Debug("handle socket message", "msgType", msg.Type, "msgId", msg.Id, "httpMsg", httpMsg)
-
-	// Unwrap the into a syftmsg.SyftRPCMessage
-	syftRPCMsg, err := syftmsg.NewSyftRPCMessage(*httpMsg)
-	if err != nil {
-		slog.Error("processHttpMessage: failed to create syftRPCMsg",
-			"error", err,
-			"msgType", msg.Type,
-			"msgId", msg.Id,
-			"httpMsg", httpMsg)
-		return
-	}
-
-	// rpc message file name
-	fileName := syftRPCMsg.ID.String() + "." + string(httpMsg.Type)
-
-	filePath := filepath.Join(
-		se.workspace.DatasiteAbsPath(syftRPCMsg.URL.ToLocalPath()), // app_data/{app_name}/rpc/{endpoint}
-		fileName,
-	)
-
-	slog.Debug("Received RPC message", "RPCPath", filePath)
-
-	// Convert the syftRPCMsg to json
-	jsonRPCMsg, err := json.Marshal(syftRPCMsg)
-	if err != nil {
-		slog.Error("handleHttp marshal syftRPCMsg",
-			"error", err,
-			"msgId", syftRPCMsg.ID,
-			"filePath", filePath)
-		return
-	}
-
-	// write the RPCMsg to the file
-	err = os.WriteFile(filePath, jsonRPCMsg, 0644)
-	if err != nil {
-		slog.Error("handleHttp write file",
-			"error", err,
-			"filePath", filePath,
-			"msgId", syftRPCMsg.ID,
-			"fileSize", len(jsonRPCMsg))
-		return
-	}
-
-	se.watcher.IgnoreOnce(filePath)
-	slog.Debug("SyftRPC Message", "msg", string(jsonRPCMsg), "filePath", filePath)
 }
 
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {

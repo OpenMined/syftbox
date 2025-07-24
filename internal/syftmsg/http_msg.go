@@ -1,7 +1,6 @@
 package syftmsg
 
 import (
-	"github.com/google/uuid"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
@@ -18,8 +17,8 @@ type HttpMsg struct {
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers,omitempty"`
 	Body    []byte            `json:"body,omitempty"`
-	Id      string            `json:"id,omitempty"`
-	Type    HttpMsgType       `json:"type,omitempty"`
+	Id      string            `json:"id"`
+	Etag    string            `json:"etag,omitempty"`
 }
 
 func NewHttpMsg(
@@ -28,7 +27,8 @@ func NewHttpMsg(
 	method string,
 	body []byte,
 	headers map[string]string,
-	msgType HttpMsgType,
+	id string,
+	etag string,
 ) *Message {
 	return &Message{
 		Id:   generateID(),
@@ -39,8 +39,8 @@ func NewHttpMsg(
 			Method:  method,
 			Body:    body,
 			Headers: headers,
-			Id:      uuid.New().String(),
-			Type:    msgType,
+			Id:      id,
+			Etag:    etag,
 		},
 	}
 }
