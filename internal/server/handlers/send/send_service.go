@@ -176,10 +176,9 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	// Validate if the corresponding request exists
 	requestBlobPath := path.Join(req.SyftURL.ToLocalPath(), fmt.Sprintf("%s.request", req.RequestID))
 
-	_, err := s.pollForObject(ctx, requestBlobPath, s.cfg.RequestCheckTimeout)
-
+	_, err := s.store.GetMsg(ctx, requestBlobPath)
 	if err != nil {
-		if errors.Is(err, ErrPollTimeout) {
+		if errors.Is(err, ErrMsgNotFound) {
 			return nil, ErrRequestNotFound
 		}
 		return nil, err

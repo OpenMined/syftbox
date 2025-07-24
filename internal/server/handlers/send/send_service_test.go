@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -34,8 +33,8 @@ type MockRPCMsgStore struct {
 	mock.Mock
 }
 
-func (m *MockRPCMsgStore) StoreMsg(ctx context.Context, path string, msg syftmsg.SyftRPCMessage) error {
-	args := m.Called(ctx, path, msg)
+func (m *MockRPCMsgStore) StoreMsg(ctx context.Context, path string, msgBytes []byte) error {
+	args := m.Called(ctx, path, msgBytes)
 	return args.Error(0)
 }
 
@@ -102,34 +101,28 @@ func TestSendService_SendMessage_Online(t *testing.T) {
 		Headers: headers,
 	}
 
-	// Create expected message
-	msg := syftmsg.NewHttpMsg(
-		from,
-		*syftURL,
-		method,
-		body,
-		headers,
-		syftmsg.HttpMsgTypeRequest,
-	)
-
-	httpMsg := msg.Data.(*syftmsg.HttpMsg)
-
 	// Set up mock expectations
+	// The dispatcher will be called with an HttpMsg containing the marshaled RPC message
 	dispatcher.On("Dispatch", syftURL.Datasite, mock.MatchedBy(func(msg *syftmsg.Message) bool {
 		httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
 		if !ok {
 			return false
 		}
+		// The body should be a marshaled RPC message, not the original body
+		// We'll check basic properties
 		return httpMsg.From == from &&
 			httpMsg.Method == method &&
-			httpMsg.Type == syftmsg.HttpMsgTypeRequest &&
-			bytes.Equal(httpMsg.Body, body) &&
-			reflect.DeepEqual(httpMsg.Headers, headers)
+			len(httpMsg.Body) > 0 && // Should have RPC message bytes
+			httpMsg.Id != "" && // Should have UUID from RPC message
+			httpMsg.Etag != "" // Should have etag
 	})).Return(true)
+
+	// Mock StoreMsg for storing the request
+	store.On("StoreMsg", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Create response message
 	responseMsg := &syftmsg.SyftRPCMessage{
-		ID:         uuid.MustParse(httpMsg.Id),
+		ID:         uuid.New(),
 		Sender:     "test-datasite",
 		URL:        *syftURL,
 		Body:       []byte(`{"response": "success"}`),
@@ -218,17 +211,19 @@ func TestSendService_SendMessage_Offline(t *testing.T) {
 	}
 
 	// Set up mock expectations
+	// The dispatcher will be called with an HttpMsg containing the marshaled RPC message
 	dispatcher.On("Dispatch", syftURL.Datasite, mock.MatchedBy(func(msg *syftmsg.Message) bool {
 		httpMsg, ok := msg.Data.(*syftmsg.HttpMsg)
 		if !ok {
 			return false
 		}
+		// The body should be a marshaled RPC message, not the original body
 		return httpMsg.From == from &&
 			httpMsg.Method == method &&
-			httpMsg.Type == syftmsg.HttpMsgTypeRequest &&
-			bytes.Equal(httpMsg.Body, body) &&
-			reflect.DeepEqual(httpMsg.Headers, headers)
-	})).Return(false)
+			len(httpMsg.Body) > 0 && // Should have RPC message bytes
+			httpMsg.Id != "" && // Should have UUID from RPC message
+			httpMsg.Etag != "" // Should have etag
+	})).Return(false) // Return false to simulate offline user
 	store.On("StoreMsg", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	// Call SendMessage
@@ -359,7 +354,7 @@ func TestSendService_PollForResponse_NoRequest(t *testing.T) {
 	// Call PollForResponse
 	result, err := service.PollForResponse(context.Background(), req)
 	assert.Error(t, err)
-	assert.Equal(t, ErrMsgNotFound, err)
+	assert.Equal(t, ErrRequestNotFound, err)
 	assert.Nil(t, result)
 
 	// Verify mock expectations
@@ -414,7 +409,7 @@ func TestSendService_PollForResponse_Timeout(t *testing.T) {
 	})).Return(io.NopCloser(bytes.NewReader(requestBytes)), nil)
 	store.On("GetMsg", mock.Anything, mock.MatchedBy(func(path string) bool {
 		return path == syftURL.ToLocalPath()+"/"+requestID+".response"
-	})).Return(nil, ErrPollTimeout)
+	})).Return(nil, ErrMsgNotFound)
 
 	// Call PollForResponse
 	result, err := service.PollForResponse(context.Background(), req)
