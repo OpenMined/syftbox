@@ -118,25 +118,23 @@ type SyftRPCMessage struct {
 }
 
 // NewSyftMessage creates a new SyftMessage with default values
-func NewSyftRPCMessage(httpMsg HttpMsg) (*SyftRPCMessage, error) {
+func NewSyftRPCMessage(
+	sender string, url utils.SyftBoxURL, method SyftMethod, body []byte, headers map[string]string,
+) (*SyftRPCMessage, error) {
+
+	created_at := time.Now().UTC()
 
 	// Timezone is UTC by default for SyftRPC messages
-	now := time.Now().UTC()
-
-	headers := httpMsg.Headers
-	if headers == nil {
-		headers = make(map[string]string)
-	}
 
 	msg := &SyftRPCMessage{
-		ID:      uuid.MustParse(httpMsg.Id),
-		Sender:  httpMsg.From,
-		URL:     httpMsg.SyftURL,
-		Body:    httpMsg.Body,
+		ID:      uuid.New(),
+		Sender:  sender,
+		URL:     url,
+		Body:    body,
 		Headers: headers,
-		Created: now,
-		Expires: now.Add(time.Duration(DefaultMessageExpiry)),
-		Method:  SyftMethod(httpMsg.Method),
+		Created: created_at,
+		Expires: created_at.Add(time.Duration(DefaultMessageExpiry)),
+		Method:  method,
 	}
 
 	if err := msg.Validate(); err != nil {
@@ -158,58 +156,6 @@ func (m *SyftRPCMessage) MarshalJSON() ([]byte, error) {
 		URL:   m.URL.String(),
 		Body:  base64.URLEncoding.EncodeToString(m.Body),
 	})
-}
-
-// UnmarshalJSON implements custom JSON unmarshaling
-func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
-	type Alias struct {
-		ID         uuid.UUID         `json:"id"`
-		Sender     string            `json:"sender"`
-		URL        string            `json:"url"`
-		Body       string            `json:"body,omitempty"`
-		Headers    map[string]string `json:"headers"`
-		Created    time.Time         `json:"created"`
-		Expires    time.Time         `json:"expires"`
-		Method     SyftMethod        `json:"method,omitempty"`
-		StatusCode SyftStatus        `json:"status_code,omitempty"`
-	}
-
-	var aux Alias
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	// Parse URL
-	url, err := utils.FromSyftURL(aux.URL)
-	if err != nil {
-		return fmt.Errorf("failed to parse URL: %w", err)
-	}
-
-	// Set fields
-	m.ID = aux.ID
-	m.Sender = aux.Sender
-	m.URL = *url
-	m.Headers = aux.Headers
-	m.Created = aux.Created
-	m.Expires = aux.Expires
-	m.Method = aux.Method
-	m.StatusCode = aux.StatusCode
-
-	// Handle body
-	if aux.Body != "" {
-		if body, err := base64.URLEncoding.DecodeString(aux.Body); err == nil {
-			m.Body = body
-		} else {
-			m.Body = []byte(aux.Body)
-		}
-	}
-
-	// Validate the message
-	if err := m.Validate(); err != nil {
-		return fmt.Errorf("invalid message: %w", err)
-	}
-
-	return nil
 }
 
 // JSONString returns a properly formatted JSON string with decoded body

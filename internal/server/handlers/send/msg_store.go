@@ -3,12 +3,13 @@ package send
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/openmined/syftbox/internal/server/blob"
-	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
 var (
@@ -41,17 +42,22 @@ func (m *BlobMsgStore) DeleteMsg(ctx context.Context, path string) error {
 	return err
 }
 
-func (m *BlobMsgStore) StoreMsg(ctx context.Context, path string, msg syftmsg.SyftRPCMessage) error {
-	msgBytes, err := msg.MarshalJSON()
+func (m *BlobMsgStore) StoreMsg(ctx context.Context, path string, msgBytes []byte) error {
+	etag := fmt.Sprintf("%x", md5.Sum(msgBytes))
+	fileSize := int64(len(msgBytes))
+
+	slog.Info("Storing message", "path", path, "etag", etag, "fileSize", fileSize)
+
+	_, err := m.blob.Backend().PutObject(ctx, &blob.PutObjectParams{
+		Key:  path,
+		ETag: etag,
+		Body: bytes.NewReader(msgBytes),
+		Size: fileSize,
+	})
+
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return fmt.Errorf("failed to store message: %w", err)
 	}
 
-	_, err = m.blob.Backend().PutObject(ctx, &blob.PutObjectParams{
-		Key:  path,
-		ETag: msg.ID.String(),
-		Body: bytes.NewReader(msgBytes),
-		Size: int64(len(msgBytes)),
-	})
-	return err
+	return nil
 }

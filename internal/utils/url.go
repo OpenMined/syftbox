@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -118,6 +119,23 @@ func (s *SyftBoxURL) UnmarshalParam(param string) error {
 	parsed, err := FromSyftURL(param)
 	if err != nil {
 		slog.Error("Failed to parse syft url", "error", err, "url", param)
+		return err
+	}
+	*s = *parsed
+	return nil
+}
+
+func (s *SyftBoxURL) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.String())
+}
+
+func (s *SyftBoxURL) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+	parsed, err := FromSyftURL(str)
+	if err != nil {
 		return err
 	}
 	*s = *parsed

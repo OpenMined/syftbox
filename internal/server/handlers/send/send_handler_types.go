@@ -95,7 +95,7 @@ type PollResult struct {
 
 // Message store interface for storing and retrieving messages
 type RPCMsgStore interface {
-	StoreMsg(ctx context.Context, path string, msg syftmsg.SyftRPCMessage) error
+	StoreMsg(ctx context.Context, path string, msgBytes []byte) error
 	GetMsg(ctx context.Context, path string) (io.ReadCloser, error)
 	DeleteMsg(ctx context.Context, path string) error
 }
