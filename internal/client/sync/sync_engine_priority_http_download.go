@@ -55,6 +55,4 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 
 	se.syncStatus.SetCompleted(syncRelPath)
 
-	slog.Info("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", httpMsg.SyftURL.ToLocalPath(), "size", fileSize, "etag", httpMsg.Etag)
-
 }

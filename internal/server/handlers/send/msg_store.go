@@ -46,8 +46,6 @@ func (m *BlobMsgStore) StoreMsg(ctx context.Context, path string, msgBytes []byt
 	etag := fmt.Sprintf("%x", md5.Sum(msgBytes))
 	fileSize := int64(len(msgBytes))
 
-	slog.Info("Storing message", "path", path, "etag", etag, "fileSize", fileSize)
-
 	_, err := m.blob.Backend().PutObject(ctx, &blob.PutObjectParams{
 		Key:  path,
 		ETag: etag,
@@ -56,6 +54,7 @@ func (m *BlobMsgStore) StoreMsg(ctx context.Context, path string, msgBytes []byt
 	})
 
 	if err != nil {
+		slog.Error("rpc msg store", "type", "blob", "etag", etag, "fileSize", fileSize, "path", path, "error", err)
 		return fmt.Errorf("failed to store message: %w", err)
 	}
 

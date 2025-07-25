@@ -515,13 +515,11 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 
 	// Option 3: Fallback to Size (more reliable than ModTime)
 	if f1.Size != f2.Size {
-		slog.Debug("hasModified", "f1.Size", f1.Size, "f2.Size", f2.Size)
 		return true
 	}
 
 	// Option 4: Fallback to ModTime (use cautiously, with tolerance?)
 	if f1.LastModified != f2.LastModified {
-		slog.Debug("hasModified", "f1.LastModified", f1.LastModified, "f2.LastModified", f2.LastModified)
 		return true
 	}
 
