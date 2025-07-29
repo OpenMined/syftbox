@@ -60,9 +60,7 @@ func (d *DatasiteService) GetView(user string) []*blob.BlobInfo {
 	// Filter blobs based on ACL
 	for _, blob := range blobs {
 		if err := d.acl.CanAccess(
-			&acl.User{ID: user},
-			&acl.File{Path: blob.Key},
-			acl.AccessRead,
+			acl.NewRequest(blob.Key, &acl.User{ID: user}, acl.AccessRead),
 		); err == nil {
 			view = append(view, blob)
 		}
@@ -79,7 +77,7 @@ func (d *DatasiteService) GetSubdomainMapping() *SubdomainMapping {
 func (d *DatasiteService) loadDatasiteSubdomains() error {
 	// perhaps maintain a list of datasites in a separate table/db
 	// Get all datasites by listing their acls
-	blobs, err := d.blob.Index().FilterBySuffix(aclspec.ACLFileName)
+	blobs, err := d.blob.Index().FilterBySuffix(aclspec.FileName)
 	if err != nil {
 		return fmt.Errorf("error listing blobs: %w", err)
 	}
@@ -188,7 +186,7 @@ func (d *DatasiteService) handleBlobChange(key string, eventType blob.BlobEventT
 		return
 	}
 
-	if !strings.Contains(key, aclspec.ACLFileName) && !strings.Contains(key, SettingsFileName) {
+	if !strings.Contains(key, aclspec.FileName) && !strings.Contains(key, SettingsFileName) {
 		return
 	}
 
