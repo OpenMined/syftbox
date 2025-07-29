@@ -87,21 +87,34 @@ func (t *ACLTree) AddRuleSet(ruleset *aclspec.RuleSet) (*ACLNode, error) {
 	return current, nil
 }
 
-// GetEffectiveRule returns the most specific rule applicable to the given path.
-func (t *ACLTree) GetEffectiveRule(path string) (*ACLRule, error) {
+// Removes a ruleset at the specified path
+func (t *ACLTree) RemoveRuleSet(path string) bool {
+	var parent *ACLNode
+	var lastPart string
+
 	normalizedPath := ACLNormPath(path)
+	parts := ACLPathSegments(normalizedPath)
+	currentNode := t.root
 
-	node := t.LookupNearestNode(normalizedPath) // O(depth)
-	if node == nil {
-		return nil, ErrNoRuleSet
+	for _, part := range parts {
+		child, exists := currentNode.GetChild(part)
+		if !exists {
+			return false
+		}
+
+		parent = currentNode
+		currentNode = child
+		lastPart = part
 	}
 
-	rule, err := node.FindBestRule(normalizedPath) // O(rules|node)
-	if err != nil {
-		return nil, err // returns ErrNoRuleFound if no rule is found
+	// clear the rules for the node, but if it has no children, delete the whole node from it's parent
+	if currentNode.GetChildCount() == 0 {
+		parent.DeleteChild(lastPart)
+	} else {
+		currentNode.ClearRules()
 	}
 
-	return rule, nil
+	return true
 }
 
 // LookupNearestNode returns the nearest node in the tree that has associated rules for the given path.
@@ -158,32 +171,49 @@ func (t *ACLTree) GetNode(path string) *ACLNode {
 	return current
 }
 
-// Removes a ruleset at the specified path
-func (t *ACLTree) RemoveRuleSet(path string) bool {
-	var parent *ACLNode
-	var lastPart string
+func (t *ACLTree) GetCompiledRule(req *ACLRequest) (*ACLRule, error) {
+	templateCtx := NewTemplateContext(req.User.ID)
 
-	normalizedPath := ACLNormPath(path)
-	parts := ACLPathSegments(normalizedPath)
-	currentNode := t.root
+	// Find the nearest node with rules (NO inheritance - just nearest)
+	node := t.LookupNearestNode(ACLNormPath(req.Path))
+	if node == nil {
+		return nil, ErrNoRule
+	}
 
-	for _, part := range parts {
-		child, exists := currentNode.GetChild(part)
-		if !exists {
-			return false
+	// Check each rule in order of specificity
+	rules := node.GetRules()
+	for _, rule := range rules {
+		// Check if this rule matches the path (with template resolution)
+		if matches, err := rule.MatchesPath(req.Path, templateCtx); err == nil && matches {
+			// If rule has templates or USER tokens, create user-specific version
+			if rule.HasTemplate() || rule.hasUserToken() {
+				return t.createUserSpecificRule(rule, req.User.ID), nil
+			}
+			return rule, nil
 		}
-
-		parent = currentNode
-		currentNode = child
-		lastPart = part
 	}
 
-	// clear the rules for the node, but if it has no children, delete the whole node from it's parent
-	if currentNode.GetChildCount() == 0 {
-		parent.DeleteChild(lastPart)
-	} else {
-		currentNode.ClearRules()
+	return nil, ErrNoRule
+}
+
+// createUserSpecificRule creates a user-specific copy of a rule with USER tokens resolved
+func (t *ACLTree) createUserSpecificRule(originalRule *ACLRule, userID string) *ACLRule {
+	// Clone the original aclspec.Rule
+	userRule := &aclspec.Rule{
+		Pattern: originalRule.rule.Pattern,
+		Access: &aclspec.Access{
+			Admin: originalRule.resolveAccessList(originalRule.rule.Access.Admin, userID),
+			Write: originalRule.resolveAccessList(originalRule.rule.Access.Write, userID),
+			Read:  originalRule.resolveAccessList(originalRule.rule.Access.Read, userID),
+		},
+		Limits: originalRule.rule.Limits,
 	}
 
-	return true
+	// Create new ACLRule with the user-specific rule
+	return &ACLRule{
+		fullPattern: originalRule.fullPattern,
+		tplPattern:  originalRule.tplPattern,
+		rule:        userRule,
+		node:        originalRule.node,
+	}
 }
