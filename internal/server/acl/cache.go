@@ -71,3 +71,11 @@ func (c *ACLCache) Count() int {
 
 	return len(c.index)
 }
+
+// Clear removes all entries from the cache
+func (c *ACLCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.index = make(map[string]*ACLRule)
+}
