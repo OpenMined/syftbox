@@ -158,6 +158,40 @@ func (m *SyftRPCMessage) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// UnmarshalJSON implements custom JSON unmarshaling to handle base64 encoded body
+func (m *SyftRPCMessage) UnmarshalJSON(data []byte) error {
+	type Alias SyftRPCMessage
+	aux := &struct {
+		*Alias
+		URL  string `json:"url"`
+		Body string `json:"body,omitempty"`
+	}{
+		Alias: (*Alias)(m),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Parse the URL
+	syftURL, err := utils.FromSyftURL(aux.URL)
+	if err != nil {
+		return fmt.Errorf("failed to parse URL: %w", err)
+	}
+	m.URL = *syftURL
+
+	// Decode the base64 body if present
+	if aux.Body != "" {
+		decodedBody, err := base64.URLEncoding.DecodeString(aux.Body)
+		if err != nil {
+			return fmt.Errorf("failed to decode base64 body: %w", err)
+		}
+		m.Body = decodedBody
+	}
+
+	return nil
+}
+
 // JSONString returns a properly formatted JSON string with decoded body
 func (m *SyftRPCMessage) ToJsonMap() map[string]interface{} {
 	var bodyContent interface{}
