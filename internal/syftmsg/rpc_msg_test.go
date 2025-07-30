@@ -228,10 +228,19 @@ func TestSyftRPCMessage_MarshalUnmarshal_ComplexBody(t *testing.T) {
 		StatusCode: originalStatusCode,
 	}
 
+	base64encodedBody := base64.URLEncoding.EncodeToString(originalBody)
+
 	// Marshal the message to JSON
 	jsonData, err := json.Marshal(originalMsg)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, jsonData)
+
+	// Unmarshal to a map
+	var jsonMap map[string]interface{}
+	err = json.Unmarshal(jsonData, &jsonMap)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, jsonMap)
+	assert.Equal(t, jsonMap["body"], base64encodedBody)
 
 	// Unmarshal the JSON back to a message
 	var unmarshaledMsg SyftRPCMessage
