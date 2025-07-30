@@ -78,6 +78,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	auth := r.Group("/auth")
 	auth.Use(middlewares.RateLimiter("10-M")) // 10 req/min
 	{
+		auth.GET("/", authH.AuthTokenUI)
 		auth.POST("/otp/request", authH.OTPRequest)
 		auth.POST("/otp/verify", authH.OTPVerify)
 		auth.POST("/refresh", authH.Refresh)

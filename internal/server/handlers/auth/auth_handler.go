@@ -1,6 +1,7 @@
 package auth
 
 import (
+	_ "embed"
 	"fmt"
 	"net/http"
 
@@ -9,6 +10,9 @@ import (
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/utils"
 )
+
+//go:embed authdash.html
+var authdashHTML string
 
 type AuthHandler struct {
 	auth *auth.AuthService
@@ -76,4 +80,8 @@ func (h *AuthHandler) Refresh(ctx *gin.Context) {
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	})
+}
+
+func (h *AuthHandler) AuthTokenUI(ctx *gin.Context) {
+	ctx.Data(http.StatusOK, "text/html; charset=utf-8", []byte(authdashHTML))
 }
