@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/url"
 	"regexp"
-	"time"
 )
 
 var (
@@ -37,13 +36,4 @@ func ValidateURL(urlString string) error {
 
 func IsValidURL(urlString string) bool {
 	return ValidateURL(urlString) == nil
-}
-
-func IsOnline() bool {
-	conn, err := net.DialTimeout("tcp", "1.1.1.1:53", 2*time.Second)
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-	return true
 }

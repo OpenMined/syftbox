@@ -343,11 +343,6 @@ func (se *SyncEngine) presyncChecks() error {
 		return fmt.Errorf("not enough free space on disk. %s free", humanize.Bytes(usage.Free))
 	}
 
-	// check if the user is online
-	if !utils.IsOnline() {
-		return fmt.Errorf("not online")
-	}
-
 	return nil
 }
 
