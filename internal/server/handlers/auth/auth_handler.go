@@ -11,7 +11,7 @@ import (
 	"github.com/openmined/syftbox/internal/utils"
 )
 
-//go:embed authdash.html
+//go:embed authui.html
 var authdashHTML string
 
 type AuthHandler struct {
@@ -83,5 +83,6 @@ func (h *AuthHandler) Refresh(ctx *gin.Context) {
 }
 
 func (h *AuthHandler) AuthTokenUI(ctx *gin.Context) {
-	ctx.Data(http.StatusOK, "text/html; charset=utf-8", []byte(authdashHTML))
+	ctx.Header("Content-Type", "text/html; charset=utf-8")
+	ctx.String(http.StatusOK, authdashHTML)
 }
