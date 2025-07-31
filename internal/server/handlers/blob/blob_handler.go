@@ -48,7 +48,7 @@ func (h *BlobHandler) checkPermissions(key string, user string, access acl.Acces
 		return nil
 	}
 
-	if err := h.acl.CanAccess(&acl.User{ID: user}, &acl.File{Path: key}, access); err != nil {
+	if err := h.acl.CanAccess(acl.NewRequest(key, &acl.User{ID: user}, access)); err != nil {
 		return err
 	}
 
@@ -59,13 +59,13 @@ func (h *BlobHandler) checkPermissions(key string, user string, access acl.Acces
 func IsReservedPath(path string) bool {
 	// Clean the path
 	path = datasite.CleanPath(path)
-	
+
 	// Extract the part after the datasite name
 	parts := strings.Split(path, datasite.PathSep)
 	if len(parts) < 2 {
 		return false
 	}
-	
+
 	// Skip the datasite name (email) and check subsequent parts
 	for i := 1; i < len(parts); i++ {
 		part := strings.ToLower(parts[i])
@@ -74,6 +74,6 @@ func IsReservedPath(path string) bool {
 			return true
 		}
 	}
-	
+
 	return false
 }

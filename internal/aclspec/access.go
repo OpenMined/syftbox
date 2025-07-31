@@ -29,12 +29,12 @@ func PrivateAccess() *Access {
 
 // PublicReadAccess returns an Access object with read access for everyone.
 func PublicReadAccess() *Access {
-	return NewAccess(empty, empty, []string{Everyone})
+	return NewAccess(empty, empty, []string{TokenEveryone})
 }
 
 // PublicReadWriteAccess returns an Access object with read and write access for everyone.
 func PublicReadWriteAccess() *Access {
-	return NewAccess(empty, []string{Everyone}, empty)
+	return NewAccess(empty, []string{TokenEveryone}, empty)
 }
 
 // SharedReadAccess returns an Access object with read access for the specified users.

@@ -2,10 +2,8 @@ package acl
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -34,7 +32,7 @@ func (s *ACLService) Start(ctx context.Context) error {
 
 	// Fetch the ACL files
 	start := time.Now()
-	acls, err := s.blob.Index().FilterBySuffix(aclspec.ACLFileName)
+	acls, err := s.blob.Index().FilterBySuffix(aclspec.FileName)
 	if err != nil {
 		return fmt.Errorf("error listing acls: %w", err)
 	}
@@ -63,17 +61,15 @@ func (s *ACLService) Start(ctx context.Context) error {
 	slog.Debug("acl build", "count", len(ruleSets), "took", time.Since(start))
 
 	// Warm up the ACL cache
-	start = time.Now()
-	for blob := range s.blob.Index().Iter() {
-		if err := s.CanAccess(
-			&User{ID: aclspec.Everyone},
-			&File{Path: blob.Key},
-			AccessRead,
-		); err != nil && errors.Is(err, ErrNoRule) {
-			slog.Warn("acl cache warm error", "path", blob.Key, "error", err)
-		}
-	}
-	slog.Debug("acl cache warm", "took", time.Since(start))
+	// start = time.Now()
+	// for blob := range s.blob.Index().Iter() {
+	// 	if err := s.CanAccess(
+	// 		NewRequest(blob.Key, &User{ID: getOwner(blob.Key)}, AccessRead),
+	// 	); err != nil && errors.Is(err, ErrNoRule) {
+	// 		slog.Warn("acl cache warm error", "path", blob.Key, "error", err)
+	// 	}
+	// }
+	// slog.Debug("acl cache warm", "took", time.Since(start))
 
 	s.blob.OnBlobChange(s.onBlobChange)
 
@@ -111,55 +107,53 @@ func (s *ACLService) RemoveRuleSet(path string) bool {
 }
 
 // GetRule finds the most specific rule applicable to the given path.
-func (s *ACLService) GetRule(path string) (*ACLRule, error) {
-	path = ACLNormPath(path)
+func (s *ACLService) GetRule(req *ACLRequest) (*ACLRule, error) {
+	// // cache hit
+	// cachedRule := s.cache.Get(req.Path) // O(1)
+	// if cachedRule != nil {
+	// 	return cachedRule, nil
+	// }
 
-	// cache hit
-	cachedRule := s.cache.Get(path) // O(1)
-	if cachedRule != nil {
-		return cachedRule, nil
-	}
-
-	// cache miss
-	rule, err := s.tree.GetEffectiveRule(path) // O(depth)
+	// cache miss - get computed rule for this path
+	rule, err := s.tree.GetCompiledRule(req)
 	if err != nil {
-		return nil, fmt.Errorf("no effective rules for path '%s': %w", path, err)
+		return nil, fmt.Errorf("no compiled rules for path '%s': %w", req.Path, err)
 	}
 
 	// cache the result
-	s.cache.Set(path, rule) // O(1)
+	// slog.Debug("cache miss", "path", req.Path, "rule", rule)
+	// s.cache.Set(req.Path, rule) // O(1)
 
 	return rule, nil
 }
 
 // CanAccess checks if a user has the specified access permission for a file.
-func (s *ACLService) CanAccess(user *User, file *File, level AccessLevel) error {
+func (s *ACLService) CanAccess(req *ACLRequest) error {
 	// early return if user is the owner
-	if isOwner(file.Path, user.ID) {
+	if isOwner(req.Path, req.User.ID) {
 		return nil
 	}
 
-	// get the effective rule for the file
-	rule, err := s.GetRule(file.Path)
+	rule, err := s.GetRule(req)
 	if err != nil {
 		return err
 	}
 
 	// Elevate ACL file writes to admin level
-	if aclspec.IsACLFile(file.Path) && level >= AccessCreate {
-		level = AccessAdmin
+	if aclspec.IsACLFile(req.Path) && req.Level >= AccessCreate {
+		req.Level = AccessAdmin
 	}
 
 	// Check file limits for write operations
-	if level >= AccessCreate {
-		if err := rule.CheckLimits(file); err != nil {
-			return fmt.Errorf("file limits exceeded for user '%s' on path '%s': %w", user.ID, file.Path, err)
+	if req.Level >= AccessCreate && req.File != nil {
+		if err := rule.CheckLimits(req); err != nil {
+			return fmt.Errorf("file limits exceeded for user '%s' on path '%s': %w", req.User.ID, req.Path, err)
 		}
 	}
 
-	// finally check the access
-	if err := rule.CheckAccess(user, level); err != nil {
-		return fmt.Errorf("access denied for user '%s' on path '%s': %w", user.ID, file.Path, err)
+	// Check access
+	if err := rule.CheckAccess(req); err != nil {
+		return fmt.Errorf("access denied for user '%s' on path '%s': %w", req.User.ID, req.Path, err)
 	}
 
 	return nil
@@ -228,12 +222,6 @@ func (s *ACLService) onBlobChange(key string, eventType blob.BlobEventType) {
 		s.cache.Delete(key)
 		slog.Debug("acl cache removed", "key", key, "cache.count", s.cache.Count(), "blob.count", s.blob.Index().Count())
 	}
-}
-
-// checks if the user is the owner of the path
-func isOwner(path string, user string) bool {
-	path = ACLNormPath(path)
-	return strings.HasPrefix(path, user)
 }
 
 var _ Service = (*ACLService)(nil)
