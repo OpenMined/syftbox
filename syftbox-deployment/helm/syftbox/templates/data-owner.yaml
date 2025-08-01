@@ -1,0 +1,228 @@
+{{- if .Values.dataOwner.enabled }}
+{{- if .Values.dataOwner.persistence.enabled }}
+---
+# Data Owner Persistent Volume Claim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "syftbox.fullname" . }}-data-owner-pvc
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    component: data-owner
+spec:
+  accessModes:
+    {{- range .Values.dataOwner.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dataOwner.persistence.size | quote }}
+  {{- if .Values.dataOwner.persistence.storageClassName }}
+  storageClassName: {{ .Values.dataOwner.persistence.storageClassName | quote }}
+  {{- end }}
+{{- end }}
+---
+# Data Owner Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "syftbox.fullname" . }}-data-owner
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    component: data-owner
+spec:
+  replicas: {{ .Values.dataOwner.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      component: data-owner
+  template:
+    metadata:
+      labels:
+        {{- include "syftbox.selectorLabels" . | nindent 8 }}
+        component: data-owner
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      # Main data owner container
+      - name: data-owner
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.dataowner.repository }}:{{ .Values.images.dataowner.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - name: syftbox
+          containerPort: 7938
+          protocol: TCP
+        env:
+        # Client configuration - mirrors ../docker/docker-compose-client.yml
+        - name: SYFTBOX_SERVER_URL
+          value: {{ include "syftbox.cacheServerUrl" . }}
+        - name: SYFTBOX_AUTH_ENABLED
+          value: "0"  # mirrors auth disabled in client
+        
+        # Private database configuration (for data owner)
+        - name: DATABASE_URL
+          value: {{ include "syftbox.privateDatabaseUrl" . }}
+        - name: PRIVATE_DATABASE_HOST
+          value: {{ .Values.database.private.host | quote }}
+        - name: PRIVATE_DATABASE_PORT
+          value: {{ .Values.database.private.port | quote }}
+        - name: PRIVATE_DATABASE_NAME
+          value: {{ .Values.database.private.database | quote }}
+        - name: PRIVATE_DATABASE_USER
+          value: {{ .Values.database.private.username | quote }}
+        - name: PRIVATE_DATABASE_PASSWORD
+          value: {{ .Values.database.private.password | quote }}
+        
+        # Mock database configuration (for reference)
+        - name: MOCK_DATABASE_HOST
+          value: {{ .Values.database.mock.host | quote }}
+        - name: MOCK_DATABASE_PORT
+          value: {{ .Values.database.mock.port | quote }}
+        - name: MOCK_DATABASE_NAME
+          value: {{ .Values.database.mock.database | quote }}
+        - name: MOCK_DATABASE_USER
+          value: {{ .Values.database.mock.username | quote }}
+        - name: MOCK_DATABASE_PASSWORD
+          value: {{ .Values.database.mock.password | quote }}
+        {{- if .Values.dataOwner.syftbox.enabled }}
+        # Use proper syftbox client setup (based on entrypoint-client.sh)
+        command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          email="{{ .Values.dataOwner.syftbox.email }}"
+          server_url="$SYFTBOX_SERVER_URL"
+          client_dir="/data/clients/${email}"
+          config_file="${client_dir}/config.json"
+          data_dir="${client_dir}/SyftBox"
+          
+          # Create directories
+          mkdir -p "${client_dir}"
+          mkdir -p "${data_dir}"
+          mkdir -p /root/.syftbox
+          
+          # Create local dev config (auth bypass)
+          cat > "${config_file}" << EOF
+          {
+            "data_dir": "${data_dir}",
+            "email": "${email}",
+            "server_url": "${server_url}",
+            "client_url": "http://localhost:7938"
+          }
+          EOF
+          
+          # Create symlinks for easier access
+          ln -sf "${config_file}" /root/.syftbox/config.json
+          ln -sf "${data_dir}" /root/SyftBox
+          
+          echo "Client setup for ${email}:"
+          echo "  Config: ${config_file}"
+          echo "  Data: ${data_dir}"
+          echo "  Server: ${server_url}"
+          
+          # Start daemon
+          echo "Starting daemon for ${email}..."
+          exec syftbox daemon
+        {{- else }}
+        # Keep container running for development
+        command:
+        - "/bin/bash"
+        - "-c"
+        - |
+          echo "Data owner container started."
+          while true; do sleep 30; done
+        {{- end }}
+        resources:
+          {{- toYaml .Values.dataOwner.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: workspace
+          mountPath: /workspace
+        {{- if .Values.dataOwner.persistence.enabled }}
+        - name: syftbox-data
+          mountPath: /data
+        {{- end }}
+      
+      {{- if .Values.dataOwner.jupyter.enabled }}
+      # Jupyter Lab sidecar container
+      - name: jupyter
+        image: "{{ .Values.global.imageRegistry }}/{{ .Values.images.dataowner.repository }}:{{ .Values.images.dataowner.tag }}"
+        imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+        ports:
+        - name: jupyter
+          containerPort: 8888
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          value: {{ include "syftbox.privateDatabaseUrl" . }}
+        - name: DATABASE_HOST
+          value: {{ .Values.database.private.host | quote }}
+        - name: DATABASE_PORT
+          value: {{ .Values.database.private.port | quote }}
+        - name: DATABASE_NAME
+          value: {{ .Values.database.private.database | quote }}
+        - name: DATABASE_USER
+          value: {{ .Values.database.private.username | quote }}
+        - name: DATABASE_PASSWORD
+          value: {{ .Values.database.private.password | quote }}
+        command:
+        - "jupyter"
+        - "lab"
+        - "--ip=0.0.0.0"
+        - "--port=8888"
+        - "--allow-root"
+        - "--no-browser"
+        - "--NotebookApp.token={{ .Values.dataOwner.jupyter.token }}"
+        - "--NotebookApp.password="
+        workingDir: /data/clients/{{ .Values.dataOwner.syftbox.email }}/SyftBox
+        volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        {{- if .Values.dataOwner.persistence.enabled }}
+        - name: syftbox-data
+          mountPath: /data
+        {{- end }}
+      {{- end }}
+      
+      volumes:
+      - name: config
+        configMap:
+          name: {{ include "syftbox.fullname" . }}-config
+      - name: workspace
+        emptyDir: {}
+      {{- if .Values.dataOwner.persistence.enabled }}
+      - name: syftbox-data
+        persistentVolumeClaim:
+          claimName: {{ include "syftbox.fullname" . }}-data-owner-pvc
+      {{- end }}
+---
+# Data Owner Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "syftbox.fullname" . }}-data-owner
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    component: data-owner
+spec:
+  type: {{ .Values.dataOwner.service.type }}
+  ports:
+  - name: syftbox
+    port: {{ .Values.dataOwner.service.ports.syftbox }}
+    targetPort: syftbox
+    protocol: TCP
+  {{- if .Values.dataOwner.jupyter.enabled }}
+  - name: jupyter
+    port: {{ .Values.dataOwner.service.ports.jupyter }}
+    targetPort: jupyter
+    protocol: TCP
+  {{- end }}
+  selector:
+    {{- include "syftbox.selectorLabels" . | nindent 4 }}
+    component: data-owner
+{{- end }}
