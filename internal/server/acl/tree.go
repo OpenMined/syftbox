@@ -172,8 +172,6 @@ func (t *ACLTree) GetNode(path string) *ACLNode {
 }
 
 func (t *ACLTree) GetCompiledRule(req *ACLRequest) (*ACLRule, error) {
-	templateCtx := NewTemplateContext(req.User.ID)
-
 	// Find the nearest node with rules (NO inheritance - just nearest)
 	node := t.LookupNearestNode(ACLNormPath(req.Path))
 	if node == nil {
@@ -184,36 +182,10 @@ func (t *ACLTree) GetCompiledRule(req *ACLRequest) (*ACLRule, error) {
 	rules := node.GetRules()
 	for _, rule := range rules {
 		// Check if this rule matches the path (with template resolution)
-		if matches, err := rule.MatchesPath(req.Path, templateCtx); err == nil && matches {
-			// If rule has templates or USER tokens, create user-specific version
-			if rule.HasTemplate() || rule.hasUserToken() {
-				return t.createUserSpecificRule(rule, req.User.ID), nil
-			}
-			return rule, nil
+		if matches, err := rule.Match(req.Path, req.User); err == nil && matches {
+			return rule.Compile(req.User), nil
 		}
 	}
 
 	return nil, ErrNoRule
-}
-
-// createUserSpecificRule creates a user-specific copy of a rule with USER tokens resolved
-func (t *ACLTree) createUserSpecificRule(originalRule *ACLRule, userID string) *ACLRule {
-	// Clone the original aclspec.Rule
-	userRule := &aclspec.Rule{
-		Pattern: originalRule.rule.Pattern,
-		Access: &aclspec.Access{
-			Admin: originalRule.resolveAccessList(originalRule.rule.Access.Admin, userID),
-			Write: originalRule.resolveAccessList(originalRule.rule.Access.Write, userID),
-			Read:  originalRule.resolveAccessList(originalRule.rule.Access.Read, userID),
-		},
-		Limits: originalRule.rule.Limits,
-	}
-
-	// Create new ACLRule with the user-specific rule
-	return &ACLRule{
-		fullPattern: originalRule.fullPattern,
-		tplPattern:  originalRule.tplPattern,
-		rule:        userRule,
-		node:        originalRule.node,
-	}
 }
