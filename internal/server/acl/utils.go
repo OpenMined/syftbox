@@ -21,6 +21,10 @@ func calculateGlobSpecificity(glob string) int {
 	// Use forward slash for glob patterns
 	score := len(glob)*2 + strings.Count(glob, ACLPathSep)*10
 
+	if hasTemplatePattern(glob) {
+		score += 50
+	}
+
 	// penalize base score for substr wildcards
 	for i, c := range glob {
 		switch c {

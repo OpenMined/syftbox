@@ -2,6 +2,7 @@ package acl
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/openmined/syftbox/internal/aclspec"
@@ -103,7 +104,12 @@ func (n *ACLNode) SetRules(rules []*aclspec.Rule, terminal bool) {
 		// convert the rules to aclRules
 		aclRules := make([]*ACLRule, 0, len(sorted))
 		for _, rule := range sorted {
-			aclRules = append(aclRules, NewACLRule(rule, n))
+			rule, err := NewACLRule(rule, n)
+			if err != nil {
+				slog.Error("failed to create acl rule", "error", err)
+				continue
+			}
+			aclRules = append(aclRules, rule)
 		}
 		n.rules = aclRules
 	} else {

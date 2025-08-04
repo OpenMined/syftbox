@@ -3,9 +3,7 @@ package acl
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
-	"text/template"
 
 	"github.com/bmatcuk/doublestar/v4"
 	mapset "github.com/deckarep/golang-set/v2"
@@ -26,46 +24,28 @@ var (
 // It contains the full pattern of the rule, the rule itself, and the node it applies to
 // todo decouple this from aclspec.Rule
 type ACLRule struct {
-	fullPattern string             // full pattern = full path + glob
-	rule        *aclspec.Rule      // the rule itself
-	node        *ACLNode           // the node this rule applies to
-	tplPattern  *template.Template // nil if fullPattern has no template
-}
-
-// HasTemplate returns true if this rule contains template variables
-func (r *ACLRule) HasTemplate() bool {
-	return r.tplPattern != nil
-}
-
-// hasUserToken returns true if this rule contains USER tokens in access lists
-func (r *ACLRule) hasUserToken() bool {
-	return r.rule.Access.Admin.Contains(aclspec.TokenUser) ||
-		r.rule.Access.Write.Contains(aclspec.TokenUser) ||
-		r.rule.Access.Read.Contains(aclspec.TokenUser)
+	fullPattern string        // full pattern = full path + glob
+	rule        *aclspec.Rule // the rule itself
+	node        *ACLNode      // the node this rule applies to
+	matcher     Matcher       // generic matcher
 }
 
 // NewACLRule creates a new ACLRule with template compilation
-func NewACLRule(rule *aclspec.Rule, node *ACLNode) *ACLRule {
+func NewACLRule(rule *aclspec.Rule, node *ACLNode) (*ACLRule, error) {
 	fullPattern := ACLJoinPath(node.path, rule.Pattern)
 
-	// Compile template if the pattern contains template variables
-	var tplPattern *template.Template
-	if HasTemplatePattern(fullPattern) {
-		tmpl, err := NewTemplatePattern(fullPattern)
-		if err != nil {
-			slog.Error("failed to compile template pattern", "error", err)
-			return nil
-		} else {
-			tplPattern = tmpl
-		}
+	// create a generic matcher for the rule
+	matcher, err := matcherFromPattern(fullPattern)
+	if err != nil {
+		return nil, fmt.Errorf("new acl rule: %w", err)
 	}
 
 	return &ACLRule{
 		fullPattern: fullPattern,
 		rule:        rule,
 		node:        node,
-		tplPattern:  tplPattern,
-	}
+		matcher:     matcher,
+	}, nil
 }
 
 // Owner returns the owner of the rule (inherited from the node)
@@ -86,17 +66,9 @@ func (r *ACLRule) GetAccess() *aclspec.Access {
 	return r.rule.Access
 }
 
-// MatchesPath checks if this rule matches the given path for the given user
-func (r *ACLRule) MatchesPath(path string, ctx *TemplateContext) (bool, error) {
-	pattern := r.fullPattern
-	if r.tplPattern != nil {
-		var buf strings.Builder
-		if err := r.tplPattern.Execute(&buf, ctx); err != nil {
-			return false, fmt.Errorf("failed to execute template: %w", err)
-		}
-		pattern = buf.String()
-	}
-	return doublestar.Match(pattern, path)
+// Match checks if this rule matches the given path for the given user
+func (r *ACLRule) Match(path string, user *User) (bool, error) {
+	return r.matcher.Match(path, user)
 }
 
 // CheckAccess checks if the user has permission to perform the specified action on the node.
@@ -138,6 +110,42 @@ func (r *ACLRule) CheckAccess(req *ACLRequest) error {
 	}
 }
 
+// CheckLimits checks if the file is within the limits specified by the rule.
+func (r *ACLRule) CheckLimits(req *ACLRequest) error {
+	limits := r.GetLimits()
+
+	if limits == nil {
+		return nil
+	}
+
+	if limits.MaxFileSize > 0 && req.File.Size > limits.MaxFileSize {
+		return ErrFileSizeExceeded
+	}
+
+	if !limits.AllowDirs && (req.File.IsDir || strings.Count(req.Path, ACLPathSep) > 0) {
+		return ErrDirsNotAllowed
+	}
+
+	if !limits.AllowSymlinks && req.File.IsSymlink {
+		return ErrSymlinksNotAllowed
+	}
+
+	return nil
+}
+
+func (r *ACLRule) String() string {
+	return fmt.Sprintf("ACLRule{fullPattern: %s, matcher: %v, rule: %v, node: %v}", r.fullPattern, r.matcher.Type(), r.rule, r.node)
+}
+
+func (r *ACLRule) Clone() *ACLRule {
+	return &ACLRule{
+		fullPattern: r.fullPattern,
+		rule:        r.rule,
+		node:        r.node,
+		matcher:     r.matcher,
+	}
+}
+
 // resolveAccessList resolves USER token in an access list
 func (r *ACLRule) resolveAccessList(accessList mapset.Set[string], userID string) mapset.Set[string] {
 	// if USER token is in the access list, replace it with the actual user ID
@@ -174,38 +182,29 @@ func (r *ACLRule) hasAccess(accessList mapset.Set[string], userID string) bool {
 	return false
 }
 
-// CheckLimits checks if the file is within the limits specified by the rule.
-func (r *ACLRule) CheckLimits(req *ACLRequest) error {
-	limits := r.GetLimits()
-
-	if limits == nil {
-		return nil
-	}
-
-	if limits.MaxFileSize > 0 && req.File.Size > limits.MaxFileSize {
-		return ErrFileSizeExceeded
-	}
-
-	if !limits.AllowDirs && (req.File.IsDir || strings.Count(req.Path, ACLPathSep) > 0) {
-		return ErrDirsNotAllowed
-	}
-
-	if !limits.AllowSymlinks && req.File.IsSymlink {
-		return ErrSymlinksNotAllowed
-	}
-
-	return nil
+// hasUserToken returns true if this rule contains USER tokens in access lists
+func (r *ACLRule) hasUserToken() bool {
+	return r.rule.Access.Admin.Contains(aclspec.TokenUser) ||
+		r.rule.Access.Write.Contains(aclspec.TokenUser) ||
+		r.rule.Access.Read.Contains(aclspec.TokenUser)
 }
 
-func (r *ACLRule) String() string {
-	return fmt.Sprintf("ACLRule{fullPattern: %s, tplPattern: %v, rule: %v, node: %v}", r.fullPattern, r.tplPattern, r.rule, r.node)
-}
-
-func (r *ACLRule) Clone() *ACLRule {
-	return &ACLRule{
-		fullPattern: r.fullPattern,
-		tplPattern:  r.tplPattern,
-		rule:        r.rule,
-		node:        r.node,
+// Compile creates a user-specific copy of a rule with USER tokens resolved
+func (r *ACLRule) Compile(user *User) *ACLRule {
+	// if the rule doesn't have a USER token or is not a template, return the original rule
+	if r.matcher.Type() != MatcherTypeTemplate || !r.hasUserToken() {
+		return r
 	}
+
+	clone := r.Clone()
+	clone.rule = &aclspec.Rule{
+		Pattern: r.rule.Pattern,
+		Access: &aclspec.Access{
+			Admin: r.resolveAccessList(r.rule.Access.Admin, user.ID),
+			Write: r.resolveAccessList(r.rule.Access.Write, user.ID),
+			Read:  r.resolveAccessList(r.rule.Access.Read, user.ID),
+		},
+		Limits: r.rule.Limits,
+	}
+	return clone
 }
