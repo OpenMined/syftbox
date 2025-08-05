@@ -117,10 +117,11 @@ func (t *ACLTree) RemoveRuleSet(path string) bool {
 	return true
 }
 
-// LookupNearestNode returns the nearest node in the tree that has associated rules for the given path.
+// GetNearestNode returns the nearest node in the tree that has associated rules for the given path.
 // It returns nil if no such node is found.
-func (t *ACLTree) LookupNearestNode(normalizedPath string) *ACLNode {
-	parts := ACLPathSegments(normalizedPath)
+func (t *ACLTree) GetNearestNode(path string) *ACLNode {
+	path = ACLNormPath(path)
+	parts := ACLPathSegments(path)
 
 	var candidate *ACLNode
 	current := t.root
@@ -152,8 +153,8 @@ func (t *ACLTree) LookupNearestNode(normalizedPath string) *ACLNode {
 
 // GetNode finds the exact node applicable for the given path.
 func (t *ACLTree) GetNode(path string) *ACLNode {
-	normalizedPath := ACLNormPath(path)
-	parts := ACLPathSegments(normalizedPath)
+	path = ACLNormPath(path)
+	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
@@ -173,7 +174,7 @@ func (t *ACLTree) GetNode(path string) *ACLNode {
 
 func (t *ACLTree) GetCompiledRule(req *ACLRequest) (*ACLRule, error) {
 	// Find the nearest node with rules (NO inheritance - just nearest)
-	node := t.LookupNearestNode(ACLNormPath(req.Path))
+	node := t.GetNearestNode(req.Path)
 	if node == nil {
 		return nil, ErrNoRule
 	}
@@ -183,7 +184,8 @@ func (t *ACLTree) GetCompiledRule(req *ACLRequest) (*ACLRule, error) {
 	for _, rule := range rules {
 		// Check if this rule matches the path (with template resolution)
 		if matches, err := rule.Match(req.Path, req.User); err == nil && matches {
-			return rule.Compile(req.User), nil
+			compiled := rule.Compile(req.User)
+			return compiled, nil
 		}
 	}
 
