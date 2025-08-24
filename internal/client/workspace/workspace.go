@@ -134,7 +134,7 @@ func (w *Workspace) createDefaultACL() error {
 	if !aclspec.Exists(w.UserDir) {
 		rootRuleset := aclspec.NewRuleSet(
 			w.UserDir,
-			aclspec.UnsetTerminal,
+			aclspec.NotTerminal,
 			aclspec.NewDefaultRule(aclspec.PrivateAccess(), aclspec.DefaultLimits()),
 		)
 		if err := rootRuleset.Save(); err != nil {
@@ -146,7 +146,7 @@ func (w *Workspace) createDefaultACL() error {
 	if !aclspec.Exists(w.UserPublicDir) {
 		publicRuleset := aclspec.NewRuleSet(
 			w.UserPublicDir,
-			aclspec.UnsetTerminal,
+			aclspec.NotTerminal,
 			aclspec.NewDefaultRule(aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
 		)
 		if err := publicRuleset.Save(); err != nil {

@@ -3,7 +3,6 @@ package acl
 import (
 	"testing"
 
-	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -12,199 +11,202 @@ func TestNewACLCache(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 	assert.NotNil(t, cache.index)
-	assert.Empty(t, cache.index)
+	assert.Equal(t, 0, cache.Count())
 }
 
 func TestACLCacheGetSet(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
+	// Create test user and request
+	user := &User{ID: "testuser"}
+	req := NewRequest("test/path", user, AccessRead)
+
 	// Test getting from empty cache
-	rule := cache.Get("test/path")
-	assert.Nil(t, rule)
+	canAccess, found := cache.Get(req)
+	assert.False(t, found)
+	assert.False(t, canAccess)
 
-	// Create a test rule
-	testRule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
+	// Set access permission
+	cache.Set(req, true)
 
-	// Set the rule
-	cache.Set("test/path", testRule)
+	// Get the permission back
+	canAccess, found = cache.Get(req)
+	assert.True(t, found)
+	assert.True(t, canAccess)
 
-	// Get the rule back
-	retrievedRule := cache.Get("test/path")
-	require.NotNil(t, retrievedRule)
-	assert.Equal(t, testRule, retrievedRule)
-
-	// Test getting a different path
-	differentRule := cache.Get("different/path")
-	assert.Nil(t, differentRule)
+	// Test getting with different user
+	differentUser := &User{ID: "differentuser"}
+	differentReq := NewRequest("test/path", differentUser, AccessRead)
+	canAccess, found = cache.Get(differentReq)
+	assert.False(t, found)
+	assert.False(t, canAccess)
 }
 
 func TestACLCacheDelete(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create test rules
-	rule1 := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test1", "owner1", false, 1),
-		fullPattern: "test1/*.txt",
-	}
+	// Create test users and requests
+	user1 := &User{ID: "user1"}
+	user2 := &User{ID: "user2"}
+	req1 := NewRequest("test1/path", user1, AccessRead)
+	req2 := NewRequest("test2/path", user2, AccessRead)
 
-	rule2 := &ACLRule{
-		rule:        aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test2", "owner2", false, 1),
-		fullPattern: "test2/*.md",
-	}
+	// Set multiple permissions
+	cache.Set(req1, true)
+	cache.Set(req2, true)
 
-	// Set multiple rules
-	cache.Set("test1/path", rule1)
-	cache.Set("test2/path", rule2)
+	// Verify both permissions exist
+	canAccess1, found1 := cache.Get(req1)
+	assert.True(t, found1)
+	assert.True(t, canAccess1)
 
-	// Verify both rules exist
-	retrievedRule1 := cache.Get("test1/path")
-	require.NotNil(t, retrievedRule1)
-	assert.Equal(t, rule1, retrievedRule1)
+	canAccess2, found2 := cache.Get(req2)
+	assert.True(t, found2)
+	assert.True(t, canAccess2)
 
-	retrievedRule2 := cache.Get("test2/path")
-	require.NotNil(t, retrievedRule2)
-	assert.Equal(t, rule2, retrievedRule2)
+	// Delete permissions for test1 path
+	deleted := cache.Delete("test1/path")
+	assert.Equal(t, 1, deleted)
 
-	// Delete one rule
-	cache.Delete("test1/path")
+	// Verify the deleted permission is gone
+	canAccess1, found1 = cache.Get(req1)
+	assert.False(t, found1)
+	assert.False(t, canAccess1)
 
-	// Verify the deleted rule is gone
-	deletedRule := cache.Get("test1/path")
-	assert.Nil(t, deletedRule)
-
-	// Verify the other rule still exists
-	remainingRule := cache.Get("test2/path")
-	require.NotNil(t, remainingRule)
-	assert.Equal(t, rule2, remainingRule)
+	// Verify the other permission still exists
+	canAccess2, found2 = cache.Get(req2)
+	assert.True(t, found2)
+	assert.True(t, canAccess2)
 }
 
 func TestACLCacheDeletePrefix(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create test rules for different paths
-	rule1 := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("parent", "owner1", false, 1),
-		fullPattern: "parent/*.txt",
-	}
+	// Create test users and requests for different paths
+	user1 := &User{ID: "user1"}
+	user2 := &User{ID: "user2"}
+	user3 := &User{ID: "user3"}
+	user4 := &User{ID: "user4"}
 
-	rule2 := &ACLRule{
-		rule:        aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("parent/child", "owner2", false, 2),
-		fullPattern: "parent/child/*.md",
-	}
+	req1 := NewRequest("parent/file.txt", user1, AccessRead)
+	req2 := NewRequest("parent/child/file.md", user2, AccessRead)
+	req3 := NewRequest("parent/child/grandchild/file.go", user3, AccessRead)
+	req4 := NewRequest("other/file.py", user4, AccessRead)
 
-	rule3 := &ACLRule{
-		rule:        aclspec.NewRule("*.go", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("parent/child/grandchild", "owner3", false, 3),
-		fullPattern: "parent/child/grandchild/*.go",
-	}
+	// Set all permissions
+	cache.Set(req1, true)
+	cache.Set(req2, true)
+	cache.Set(req3, true)
+	cache.Set(req4, true)
 
-	rule4 := &ACLRule{
-		rule:        aclspec.NewRule("*.py", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("other", "owner4", false, 1),
-		fullPattern: "other/*.py",
-	}
+	// Verify all permissions exist initially
+	canAccess1, found1 := cache.Get(req1)
+	assert.True(t, found1)
+	assert.True(t, canAccess1)
 
-	// Set all rules
-	cache.Set("parent/file.txt", rule1)
-	cache.Set("parent/child/file.md", rule2)
-	cache.Set("parent/child/grandchild/file.go", rule3)
-	cache.Set("other/file.py", rule4)
+	canAccess2, found2 := cache.Get(req2)
+	assert.True(t, found2)
+	assert.True(t, canAccess2)
 
-	// Verify all rules exist initially
-	assert.NotNil(t, cache.Get("parent/file.txt"))
-	assert.NotNil(t, cache.Get("parent/child/file.md"))
-	assert.NotNil(t, cache.Get("parent/child/grandchild/file.go"))
-	assert.NotNil(t, cache.Get("other/file.py"))
+	canAccess3, found3 := cache.Get(req3)
+	assert.True(t, found3)
+	assert.True(t, canAccess3)
 
-	// Delete all rules with "parent" prefix
-	cache.DeletePrefix("parent")
+	canAccess4, found4 := cache.Get(req4)
+	assert.True(t, found4)
+	assert.True(t, canAccess4)
 
-	// Verify parent-related rules are deleted
-	assert.Nil(t, cache.Get("parent/file.txt"))
-	assert.Nil(t, cache.Get("parent/child/file.md"))
-	assert.Nil(t, cache.Get("parent/child/grandchild/file.go"))
+	// Delete all permissions with "parent" prefix
+	deleted := cache.DeletePrefix("parent")
+	assert.Equal(t, 3, deleted)
 
-	// Verify unrelated rule still exists
-	remainingRule := cache.Get("other/file.py")
-	require.NotNil(t, remainingRule)
-	assert.Equal(t, rule4, remainingRule)
+	// Verify parent-related permissions are deleted
+	canAccess1, found1 = cache.Get(req1)
+	assert.False(t, found1)
+	assert.False(t, canAccess1)
+
+	canAccess2, found2 = cache.Get(req2)
+	assert.False(t, found2)
+	assert.False(t, canAccess2)
+
+	canAccess3, found3 = cache.Get(req3)
+	assert.False(t, found3)
+	assert.False(t, canAccess3)
+
+	// Verify unrelated permission still exists
+	canAccess4, found4 = cache.Get(req4)
+	assert.True(t, found4)
+	assert.True(t, canAccess4)
 }
 
 func TestACLCacheDeletePrefixExactMatch(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create test rules with non-overlapping prefixes
-	rule1 := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("exact", "owner1", false, 1),
-		fullPattern: "exact/*.txt",
-	}
+	// Create test users and requests with non-overlapping prefixes
+	user1 := &User{ID: "user1"}
+	user2 := &User{ID: "user2"}
+	req1 := NewRequest("exact/file.txt", user1, AccessRead)
+	req2 := NewRequest("different/file.md", user2, AccessRead)
 
-	rule2 := &ACLRule{
-		rule:        aclspec.NewRule("*.md", aclspec.PrivateAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("different", "owner2", false, 1),
-		fullPattern: "different/*.md",
-	}
+	// Set permissions
+	cache.Set(req1, true)
+	cache.Set(req2, true)
 
-	// Set rules
-	cache.Set("exact/file.txt", rule1)
-	cache.Set("different/file.md", rule2)
+	// Verify both permissions exist
+	canAccess1, found1 := cache.Get(req1)
+	assert.True(t, found1)
+	assert.True(t, canAccess1)
 
-	// Verify both rules exist
-	assert.NotNil(t, cache.Get("exact/file.txt"))
-	assert.NotNil(t, cache.Get("different/file.md"))
+	canAccess2, found2 := cache.Get(req2)
+	assert.True(t, found2)
+	assert.True(t, canAccess2)
 
 	// Delete with exact prefix match
-	cache.DeletePrefix("exact")
+	deleted := cache.DeletePrefix("exact")
+	assert.Equal(t, 1, deleted)
 
 	// Verify only the exact match is deleted
-	assert.Nil(t, cache.Get("exact/file.txt"))
-	assert.NotNil(t, cache.Get("different/file.md"))
+	canAccess1, found1 = cache.Get(req1)
+	assert.False(t, found1)
+	assert.False(t, canAccess1)
+
+	canAccess2, found2 = cache.Get(req2)
+	assert.True(t, found2)
+	assert.True(t, canAccess2)
 }
 
 func TestACLCacheDeletePrefixEmpty(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create a test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
+	// Create a test user and request
+	user := &User{ID: "testuser"}
+	req := NewRequest("test/file.txt", user, AccessRead)
 
-	// Set the rule
-	cache.Set("test/file.txt", rule)
+	// Set the permission
+	cache.Set(req, true)
 
 	// Delete with empty prefix (should delete everything)
-	cache.DeletePrefix("")
+	deleted := cache.DeletePrefix("")
+	assert.Equal(t, 1, deleted)
 
-	// Verify the rule is deleted
-	assert.Nil(t, cache.Get("test/file.txt"))
+	// Verify the permission is deleted
+	canAccess, found := cache.Get(req)
+	assert.False(t, found)
+	assert.False(t, canAccess)
 }
 
 func TestACLCacheConcurrentAccess(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
+	// Create test user and request
+	user := &User{ID: "testuser"}
+	req := NewRequest("test/path", user, AccessRead)
 
 	// Test concurrent Set and Get operations
 	done := make(chan bool, 2)
@@ -212,7 +214,7 @@ func TestACLCacheConcurrentAccess(t *testing.T) {
 	// Goroutine 1: Set operations
 	go func() {
 		for i := 0; i < 100; i++ {
-			cache.Set("test/path", rule)
+			cache.Set(req, true)
 		}
 		done <- true
 	}()
@@ -220,7 +222,7 @@ func TestACLCacheConcurrentAccess(t *testing.T) {
 	// Goroutine 2: Get operations
 	go func() {
 		for i := 0; i < 100; i++ {
-			cache.Get("test/path")
+			cache.Get(req)
 		}
 		done <- true
 	}()
@@ -230,65 +232,72 @@ func TestACLCacheConcurrentAccess(t *testing.T) {
 	<-done
 
 	// Verify the final state
-	retrievedRule := cache.Get("test/path")
-	require.NotNil(t, retrievedRule)
-	assert.Equal(t, rule, retrievedRule)
+	canAccess, found := cache.Get(req)
+	assert.True(t, found)
+	assert.True(t, canAccess)
 }
 
-func TestACLCacheNilRule(t *testing.T) {
+func TestACLCacheDeniedAccess(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Test setting nil rule
-	cache.Set("test/path", nil)
+	// Create test user and request
+	user := &User{ID: "testuser"}
+	req := NewRequest("test/path", user, AccessRead)
 
-	// Get the nil rule back
-	retrievedRule := cache.Get("test/path")
-	assert.Nil(t, retrievedRule)
+	// Test setting denied access
+	cache.Set(req, false)
+
+	// Get the denied access back
+	canAccess, found := cache.Get(req)
+	assert.True(t, found)
+	assert.False(t, canAccess)
 }
 
 func TestACLCacheMultipleDeletes(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
+	// Create test user and request
+	user := &User{ID: "testuser"}
+	req := NewRequest("test/path", user, AccessRead)
 
-	// Set the rule
-	cache.Set("test/path", rule)
+	// Set the permission
+	cache.Set(req, true)
 
 	// Delete the same path multiple times (should not panic)
-	cache.Delete("test/path")
-	cache.Delete("test/path")
-	cache.Delete("test/path")
+	deleted1 := cache.Delete("test/path")
+	assert.Equal(t, 1, deleted1)
 
-	// Verify the rule is gone
-	assert.Nil(t, cache.Get("test/path"))
+	deleted2 := cache.Delete("test/path")
+	assert.Equal(t, 0, deleted2)
+
+	deleted3 := cache.Delete("test/path")
+	assert.Equal(t, 0, deleted3)
+
+	// Verify the permission is gone
+	canAccess, found := cache.Get(req)
+	assert.False(t, found)
+	assert.False(t, canAccess)
 }
 
 func TestACLCacheDeletePrefixNonExistent(t *testing.T) {
 	cache := NewACLCache()
 	require.NotNil(t, cache)
 
-	// Create test rule
-	rule := &ACLRule{
-		rule:        aclspec.NewRule("*.txt", aclspec.PublicReadAccess(), aclspec.DefaultLimits()),
-		node:        NewACLNode("test", "owner", false, 1),
-		fullPattern: "test/*.txt",
-	}
+	// Create test user and request
+	user := &User{ID: "testuser"}
+	req := NewRequest("test/path", user, AccessRead)
 
-	// Set the rule
-	cache.Set("test/path", rule)
+	// Set the permission
+	cache.Set(req, true)
 
 	// Delete with non-existent prefix
-	cache.DeletePrefix("nonexistent")
+	deleted := cache.DeletePrefix("nonexistent")
+	assert.Equal(t, 0, deleted)
 
-	// Verify the rule still exists
-	retrievedRule := cache.Get("test/path")
-	require.NotNil(t, retrievedRule)
-	assert.Equal(t, rule, retrievedRule)
+	// Verify the permission still exists
+	canAccess, found := cache.Get(req)
+	assert.True(t, found)
+	assert.True(t, canAccess)
 }

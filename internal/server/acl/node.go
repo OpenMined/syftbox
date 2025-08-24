@@ -1,12 +1,10 @@
 package acl
 
 import (
-	"slices"
-	"sort"
-	"strings"
+	"fmt"
+	"log/slog"
 	"sync"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/openmined/syftbox/internal/aclspec"
 )
 
@@ -18,8 +16,8 @@ type ACLVersion = uint16
 type ACLDepth = uint8
 
 const (
-	ACLMaxDepth   = 1<<8 - 1  // keep this in sync with the type ACLDepth
-	ACLMaxVersion = 1<<16 - 1 // keep this in sync with the type ACLVersion
+	ACLMaxDepth   = 1<<8 - 1
+	ACLMaxVersion = 1<<16 - 1
 )
 
 // ACLNode represents a node in the ACL tree.
@@ -106,11 +104,12 @@ func (n *ACLNode) SetRules(rules []*aclspec.Rule, terminal bool) {
 		// convert the rules to aclRules
 		aclRules := make([]*ACLRule, 0, len(sorted))
 		for _, rule := range sorted {
-			aclRules = append(aclRules, &ACLRule{
-				rule:        rule,
-				node:        n,
-				fullPattern: ACLJoinPath(n.path, rule.Pattern),
-			})
+			rule, err := NewACLRule(rule, n)
+			if err != nil {
+				slog.Error("failed to create acl rule", "error", err)
+				continue
+			}
+			aclRules = append(aclRules, rule)
 		}
 		n.rules = aclRules
 	} else {
@@ -131,25 +130,6 @@ func (n *ACLNode) ClearRules() {
 	defer n.mu.Unlock()
 	n.rules = nil
 	n.version++
-}
-
-// FindBestRule finds the best matching rule for the given path.
-func (n *ACLNode) FindBestRule(path string) (*ACLRule, error) {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-
-	if n.rules == nil {
-		return nil, ErrNoRule
-	}
-
-	// find the best matching rule (rules are already sorted by specificity)
-	for _, aclRule := range n.rules {
-		if ok, _ := doublestar.Match(aclRule.fullPattern, path); ok {
-			return aclRule, nil
-		}
-	}
-
-	return nil, ErrNoRule
 }
 
 // GetOwner returns the owner of the node.
@@ -187,44 +167,6 @@ func (n *ACLNode) Equal(other *ACLNode) bool {
 	return n.path == other.path && n.terminal == other.terminal && n.depth == other.depth && n.version == other.version
 }
 
-func calculateGlobSpecificity(glob string) int {
-	// early return for the most specific glob patterns
-	switch glob {
-	case "**":
-		return -100
-	case "**/*":
-		return -99
-	}
-
-	// 2L + 10D - wildcard penalty
-	// Use forward slash for glob patterns
-	score := len(glob)*2 + strings.Count(glob, ACLPathSep)*10
-
-	// penalize base score for substr wildcards
-	for i, c := range glob {
-		switch c {
-		case '*':
-			if i == 0 {
-				score -= 20 // Leading wildcards are very unspecific
-			} else {
-				score -= 10 // Other wildcards are less penalized
-			}
-		case '?', '!', '[', '{':
-			score -= 2 // Non * wildcards get smaller penalty
-		}
-	}
-
-	return score
-}
-
-func sortRulesBySpecificity(rules []*aclspec.Rule) []*aclspec.Rule {
-	// copy the rules
-	clone := slices.Clone(rules)
-
-	// sort by specificity (or priority), descending
-	sort.Slice(clone, func(i, j int) bool {
-		return calculateGlobSpecificity(clone[i].Pattern) > calculateGlobSpecificity(clone[j].Pattern)
-	})
-
-	return clone
+func (n *ACLNode) String() string {
+	return fmt.Sprintf("ACLNode{path: %s, terminal: %v, depth: %v, version: %v}", n.path, n.terminal, n.depth, n.version)
 }

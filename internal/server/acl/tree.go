@@ -87,27 +87,41 @@ func (t *ACLTree) AddRuleSet(ruleset *aclspec.RuleSet) (*ACLNode, error) {
 	return current, nil
 }
 
-// GetEffectiveRule returns the most specific rule applicable to the given path.
-func (t *ACLTree) GetEffectiveRule(path string) (*ACLRule, error) {
+// Removes a ruleset at the specified path
+func (t *ACLTree) RemoveRuleSet(path string) bool {
+	var parent *ACLNode
+	var lastPart string
+
 	normalizedPath := ACLNormPath(path)
+	parts := ACLPathSegments(normalizedPath)
+	currentNode := t.root
 
-	node := t.LookupNearestNode(normalizedPath) // O(depth)
-	if node == nil {
-		return nil, ErrNoRuleSet
+	for _, part := range parts {
+		child, exists := currentNode.GetChild(part)
+		if !exists {
+			return false
+		}
+
+		parent = currentNode
+		currentNode = child
+		lastPart = part
 	}
 
-	rule, err := node.FindBestRule(normalizedPath) // O(rules|node)
-	if err != nil {
-		return nil, err // returns ErrNoRuleFound if no rule is found
+	// clear the rules for the node, but if it has no children, delete the whole node from it's parent
+	if currentNode.GetChildCount() == 0 {
+		parent.DeleteChild(lastPart)
+	} else {
+		currentNode.ClearRules()
 	}
 
-	return rule, nil
+	return true
 }
 
-// LookupNearestNode returns the nearest node in the tree that has associated rules for the given path.
+// GetNearestNode returns the nearest node in the tree that has associated rules for the given path.
 // It returns nil if no such node is found.
-func (t *ACLTree) LookupNearestNode(normalizedPath string) *ACLNode {
-	parts := ACLPathSegments(normalizedPath)
+func (t *ACLTree) GetNearestNode(path string) *ACLNode {
+	path = ACLNormPath(path)
+	parts := ACLPathSegments(path)
 
 	var candidate *ACLNode
 	current := t.root
@@ -139,8 +153,8 @@ func (t *ACLTree) LookupNearestNode(normalizedPath string) *ACLNode {
 
 // GetNode finds the exact node applicable for the given path.
 func (t *ACLTree) GetNode(path string) *ACLNode {
-	normalizedPath := ACLNormPath(path)
-	parts := ACLPathSegments(normalizedPath)
+	path = ACLNormPath(path)
+	parts := ACLPathSegments(path)
 	current := t.root
 
 	for _, part := range parts {
@@ -158,32 +172,22 @@ func (t *ACLTree) GetNode(path string) *ACLNode {
 	return current
 }
 
-// Removes a ruleset at the specified path
-func (t *ACLTree) RemoveRuleSet(path string) bool {
-	var parent *ACLNode
-	var lastPart string
+func (t *ACLTree) GetCompiledRule(req *ACLRequest) (*ACLRule, error) {
+	// Find the nearest node with rules (NO inheritance - just nearest)
+	node := t.GetNearestNode(req.Path)
+	if node == nil {
+		return nil, ErrNoRule
+	}
 
-	normalizedPath := ACLNormPath(path)
-	parts := ACLPathSegments(normalizedPath)
-	currentNode := t.root
-
-	for _, part := range parts {
-		child, exists := currentNode.GetChild(part)
-		if !exists {
-			return false
+	// Check each rule in order of specificity
+	rules := node.GetRules()
+	for _, rule := range rules {
+		// Check if this rule matches the path (with template resolution)
+		if matches, err := rule.Match(req.Path, req.User); err == nil && matches {
+			compiled := rule.Compile(req.User)
+			return compiled, nil
 		}
-
-		parent = currentNode
-		currentNode = child
-		lastPart = part
 	}
 
-	// clear the rules for the node, but if it has no children, delete the whole node from it's parent
-	if currentNode.GetChildCount() == 0 {
-		parent.DeleteChild(lastPart)
-	} else {
-		currentNode.ClearRules()
-	}
-
-	return true
+	return nil, ErrNoRule
 }

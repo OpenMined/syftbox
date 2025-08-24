@@ -7,18 +7,19 @@ import (
 )
 
 const (
-	ACLFileName   = "syft.pub.yaml"
-	Everyone      = "*"
+	FileName      = "syft.pub.yaml"
+	TokenUser     = "USER"
+	TokenEveryone = "*"
 	AllFiles      = "**"
-	SetTerminal   = true
-	UnsetTerminal = false
+	Terminal      = true
+	NotTerminal   = false
 )
 
 // IsACLFile checks if the path is an syft.pub.yaml file
 func IsACLFile(path string) bool {
 	// Extract the base name from the path
 	base := filepath.Base(path)
-	return base == ACLFileName
+	return base == FileName
 }
 
 // AsACLPath converts any path to exact acl file path
@@ -26,12 +27,12 @@ func AsACLPath(path string) string {
 	if IsACLFile(path) {
 		return path
 	}
-	return filepath.Join(path, ACLFileName)
+	return filepath.Join(path, FileName)
 }
 
 // WithoutACLPath truncates syft.pub.yaml from the path
 func WithoutACLPath(path string) string {
-	return strings.TrimSuffix(path, ACLFileName)
+	return strings.TrimSuffix(path, FileName)
 }
 
 // Exists checks if the ACL file exists at the given path
