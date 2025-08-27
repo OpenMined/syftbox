@@ -73,6 +73,11 @@ func (s *SyftBoxURL) ToLocalPath() string {
 	return filepath.ToSlash(filepath.Join(s.Datasite, appDataPath, s.AppName, rpcPath, endpoint))
 }
 
+func (s *SyftBoxURL) ToLocalPathWithSuffix(suffix string) string {
+	endpoint := strings.Trim(s.Endpoint, pathSeparator)
+	return filepath.ToSlash(filepath.Join(s.Datasite, appDataPath, s.AppName, rpcPath, endpoint, suffix))
+}
+
 // Validate validates the SyftBoxURL fields
 func (s *SyftBoxURL) Validate() error {
 	if s.Datasite == "" {
