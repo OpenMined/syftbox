@@ -58,7 +58,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
 	aclH := acl.NewACLHandler(svc.ACL)
-	sendH := send.New(send.NewWSMsgDispatcher(hub), send.NewBlobMsgStore(svc.Blob))
+	sendH := send.New(send.NewWSMsgDispatcher(hub), send.NewBlobMsgStore(svc.Blob), svc.ACL)
 	didH := did.NewDIDHandler(svc.Blob)
 
 	// --------------------------- routes ---------------------------

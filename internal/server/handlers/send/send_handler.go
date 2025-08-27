@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/acl"
 )
 
 // SendHandler handles HTTP requests for sending messages
@@ -17,8 +18,8 @@ type SendHandler struct {
 }
 
 // New creates a new send handler
-func New(msgDispatcher MessageDispatcher, msgStore RPCMsgStore) *SendHandler {
-	service := NewSendService(msgDispatcher, msgStore, nil)
+func New(msgDispatcher MessageDispatcher, msgStore RPCMsgStore, acl *acl.ACLService) *SendHandler {
+	service := NewSendService(msgDispatcher, msgStore, acl, nil)
 	return &SendHandler{service: service}
 }
 

@@ -10,8 +10,11 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/utils"
 )
@@ -35,10 +38,11 @@ type SendService struct {
 	dispatcher MessageDispatcher
 	store      RPCMsgStore
 	cfg        *Config
+	acl        *acl.ACLService
 }
 
 // NewSendService creates a new send service
-func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) *SendService {
+func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, acl *acl.ACLService, cfg *Config) *SendService {
 	if cfg == nil {
 		cfg = &Config{
 			DefaultTimeout:      1 * time.Second,
@@ -48,7 +52,7 @@ func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) 
 			MaxBodySize:         4 << 20, // 4MB
 		}
 	}
-	return &SendService{dispatcher: dispatch, store: store, cfg: cfg}
+	return &SendService{dispatcher: dispatch, store: store, acl: acl, cfg: cfg}
 }
 
 // SendMessage handles sending a message to a user
@@ -71,8 +75,15 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 		return nil, fmt.Errorf("failed to marshal RPC message: %w", err)
 	}
 
+	// if the sender suffix is enabled, add the sender to the endpoint
+	if req.SuffixSender {
+		req.SyftURL.Endpoint = path.Join(req.SyftURL.Endpoint, req.From)
+	}
+
+	// create an etag for the request
 	etag := fmt.Sprintf("%x", md5.Sum(rpcMsgBytes))
 
+	// create a new HTTP message
 	msg := syftmsg.NewHttpMsg(
 		req.From,
 		req.SyftURL,
@@ -83,19 +94,37 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 		etag,
 	)
 
-	// TODO: Check if user has permission to send message to this application
-
-	// Dispatch the message to the user via websocket
-	dispatched := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg)
-
-	// relative rpc request file path to datasite
-	relPath := path.Join(
+	// Relative path to the request file
+	requestRelPath := path.Join(
 		req.SyftURL.ToLocalPath(),
 		fmt.Sprintf("%s.%s", rpcMsg.ID.String(), "request"),
 	)
 
+	// Function to check if the user has permission to send message to this application
+	hasAccess := func() error {
+		// if the user is the owner of the datasite, they have access
+		if datasite.IsOwner(requestRelPath, req.From) {
+			return nil
+		}
+
+		// otherwise, check if the user has access to the request file
+		return s.acl.CanAccess(&acl.ACLRequest{
+			Path:  requestRelPath,
+			User:  &acl.User{ID: req.From},
+			Level: acl.AccessWrite,
+		})
+	}
+
+	// Check if the user has permission to send message to this application
+	if err := hasAccess(); err != nil {
+		return nil, fmt.Errorf("permission denied: %w", err)
+	}
+
+	// Dispatch the message to the user via websocket
+	dispatched := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg)
+
 	// Store the request in blob storage
-	err = s.store.StoreMsg(ctx, relPath, rpcMsgBytes)
+	err = s.store.StoreMsg(ctx, requestRelPath, rpcMsgBytes)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to store RPC request: %w", err)
@@ -115,6 +144,9 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 }
 
 // checkForResponse handles sending a message when the user is online
+// it polls for the response in blob storage until the timeout is reached
+// if the response is found, it returns the response
+// if the timeout is reached, it returns an error
 func (s *SendService) checkForResponse(
 	ctx context.Context,
 	req *MessageRequest,
@@ -156,12 +188,7 @@ func (s *SendService) checkForResponse(
 	}
 
 	// Clean up in background
-	go s.cleanReqResponse(
-		req.SyftURL.Datasite,
-		req.SyftURL.AppName,
-		req.SyftURL.Endpoint,
-		rpcMsg.ID.String(),
-	)
+	go s.cleanReqResponse(req.SyftURL, rpcMsg.ID.String())
 
 	return &SendResult{
 		Status:    http.StatusOK,
@@ -174,19 +201,38 @@ func (s *SendService) checkForResponse(
 func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error) {
 
 	// Validate if the corresponding request exists
-	requestBlobPath := path.Join(req.SyftURL.ToLocalPath(), fmt.Sprintf("%s.request", req.RequestID))
+	findValidRequest := func() (string, error) {
 
-	_, err := s.store.GetMsg(ctx, requestBlobPath)
-	if err != nil {
-		if errors.Is(err, ErrMsgNotFound) {
-			return nil, ErrRequestNotFound
+		// Get the candidate request paths
+		requestBlobPaths := s.getCandidateRequestPaths(req)
+
+		// Check if the request exists in the candidate paths
+		for _, requestBlobPath := range requestBlobPaths {
+			// Get the request from the blob storage
+			_, err := s.store.GetMsg(ctx, requestBlobPath)
+			if err != nil {
+				// If the request is not found, continue to the next path
+				if errors.Is(err, ErrMsgNotFound) {
+					continue
+				}
+				// If the request is found, return nil
+				return "", err
+			}
+
+			return requestBlobPath, nil
 		}
+
+		// If the request is not found in any of the candidate paths, return an error
+		return "", ErrRequestNotFound
+	}
+
+	requestBlobPath, err := findValidRequest()
+	if err != nil {
 		return nil, err
 	}
 
 	// Check if the corresponding response exists
-	responseFileName := fmt.Sprintf("%s.response", req.RequestID)
-	responseBlobPath := path.Join(req.SyftURL.ToLocalPath(), responseFileName)
+	responseBlobPath := strings.Replace(requestBlobPath, ".request", ".response", 1)
 
 	var timeout time.Duration
 	if req.Timeout > 0 {
@@ -211,12 +257,7 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	}
 
 	// Clean up in background
-	go s.cleanReqResponse(
-		req.SyftURL.Datasite,
-		req.SyftURL.AppName,
-		req.SyftURL.Endpoint,
-		req.RequestID,
-	)
+	go s.cleanReqResponse(req.SyftURL, req.RequestID)
 
 	return &PollResult{
 		Status:    http.StatusOK,
@@ -258,9 +299,9 @@ func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeou
 }
 
 // cleanReqResponse cleans up request and response files
-func (s *SendService) cleanReqResponse(sender, appName, appEp, requestID string) {
-	requestPath := path.Join(sender, "app_data", appName, "rpc", appEp, fmt.Sprintf("%s.request", requestID))
-	responsePath := path.Join(sender, "app_data", appName, "rpc", appEp, fmt.Sprintf("%s.response", requestID))
+func (s *SendService) cleanReqResponse(syftURL utils.SyftBoxURL, requestID string) {
+	requestPath := path.Join(syftURL.ToLocalPath(), fmt.Sprintf("%s.request", requestID))
+	responsePath := path.Join(syftURL.ToLocalPath(), fmt.Sprintf("%s.response", requestID))
 
 	if err := s.store.DeleteMsg(context.Background(), requestPath); err != nil {
 		slog.Error("failed to delete request object", "error", err, "path", requestPath)
@@ -310,4 +351,19 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 // GetConfig returns the service configuration
 func (s *SendService) GetConfig() *Config {
 	return s.cfg
+}
+
+// Returns both new and legacy request paths
+func (s *SendService) getCandidateRequestPaths(req *PollObjectRequest) []string {
+	filename := fmt.Sprintf("%s.request", req.RequestID)
+	basePath := req.SyftURL.ToLocalPath()
+
+	requestPaths := []string{
+		// Try sender suffix path first (new request path)
+		path.Join(basePath, req.From, filename),
+		// Fallback to legacy path (old request path)
+		path.Join(basePath, filename),
+	}
+
+	return requestPaths
 }

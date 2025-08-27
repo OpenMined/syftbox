@@ -47,17 +47,17 @@ type Headers map[string]string
 
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
-	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
-	From    string           `form:"x-syft-from" binding:"required"` // The sender of the message
-	Timeout int              `form:"timeout" binding:"gte=0"`        // The timeout for the request in milliseconds
-	AsRaw   bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
-	Method  string           // Will be set from request method
-	Headers Headers          // Will be set from request headers
+	SyftURL      utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
+	From         string           `form:"x-syft-from" binding:"required"` // The sender of the message
+	Timeout      int              `form:"timeout" binding:"gte=0"`        // The timeout for the request in milliseconds
+	AsRaw        bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
+	Method       string           // Will be set from request method
+	Headers      Headers          // Will be set from request headers
+	SuffixSender bool             `form:"suffix-sender" default:"false"` // If true, the sender prefix will be added to the request
 }
 
 func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
 
-	// TODO: Filter out headers that are not allowed
 	h.Headers = make(Headers)
 	for k, v := range ctx.Request.Header {
 		if len(v) > 0 {
