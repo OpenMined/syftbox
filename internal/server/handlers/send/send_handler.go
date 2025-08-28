@@ -63,6 +63,13 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	result, err := h.service.SendMessage(ctx.Request.Context(), &req, bodyBytes)
 	if err != nil {
+		if errors.Is(err, ErrPermissionDenied) {
+			ctx.PureJSON(http.StatusForbidden, APIError{
+				Error:   ErrorPermissionDenied,
+				Message: "Permission denied.",
+			})
+			return
+		}
 		slog.Error("failed to send message", "error", err)
 		ctx.PureJSON(http.StatusInternalServerError, APIError{
 			Error:   ErrorInternal,
@@ -163,6 +170,15 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			ctx.PureJSON(http.StatusNotFound, APIError{
 				Error:     ErrorNotFound,
 				Message:   "No request found.",
+				RequestID: req.RequestID,
+			})
+			return
+		}
+
+		if errors.Is(err, ErrPermissionDenied) {
+			ctx.PureJSON(http.StatusForbidden, APIError{
+				Error:     ErrorPermissionDenied,
+				Message:   "Permission denied.",
 				RequestID: req.RequestID,
 			})
 			return

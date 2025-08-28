@@ -20,8 +20,9 @@ import (
 )
 
 var (
-	ErrPollTimeout     = errors.New("poll timeout")
-	ErrRequestNotFound = errors.New("request not found")
+	ErrPollTimeout      = errors.New("poll timeout")
+	ErrRequestNotFound  = errors.New("request not found")
+	ErrPermissionDenied = errors.New("permission denied")
 )
 
 // Config holds the service configuration
@@ -100,24 +101,9 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 		fmt.Sprintf("%s.%s", rpcMsg.ID.String(), "request"),
 	)
 
-	// Function to check if the user has permission to send message to this application
-	hasAccess := func() error {
-		// if the user is the owner of the datasite, they have access
-		if datasite.IsOwner(requestRelPath, req.From) {
-			return nil
-		}
-
-		// otherwise, check if the user has access to the request file
-		return s.acl.CanAccess(&acl.ACLRequest{
-			Path:  requestRelPath,
-			User:  &acl.User{ID: req.From},
-			Level: acl.AccessWrite,
-		})
-	}
-
 	// Check if the user has permission to send message to this application
-	if err := hasAccess(); err != nil {
-		return nil, fmt.Errorf("permission denied: %w", err)
+	if err := s.checkPermission(requestRelPath, req.From, acl.AccessWrite); err != nil {
+		return nil, ErrPermissionDenied
 	}
 
 	// Dispatch the message to the user via websocket
@@ -204,12 +190,12 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	findValidRequest := func() (string, error) {
 
 		// Get the candidate request paths
-		requestBlobPaths := s.getCandidateRequestPaths(req)
+		requestRelPaths := s.getCandidateRequestPaths(req)
 
 		// Check if the request exists in the candidate paths
-		for _, requestBlobPath := range requestBlobPaths {
+		for _, requestRelPath := range requestRelPaths {
 			// Get the request from the blob storage
-			_, err := s.store.GetMsg(ctx, requestBlobPath)
+			_, err := s.store.GetMsg(ctx, requestRelPath)
 			if err != nil {
 				// If the request is not found, continue to the next path
 				if errors.Is(err, ErrMsgNotFound) {
@@ -219,20 +205,25 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 				return "", err
 			}
 
-			return requestBlobPath, nil
+			return requestRelPath, nil
 		}
 
 		// If the request is not found in any of the candidate paths, return an error
 		return "", ErrRequestNotFound
 	}
 
-	requestBlobPath, err := findValidRequest()
+	requestRelPath, err := findValidRequest()
 	if err != nil {
 		return nil, err
 	}
 
+	// Check if user has read access to the request
+	if err := s.checkPermission(requestRelPath, req.From, acl.AccessRead); err != nil {
+		return nil, ErrPermissionDenied
+	}
+
 	// Check if the corresponding response exists
-	responseBlobPath := strings.Replace(requestBlobPath, ".request", ".response", 1)
+	responseRelPath := strings.Replace(requestRelPath, ".request", ".response", 1)
 
 	var timeout time.Duration
 	if req.Timeout > 0 {
@@ -241,7 +232,7 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 		timeout = s.cfg.DefaultTimeout
 	}
 
-	object, err := s.pollForObject(ctx, responseBlobPath, timeout)
+	object, err := s.pollForObject(ctx, responseRelPath, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -366,4 +357,19 @@ func (s *SendService) getCandidateRequestPaths(req *PollObjectRequest) []string 
 	}
 
 	return requestPaths
+}
+
+// Check permission to the path
+func (s *SendService) checkPermission(path string, user string, level acl.AccessLevel) error {
+	// if the user is the owner of the datasite, they have access
+	if datasite.IsOwner(path, user) {
+		return nil
+	}
+
+	// Otherwise, check if the user has access to the path
+	return s.acl.CanAccess(&acl.ACLRequest{
+		Path:  path,
+		User:  &acl.User{ID: user},
+		Level: level,
+	})
 }
