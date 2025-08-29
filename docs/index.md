@@ -5,6 +5,21 @@
 SyftBox is a privacy-preserving compute platform that enables secure data sharing and computation across distributed datasites.
 
 ## Documentation
+- [Access Control List (ACL) System](./acl-system.md)
+  - [Overview](./acl-system.md#overview)
+  - [Architecture](./acl-system.md#architecture)
+  - [ACL File Format](./acl-system.md#acl-file-format)
+  - [Data Structures](./acl-system.md#data-structures)
+  - [Access Levels](./acl-system.md#access-levels)
+  - [Tree-Based Lookup Algorithm](./acl-system.md#tree-based-lookup-algorithm)
+  - [Terminal Nodes: When and Why](./acl-system.md#terminal-nodes-when-and-why)
+  - [Caching Strategy](./acl-system.md#caching-strategy)
+  - [Security Considerations](./acl-system.md#security-considerations)
+  - [Performance Optimizations](./acl-system.md#performance-optimizations)
+  - [Error Handling](./acl-system.md#error-handling)
+  - [Default Datasite Conventions](./acl-system.md#default-datasite-conventions)
+  - [Best Practices](./acl-system.md#best-practices)
+  - [Integration Points](./acl-system.md#integration-points)
 - [Sync System](./sync.md)
   - [Overview](./sync.md#overview)
   - [Architecture](./sync.md#architecture)
