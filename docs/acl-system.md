@@ -48,25 +48,24 @@ rules:
   - pattern: "**/*.csv"     # Glob pattern for file matching
     access:
       admin: []             # Admin users (full control)
-      write: ["user1"]      # Write permission users
+      write: ["user1@example.com"]      # Write permission users
       read: ["*"]           # Read permission users (* = everyone)
   
   - pattern: "private/**"
     access:
-      admin: ["USER"]       # USER token = datasite owner
-      write: []
-      read: []
+      admin: []             # Only datasite owner can access it.
+      write: []             # No read access
+      read: []              # No write access 
   
   - pattern: "**"           # Default rule (catch-all)
     access:
       admin: []
       write: []
-      read: ["user2", "user3"]
+      read: ["user2@example.com", "user3@example.com"]
 ```
 
 ### Special Tokens
 
-- `USER`: Placeholder for the datasite owner
 - `*`: Wildcard representing all users (public access)
 - `**`: Glob pattern matching all files recursively
 
@@ -114,17 +113,16 @@ type ACLNode struct {
 
 Example node structure in memory:
 ```
-root (path: "", owner: "")
+root (path: "/", owner: "")
 ├── alice (path: "alice", owner: "alice")
 │   ├── rules: [
-│   │     ACLRule{pattern: "**/*.csv", access: {read: ["*"]}},
-│   │     ACLRule{pattern: "**", access: {read: []}}
+│   │     ACLRule{fullPattern: "alice/**/*.csv", rule: {pattern: "**/*.csv", access: {read: ["*"]}}},
+│   │     ACLRule{fullPattern: "alice/**", rule: {pattern: "**", access: {read: []}}}
 │   │   ]
 │   ├── public (path: "alice/public", owner: "alice")
-│   │   └── rules: [ACLRule{pattern: "**", access: {read: ["*"]}}]
+│   │   └── rules: [ACLRule{fullPattern: "alice/public/**", rule: {pattern: "**", access: {read: ["*"]}}}]
 │   └── private (path: "alice/private", owner: "alice", terminal: true)
-│       └── rules: [ACLRule{pattern: "**", access: {read: [], write: []}}]
-```
+│       └── rules: [ACLRule{fullPattern: "alice/private/**", rule: {pattern: "**", access: {read: [], write: []}}}]```
 
 #### ACLRule
 Compiled rule with resolved patterns:
@@ -173,7 +171,6 @@ type Access struct {
 
 // Special values in sets:
 // "*" = all users (public access)
-// "USER" = replaced with datasite owner at runtime
 // "alice@example.com" = specific user email
 ```
 
@@ -327,19 +324,23 @@ Rules are sorted by a specificity score to ensure most specific patterns match f
 
 ```go
 // Example calculation for pattern "public/**/*.csv"
-baseScore := 2 * len("public/**/*.csv") + 10 * strings.Count("/", 1)
-          = 2 * 15 + 10 * 1 = 40
+baseScore := len("public/**/*.csv")*2 + strings.Count("public/**/*.csv", "/")*10
+          = 15*2 + 2*10 
+          = 30 + 20 
+          = 50
+
 
 // Apply wildcard penalties
-score := 40
-score -= 10  // for single '*' in "*.csv"
-score -= 100 // for '**' pattern
-// Final score: -70
+score := 50
+score -= 10  // for first '*' in "**"
+score -= 10  // for second '*' in "**"
+score -= 10  // for '*' in "*.csv"
+// Final score: 20
 
 // Comparison with other patterns:
 "public/data.csv"    → score: 34 (most specific)
 "public/*.csv"       → score: 14
-"public/**/*.csv"    → score: -70
+"public/**/*.csv"    → score: 20
 "**"                 → score: -100 (least specific)
 ```
 
@@ -349,58 +350,59 @@ Consider this directory structure and ACL configuration:
 
 ```
 alice/
-├── syft.pub.yaml           # Root ACL
+├── syft.pub.yaml       # Root ACL
 │   terminal: false
 │   rules:
 │     - pattern: "**/*.csv"
-│       access: {read: ["data-team"]}
+│       access: {read: ["bob@example.com", "carol@example.com"]}  # Individual emails
 │     - pattern: "**"
 │       access: {read: []}
 │
 ├── public/
-│   ├── syft.pub.yaml      # Public ACL
+│   ├── syft.pub.yaml
 │   │   terminal: false
 │   │   rules:
 │   │     - pattern: "**"
-│   │       access: {read: ["*"]}
-│   │
-│   └── data.csv           # Target file
+│   │       access: {read: ["*"]}  # Public access
+│   └── data.csv       # Target file
 │
 └── private/
-    └── syft.pub.yaml      # Private ACL (terminal)
+    └── syft.pub.yaml   # Private ACL (terminal)
         terminal: true
         rules:
           - pattern: "**"
             access: {read: [], write: []}
 ```
 
-When `bob@example.com` (member of "data-team") tries to read `/alice/public/data.csv`:
+When `bob@example.com` tries to read `/alice/public/data.csv`:
 
 ```
-STEP 1: Build Tree Structure
-root
-└── alice (owner: "alice")
-    ├── rules: [
-    │     {pattern: "alice/**/*.csv", access: {read: ["data-team"]}},
-    │     {pattern: "alice/**", access: {read: []}}
-    │   ]
-    ├── public
-    │   └── rules: [{pattern: "alice/public/**", access: {read: ["*"]}}]
-    └── private (terminal: true)
-        └── rules: [{pattern: "alice/private/**", access: {read: [], write: []}}]
+STEP 0: Owner Check
+- User: "bob@example.com"
+- Path: "alice/public/data.csv"
+- Is bob owner of alice? NO → Continue to ACL check
 
-STEP 2: Lookup Process
+STEP 1: Cache Lookup
+- Check cache for "bob@example.com:/alice/public/data.csv:1"
+- Cache miss → Continue to tree lookup
+
+STEP 2: Tree Lookup
 - Path: "alice/public/data.csv"
 - Traverse: root → alice → public
 - Found node with rules at: "alice/public"
-- Rules to evaluate (sorted by specificity):
-  1. From alice/public: "alice/public/**" (score: -96)
-  2. From alice: "alice/**/*.csv" (score: -74)  
-  3. From alice: "alice/**" (score: -100)
+- Rules to evaluate: [ACLRule{fullPattern: "alice/public/**", ...}]
 
 STEP 3: Pattern Matching
 - Test "alice/public/**" against "alice/public/data.csv"
-  → MATCH! Check access: "*" includes everyone → ALLOW
+  → MATCH! 
+
+STEP 4: Access Check
+- Check if "bob@example.com" has read access
+- Rule has read: ["*"] → ALLOW
+
+STEP 5: Cache Update
+- Store result in cache
+- Return: ALLOW
 
 RESULT: Access granted (stopped at first matching rule)
 ```
@@ -412,6 +414,7 @@ Here's how the data structures look during a permission check:
 ```go
 // ACLNode at "alice/public" after loading rules:
 &ACLNode{
+    mu:       sync.RWMutex{},
     path:     "alice/public",
     owner:    "alice",
     terminal: false,
@@ -420,28 +423,26 @@ Here's how the data structures look during a permission check:
     rules: []*ACLRule{
         {
             fullPattern: "alice/public/**",
-            rule: &Rule{
+            rule: &aclspec.Rule{
                 Pattern: "**",
-                Access: &Access{
-                    Read:  mapset.NewSet("*"),        // Everyone
-                    Write: mapset.NewSet[string](),   // Empty
-                    Admin: mapset.NewSet[string](),   // Empty
+                Access: &aclspec.Access{
+                    Read:  mapset.NewSet("*"),
+                    Write: mapset.NewSet[string](),
+                    Admin: mapset.NewSet[string](),
                 },
+                Limits: &aclspec.Limits{},
             },
             node: /* reference to this node */,
         },
     },
-    children: map[string]*ACLNode{
-        "datasets": /* child node */,
-        "reports":  /* child node */,
-    },
+    children: map[string]*ACLNode{},  // May be empty initially
 }
 
 // Cache entry after successful lookup:
-cache.entries["bob@example.com:/alice/public/data.csv:1"] = CacheEntry{
-    allowed:   true,
-    timestamp: time.Now(),
-    version:   3,  // Matches node version
+cache.index["alice/public/data.csv"] = &ACLRule{
+    fullPattern: "alice/public/**",
+    rule: &aclspec.Rule{...},
+    node: /* reference to alice/public node */,
 }
 ```
 
@@ -482,8 +483,8 @@ rules:
   
   - pattern: "shared/**"
     access:
-      read: ["team-members"]
-      write: ["trusted-collaborators"]
+      read: ["bob@example.com", "carol@example.com"]  # Individual team members
+      write: ["alice@example.com"]  # Owner only
 
   - pattern: "**"           # Everything else is private
     access:
@@ -491,7 +492,16 @@ rules:
       write: []
 ```
 
-There is no need to think about what the rules are in these sub folders nor should it be possible for some strange exploit or program on your machine to accidentally write a `syft.pub.yaml` file to some sub folder and suddenly open up data or permissions it shouldn't.
+**Security Benefits:**
+- **No Subdirectory Overrides**: Even if someone creates a `syft.pub.yaml` file in a subdirectory, it won't be evaluated
+- **Exploit Prevention**: Malicious programs cannot escalate permissions by creating ACL files in subdirectories
+- **Centralized Control**: All permissions are controlled from one location at the top level
+- **Audit Trail**: Easy to review all permissions in a single file
+
+**Important Implementation Details:**
+- Child ACL files can still exist in the tree structure (for performance), but they are completely ignored during permission checks
+- The system stops looking for ACL rules as soon as it encounters a terminal node
+- This creates a hard security boundary that cannot be bypassed by subdirectory ACL files
 
 ## Concrete Examples with Data Structure Values
 
@@ -509,7 +519,7 @@ rules:
       write: ["alice@example.com", "bob@example.com"]
   - pattern: "src/**"
     access:
-      read: ["dev-team"]
+      read: ["alice@example.com", "bob@example.com", "carol@example.com"]
       write: ["alice@example.com"]
   - pattern: "**"
     access:
@@ -541,7 +551,7 @@ rules:
             rule: &Rule{
                 Pattern: "src/**",
                 Access: &Access{
-                    Read:  mapset.NewSet("dev-team"),  // Group access
+                    Read:  mapset.NewSet("alice@example.com", "bob@example.com", "carol@example.com"),
                     Write: mapset.NewSet("alice@example.com"),
                     Admin: mapset.NewSet[string](),
                 },
@@ -562,7 +572,7 @@ rules:
 }
 ```
 
-### Example 2: Terminal Node with Limits
+### Example 2: Terminal Node with File Size Limits
 
 ```yaml
 # /alice/uploads/syft.pub.yaml
@@ -574,7 +584,8 @@ rules:
       read: ["alice@example.com"]
     limits:
       maxFileSize: 5242880  # 5MB
-      maxFiles: 10
+      allowDirs: false      # No directories allowed
+      allowSymlinks: false  # No symlinks allowed
   - pattern: "**"
     access:
       read: []
@@ -601,85 +612,121 @@ matchedRule := &ACLRule{
         },
         Limits: &Limits{
             MaxFileSize: 5242880,
-            MaxFiles: 10,
+            AllowDirs: false,
+            AllowSymlinks: false,
         },
     },
 }
 
-// 3. Permission check:
-canWrite := matchedRule.rule.Access.Write.Contains("*")  // true
+// 3. Permission check (actual implementation):
+everyoneWrite := matchedRule.rule.Access.Write.Contains("*")  // true
+isWriter := everyoneWrite  // true (since eve@example.com is not admin)
+
+// 4. File size check:
 fileSize := 2097152  // 2MB
 sizeOK := fileSize <= matchedRule.rule.Limits.MaxFileSize  // true
 
-// 4. File count check (pseudo-code):
-userFileCount := countUserFiles("eve@example.com", "alice/uploads/temp")  // e.g., 3
-countOK := userFileCount < matchedRule.rule.Limits.MaxFiles  // 3 < 10 = true
+// 5. Directory check:
+isDir := false  // data.json is a file
+dirOK := matchedRule.rule.Limits.AllowDirs || !isDir  // true
 
 // Result: ALLOW
 ```
 
-### Example 3: Owner Token Resolution
+### Example 3: Owner-Based Access Control
 
 ```yaml
 # /alice/shared/syft.pub.yaml
 rules:
   - pattern: "team/**"
     access:
-      read: ["USER", "bob@example.com", "carol@example.com"]
-      write: ["USER"]
+      read: ["alice@example.com", "bob@example.com", "carol@example.com"]
+      write: ["alice@example.com"]
+  - pattern: "public/**"
+    access:
+      read: ["*"]
+      write: ["alice@example.com"]
 ```
 
-**During rule compilation:**
+**When user "bob@example.com" tries to read "/alice/shared/team/report.pdf":**
 
 ```go
-// Before token resolution:
-originalAccess := &Access{
-    Read:  mapset.NewSet("USER", "bob@example.com", "carol@example.com"),
-    Write: mapset.NewSet("USER"),
-}
-
-// After token resolution (owner = "alice"):
-resolvedAccess := &Access{
-    Read:  mapset.NewSet("alice@example.com", "bob@example.com", "carol@example.com"),
-    Write: mapset.NewSet("alice@example.com"),
-}
-
-// Resulting compiled rule:
-compiledRule := &ACLRule{
+// 1. Find matching rule:
+matchedRule := &ACLRule{
     fullPattern: "alice/shared/team/**",
     rule: &Rule{
         Pattern: "team/**",
-        Access: resolvedAccess,  // USER replaced with alice@example.com
+        Access: &Access{
+            Read: mapset.NewSet("alice@example.com", "bob@example.com", "carol@example.com"),
+            Write: mapset.NewSet("alice@example.com"),
+        },
     },
 }
+
+// 2. Permission check (actual implementation):
+user := &User{ID: "bob@example.com"}
+level := AccessRead
+
+// Check if user is owner (automatic full access):
+isOwner := matchedRule.Owner() == user.ID  // false (owner is "alice")
+
+// Check read permissions:
+everyoneRead := matchedRule.rule.Access.Read.Contains("*")  // false
+userRead := matchedRule.rule.Access.Read.Contains(user.ID)  // true
+isReader := everyoneRead || userRead  // true
+
+// Result: ALLOW (bob@example.com has read access)
+```
+
+**When user "eve@example.com" tries to read the same file:**
+
+```go
+// Same rule, different user:
+user := &User{ID: "eve@example.com"}
+
+// Permission check:
+isOwner := matchedRule.Owner() == user.ID  // false
+everyoneRead := matchedRule.rule.Access.Read.Contains("*")  // false
+userRead := matchedRule.rule.Access.Read.Contains(user.ID)  // false
+isReader := everyoneRead || userRead  // false
+
+// Result: DENY (eve@example.com not in read list)
 ```
 
 ## Caching Strategy
 
-### Multi-Level Cache Structure
+### Simple Path-Based Cache Structure
+
+The ACL system uses a straightforward path-based cache to store effective rules for file access:
 
 ```go
-// 1. Access Cache Entry
+// ACLCache stores the effective ACL rule for a given path.
+type ACLCache struct {
+    index map[string]*ACLRule // Normalized path -> effective ACLRule
+    mu    sync.RWMutex        // Thread-safe access
+}
+
+// Cache Entry (implicit)
 type CacheEntry struct {
-    key:       "bob@example.com:/alice/public/data.csv:1"  // user:path:level
-    allowed:   true,
-    timestamp: time.Time,
-    version:   3,  // Must match node version
+    path: string,      // e.g., "alice/projects/src/main.go"
+    rule: *ACLRule,    // The effective rule for this path
+}
+```
+
+### Cache Operations
+
+```go
+// Get: O(1) cache lookup
+cachedRule := cache.Get("alice/projects/src/main.go")
+if cachedRule != nil {
+    return cachedRule  // Cache hit
 }
 
-// 2. Compiled Rules Cache
-type RuleCache struct {
-    key:   "/alice/projects",
-    rules: []*ACLRule{/* sorted compiled rules */},
-    version: 5,
-}
+// Set: O(1) cache storage
+cache.Set("alice/projects/src/main.go", effectiveRule)
 
-// 3. Tree Node Cache (in-memory)
-type NodeCache struct {
-    "/alice": &ACLNode{/* node data */},
-    "/alice/public": &ACLNode{/* node data */},
-    "/alice/projects": &ACLNode{/* node data */},
-}
+// DeletePrefix: O(n) where n = number of cached entries
+deleted := cache.DeletePrefix("alice/projects")  // Clears all entries under this path
 ```
 
 ### Cache Invalidation Example
@@ -690,20 +737,57 @@ When ACL file `/alice/projects/syft.pub.yaml` is updated:
 // 1. Update triggers invalidation
 path := "alice/projects"
 
-// 2. Increment node version
-node.version++  // e.g., from 5 to 6
-
-// 3. Clear prefix-based cache entries
-for key := range cache.entries {
-    if strings.HasPrefix(key, "alice/projects") {
-        delete(cache.entries, key)
-    }
+// 2. Tree is updated and node version incremented
+node, err := tree.AddRuleSet(ruleSet)  // Updates tree, increments version
+if err != nil {
+    return err
 }
 
+// 3. Clear prefix-based cache entries
+deleted := cache.DeletePrefix(path)  // Clears all entries under "alice/projects"
+
 // Example cleared entries:
-// - "bob@example.com:/alice/projects/src/main.go:1"
-// - "carol@example.com:/alice/projects/docs/readme.md:4"
-// - "dave@example.com:/alice/projects/data.csv:2"
+// - "alice/projects/src/main.go"
+// - "alice/projects/docs/readme.md"
+// - "alice/projects/data.csv"
+// - "alice/projects/subdir/file.txt"
+
+slog.Debug("updated rule set", 
+    "path", node.path, 
+    "version", node.version, 
+    "cache.deleted", deleted, 
+    "cache.count", cache.Count())
+```
+
+### Cache Warming
+
+On service startup, the cache is warmed by checking access for all files:
+
+```go
+// Warm up the ACL cache
+for blob := range blobIndex.Iter() {
+    if err := service.CanAccess(
+        &User{ID: "*"},  // Check with "everyone" user
+        &File{Path: blob.Key},
+        AccessRead,
+    ); err != nil && errors.Is(err, ErrNoRule) {
+        slog.Warn("acl cache warm error", "path", blob.Key, "error", err)
+    }
+}
+```
+
+### Blob Change Handling
+
+The cache is automatically updated when files are deleted:
+
+```go
+func (s *ACLService) onBlobChange(key string, eventType blob.BlobEventType) {
+    if eventType == blob.BlobEventDelete {
+        // Clean up cache entry for the deleted file
+        s.cache.Delete(key)
+        slog.Debug("acl cache removed", "key", key, "cache.count", s.cache.Count())
+    }
+}
 ```
 
 ## Security Considerations
@@ -729,11 +813,12 @@ The ACL system supports resource limits to prevent abuse and manage storage effi
 ```go
 type Limits struct {
   MaxFileSize   int64  // Maximum file size in bytes, default: 0 no limit
-  MaxFiles      uint32 // Maximum number of files, default: 0 no limit
   AllowDirs     bool   // Allow directory creation, default: true
   AllowSymlinks bool   // Allow symbolic links, default: false
 }
 ```
+
+**Note:** `MaxFiles` limit is defined in the struct but not currently implemented in the codebase.
 
 #### Example: Storage Quotas
 
@@ -744,10 +829,9 @@ rules:
   - pattern: "contributions/**"
     access:
       write: ["*"]  # Anyone can contribute
-      read: ["alice", "bob"]
+      read: ["alice@example.com", "bob@example.com"]
     limits:
       maxFileSize: 10485760  # 10MB per file
-      maxFiles: 100          # Max 100 files per user
       allowDirs: true
       allowSymlinks: false   # No symlinks for security
 ```
@@ -761,10 +845,9 @@ rules:
   - pattern: "uploads/temp/**"
     access:
       write: ["*"]
-      read: ["admin"]
+      read: ["alice@example.com"]
     limits:
       maxFileSize: 5242880  # 5MB max
-      maxFiles: 10          # Only 10 files per user
       allowDirs: false      # No subdirectories
       allowSymlinks: false
 ```
@@ -773,7 +856,6 @@ rules:
 
 - Limits are checked during write operations (create/update)
 - File size is validated before accepting uploads
-- File count is tracked per user per directory
 - Directory creation and symlinks can be controlled
 - Default limits (0) mean no restriction
 
@@ -781,15 +863,16 @@ rules:
 
 - Maximum tree depth: 255 levels
 - Prevents deep nesting attacks
-- Efficient u8 storage for depth values
+- Uses uint8 storage for depth values
+- Error: `ErrMaxDepthExceeded` when limit is exceeded
 
 ## Performance Optimizations
 
 ### Parallel Processing
 
 - Concurrent ACL file fetching (16 workers)
-- Batch operations for bulk updates
-- Non-blocking cache operations
+- Non-blocking cache operations with `sync.RWMutex`
+- Efficient tree traversal O(d) where d = path depth
 
 ### Memory Efficiency
 
@@ -808,36 +891,67 @@ rules:
 ### Common Errors
 
 - `ErrNoRule`: No applicable rules found for path
+- `ErrNoRuleSet`: No ruleset found for path
 - `ErrMaxDepthExceeded`: Path exceeds 255 levels
 - `ErrInvalidRuleset`: Malformed YAML or missing required fields
-- `ErrAccessDenied`: User lacks required permissions
+- `ErrNoAdminAccess`: User lacks admin permissions
+- `ErrNoWriteAccess`: User lacks write permissions
+- `ErrNoReadAccess`: User lacks read permissions
+- `ErrFileSizeExceeded`: File size exceeds limits
+- `ErrDirsNotAllowed`: Directory creation not allowed
+- `ErrSymlinksNotAllowed`: Symbolic links not allowed
 
 ### Graceful Degradation
 
-- Missing ACL files default to private access
+- Missing ACL files result in no rules (access denied)
 - Invalid rules are logged but don't crash the system
 - Cache misses fall back to tree evaluation
 
-## Default Datasite Conventions
+## ACL File Management
 
-### Initial Setup
+### Automatic Setup During Workspace Initialization
 
-When a new datasite is created, SyftBox automatically establishes a secure default structure with appropriate ACL configurations:
+The client automatically creates default ACL rules for **specific folders** during workspace setup:
 
 ```
 datasites/
 └── alice/                      # User's datasite root
-    ├── syft.pub.yaml          # Root ACL (private by default)
-    └── public/                # Public folder
-        └── syft.pub.yaml      # Public ACL (globally readable)
+    ├── syft.pub.yaml          # Root ACL (created automatically)
+    └── public/                # Public folder (created automatically)
+        └── syft.pub.yaml      # Public ACL (created automatically)
 ```
 
-### Default Root ACL
+**Automatic ACL Creation:**
+- **Root User Directory**: Private access (no access for anyone except owner)
+- **Public Directory**: Public read access (readable by everyone)
 
-The root datasite directory (`datasites/alice/`) receives a default ACL that makes everything private:
+**When This Happens:**
+- During workspace setup (`w.Setup()`)
+- Only if ACL files don't already exist
+- Creates exactly two default ACL files
+
+### Manual Setup Required for New Folders
+
+For any **new folders created by users**, ACL rules must be created manually. The automatic creation only applies to the initial workspace setup.
+
+**Example:**
+```
+alice/
+├── syft.pub.yaml              # ✅ Created automatically (private)
+├── public/
+│   └── syft.pub.yaml         # ✅ Created automatically (public read)
+├── projects/                  # ❌ User-created folder
+│   └── syft.pub.yaml         # ❌ Must be created manually
+└── shared/                    # ❌ User-created folder
+    └── syft.pub.yaml         # ❌ Must be created manually
+```
+
+### Recommended Root ACL
+
+The automatically created root ACL uses private access by default:
 
 ```yaml
-# datasites/alice/syft.pub.yaml
+# datasites/alice/syft.pub.yaml (created automatically)
 terminal: false  # Non-terminal allows subdirectories to define their own ACLs
 rules:
   - pattern: "**"
@@ -853,12 +967,12 @@ rules:
 - Non-terminal by default to allow flexibility (users can add subdirectory ACLs)
 - Users can change to `terminal: true` for simpler single-file management
 
-### Default Public Folder
+### Recommended Public Folder
 
-The `public/` folder is created with globally readable permissions:
+The automatically created public ACL provides global read access:
 
 ```yaml
-# datasites/alice/public/syft.pub.yaml
+# datasites/alice/public/syft.pub.yaml (created automatically)
 terminal: false  # Non-terminal allows further customization if needed
 rules:
   - pattern: "**"
@@ -903,22 +1017,22 @@ rules:
 #### 1. **Shared Project Structure**
 ```
 alice/
-├── syft.pub.yaml              # Private root
-├── public/                    # Public datasets
-│   ├── syft.pub.yaml         # Read: everyone
+├── syft.pub.yaml              # Private root (auto-created)
+├── public/                    # Public datasets (auto-created)
+│   ├── syft.pub.yaml         # Read: everyone (auto-created)
 │   └── datasets/
-├── projects/                  # Collaborative projects
+├── projects/                  # Collaborative projects (user-created)
 │   ├── research/
-│   │   └── syft.pub.yaml     # Custom team permissions
+│   │   └── syft.pub.yaml     # Custom team permissions (manual)
 │   └── development/
-│       └── syft.pub.yaml     # Different team permissions
-└── private/                   # Sensitive data
-    └── syft.pub.yaml         # Terminal: true, strict access
+│       └── syft.pub.yaml     # Different team permissions (manual)
+└── private/                   # Sensitive data (user-created)
+    └── syft.pub.yaml         # Terminal: true, strict access (manual)
 ```
 
 ### Security Recommendations
 
-1. **Start Private**: Use default private root, explicitly grant access
+1. **Start Private**: Use private root, explicitly grant access
 2. **Use Public Folder**: Keep public data in designated `public/` directory
 3. **Terminal for Sensitive Data**: Use terminal nodes for high-security zones
 4. **Regular Audits**: Review ACL files periodically
