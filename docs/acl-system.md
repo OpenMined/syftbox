@@ -72,48 +72,123 @@ rules:
 
 ## Data Structures
 
-### RuleSet
+### Core Service Structure
+
+#### ACLService
+The main service orchestrating all ACL operations:
+
+```go
+type ACLService struct {
+    blob  BlobService      // Interface to fetch ACL files
+    tree  *ACLTree         // N-ary tree storing all rules
+    cache *ACLCache        // High-performance lookup cache
+}
+```
+
+### Tree Components
+
+#### ACLTree
+N-ary tree structure for hierarchical rule storage:
+
+```go
+type ACLTree struct {
+    root *ACLNode          // Root node of the tree
+}
+```
+
+#### ACLNode
+Each node represents a path segment in the tree:
+
+```go
+type ACLNode struct {
+    sync.RWMutex                    // Thread-safe operations
+    path     string                 // Full path (e.g., "alice/projects")
+    owner    string                 // Extracted from first segment
+    rules    []*ACLRule              // Sorted by specificity (most specific first)
+    terminal bool                   // Stops traversal if true
+    version  ACLVersion              // Incremented on changes for cache invalidation
+    depth    ACLDepth                // Tree depth (0-255)
+    children map[string]*ACLNode     // Child nodes by path segment
+}
+```
+
+Example node structure in memory:
+```
+root (path: "", owner: "")
+├── alice (path: "alice", owner: "alice")
+│   ├── rules: [
+│   │     ACLRule{pattern: "**/*.csv", access: {read: ["*"]}},
+│   │     ACLRule{pattern: "**", access: {read: []}}
+│   │   ]
+│   ├── public (path: "alice/public", owner: "alice")
+│   │   └── rules: [ACLRule{pattern: "**", access: {read: ["*"]}}]
+│   └── private (path: "alice/private", owner: "alice", terminal: true)
+│       └── rules: [ACLRule{pattern: "**", access: {read: [], write: []}}]
+```
+
+#### ACLRule
+Compiled rule with resolved patterns:
+
+```go
+type ACLRule struct {
+    fullPattern string    // Complete pattern (e.g., "alice/public/**/*.csv")
+    rule        *Rule     // Original rule from YAML
+    node        *ACLNode  // Parent node reference
+}
+```
+
+### Rule Specification Structures
+
+#### RuleSet
+Represents a complete ACL file:
 
 ```go
 type RuleSet struct {
     Rules    []*Rule  // Ordered list of access rules
-    Terminal bool     // Stop traversing up the tree
+    Terminal bool     // Stop traversing down the tree
     Path     string   // Directory path for this ruleset
 }
 ```
 
-### Rule
+#### Rule
+Individual access rule from YAML:
 
 ```go
 type Rule struct {
-    Pattern string   // Glob pattern for matching files
+    Pattern string   // Glob pattern (e.g., "**/*.csv", "public/**")
     Access  *Access  // Permission definitions
-    Limits  *Limits  // Resource limits (future use)
+    Limits  *Limits  // Resource limits
 }
 ```
 
-### Access
+#### Access
+Permission sets for different operations:
 
 ```go
 type Access struct {
-    Admin mapset.Set[string]  // Users with admin permissions
-    Read  mapset.Set[string]  // Users with read permissions
-    Write mapset.Set[string]  // Users with write permissions
+    Admin mapset.Set[string]  // Admin users (can modify ACLs)
+    Read  mapset.Set[string]  // Read permission users
+    Write mapset.Set[string]  // Write permission users (create/update/delete)
 }
+
+// Special values in sets:
+// "*" = all users (public access)
+// "USER" = replaced with datasite owner at runtime
+// "alice@example.com" = specific user email
 ```
 
-### ACLNode
+#### AccessLevel
+Bitwise flags for permission levels:
 
 ```go
-type ACLNode struct {
-    path     string           // Full path of this node
-    owner    string           // Owner of this path
-    rules    []*ACLRule        // Compiled rules for this node
-    terminal bool             // Terminal flag
-    version  ACLVersion        // Version for cache invalidation
-    depth    ACLDepth          // Tree depth (max 255)
-    children map[string]*ACLNode // Child nodes
-}
+type AccessLevel uint8
+
+const (
+    AccessRead   AccessLevel = 1  // 0001 - View files
+    AccessCreate AccessLevel = 2  // 0010 - Create new files
+    AccessWrite  AccessLevel = 4  // 0100 - Modify/delete files
+    AccessAdmin  AccessLevel = 8  // 1000 - Modify ACL files
+)
 ```
 
 ## Access Levels
@@ -132,36 +207,243 @@ The system defines four access levels with increasing privileges:
 - **Write**: Includes Create, Update, Delete operations
 - **Admin**: Full control over files and ACL rules
 
+## Detailed Execution Flows
+
+### Read Operation Flow
+
+When a user attempts to read a file (e.g., `bob` reading `/alice/public/data.csv`):
+
+```
+1. REQUEST RECEIVED
+   └─> Path: "/alice/public/data.csv"
+   └─> User: "bob@example.com"
+   └─> Operation: AccessRead (level = 1)
+
+2. OWNER CHECK
+   └─> Extract owner from path: "alice"
+   └─> Is bob == alice? NO → Continue to ACL check
+
+3. CACHE LOOKUP
+   └─> Cache key: "bob@example.com:/alice/public/data.csv:1"
+   └─> Cache hit? NO → Continue to tree traversal
+
+4. TREE TRAVERSAL
+   └─> Normalize path: "alice/public/data.csv"
+   └─> Split segments: ["alice", "public", "data.csv"]
+   └─> Traverse tree:
+       root → alice → public
+   └─> Node found at: "alice/public" (has rules)
+
+5. RULE EVALUATION
+   └─> Rules at node (sorted by specificity):
+       [0] pattern: "**/*.csv", access: {read: ["*"], write: ["alice"]}
+       [1] pattern: "**", access: {read: ["bob@example.com", "carol@example.com"]}
+   └─> Test pattern "alice/public/**/*.csv" against "alice/public/data.csv"
+       → MATCH! Check access...
+   └─> Is "bob@example.com" in read set ["*"]? 
+       → YES ("*" = everyone)
+
+6. CACHE UPDATE & RETURN
+   └─> Store in cache: {"bob@example.com:/alice/public/data.csv:1" → ALLOW}
+   └─> Return: ALLOW
+```
+
+### Write Operation Flow
+
+When a user attempts to write a file (e.g., `carol` creating `/alice/shared/report.txt`):
+
+```
+1. REQUEST RECEIVED
+   └─> Path: "/alice/shared/report.txt"
+   └─> User: "carol@example.com"
+   └─> Operation: AccessCreate (level = 2)
+   └─> File size: 1024 bytes
+
+2. OWNER CHECK
+   └─> Extract owner: "alice"
+   └─> Is carol == alice? NO → Continue
+
+3. ACL FILE CHECK
+   └─> Is path "syft.pub.yaml"? NO → Continue with normal check
+   
+4. TREE LOOKUP (with caching)
+   └─> Cache miss → Tree traversal
+   └─> Path segments: ["alice", "shared", "report.txt"]
+   └─> Walk tree: root → alice → shared
+   └─> No rules at "alice/shared"
+   └─> Backtrack to "alice" (has rules)
+
+5. RULE MATCHING
+   └─> Rules at "alice" node:
+       [0] pattern: "shared/**", access: {write: ["carol@example.com", "dave@example.com"]}
+       [1] pattern: "**", access: {read: [], write: []}
+   └─> Test "alice/shared/**" against "alice/shared/report.txt"
+       → MATCH!
+   └─> Check write access: "carol@example.com" ∈ ["carol@example.com", "dave@example.com"]
+       → YES
+
+6. LIMITS CHECK (if applicable)
+   └─> Rule limits: {maxFileSize: 10485760, maxFiles: 100}
+   └─> File size 1024 < 10485760? YES
+   └─> File count for carol in /alice/shared: 5 < 100? YES
+
+7. PERMISSION GRANTED
+   └─> Cache result
+   └─> Return: ALLOW
+```
+
+### ACL File Modification Flow
+
+When modifying ACL files, special elevation occurs:
+
+```
+1. REQUEST: Write to "/alice/projects/syft.pub.yaml"
+   └─> User: "alice@example.com"
+   └─> Operation: AccessWrite (level = 4)
+
+2. ACL FILE DETECTION
+   └─> Is filename "syft.pub.yaml"? YES
+   └─> ELEVATE to AccessAdmin (level = 8)
+
+3. PERMISSION CHECK
+   └─> Owner check: alice == alice? YES
+   └─> Return: ALLOW (owner has admin rights)
+
+4. POST-MODIFICATION UPDATES
+   └─> Parse new ACL content
+   └─> Update tree structure:
+       - Remove old rules from node
+       - Add new rules to node
+       - Sort rules by specificity
+       - Increment node version
+   └─> Invalidate cache entries with prefix "/alice/projects/"
+```
+
 ## Tree-Based Lookup Algorithm
 
-### Path Resolution
+### Rule Specificity Calculation
 
-1. **Normalization**: Clean and normalize the requested path
-2. **Tree Traversal**: Walk down the tree following path segments
-3. **Terminal Nodes**: Stop at terminal nodes (no inheritance)
-4. **Nearest Node**: Find the nearest node with defined rules
-5. **Rule Matching**: Evaluate rules in order until a match is found
+Rules are sorted by a specificity score to ensure most specific patterns match first:
 
-### Rule Evaluation Process
+```go
+// Example calculation for pattern "public/**/*.csv"
+baseScore := 2 * len("public/**/*.csv") + 10 * strings.Count("/", 1)
+          = 2 * 15 + 10 * 1 = 40
+
+// Apply wildcard penalties
+score := 40
+score -= 10  // for single '*' in "*.csv"
+score -= 100 // for '**' pattern
+// Final score: -70
+
+// Comparison with other patterns:
+"public/data.csv"    → score: 34 (most specific)
+"public/*.csv"       → score: 14
+"public/**/*.csv"    → score: -70
+"**"                 → score: -100 (least specific)
+```
+
+### Complete Example: Complex Permission Check
+
+Consider this directory structure and ACL configuration:
 
 ```
-Request: /alice/projects/data.csv
-User: bob
-Level: AccessRead
-
-1. Traverse: / → alice → projects
-2. Find nearest node with rules: /alice/projects/
-3. Load ruleset from syft.pub.yaml
-4. Match patterns in order:
-   - "**/*.csv" matches → check access
-   - bob ∈ read users → ALLOW
+alice/
+├── syft.pub.yaml           # Root ACL
+│   terminal: false
+│   rules:
+│     - pattern: "**/*.csv"
+│       access: {read: ["data-team"]}
+│     - pattern: "**"
+│       access: {read: []}
+│
+├── public/
+│   ├── syft.pub.yaml      # Public ACL
+│   │   terminal: false
+│   │   rules:
+│   │     - pattern: "**"
+│   │       access: {read: ["*"]}
+│   │
+│   └── data.csv           # Target file
+│
+└── private/
+    └── syft.pub.yaml      # Private ACL (terminal)
+        terminal: true
+        rules:
+          - pattern: "**"
+            access: {read: [], write: []}
 ```
 
-### Inheritance and Terminal Nodes
+When `bob@example.com` (member of "data-team") tries to read `/alice/public/data.csv`:
 
-- Rules inherit from parent directories by default
-- Terminal nodes stop inheritance chain
-- Most specific rule (deepest in tree) takes precedence
+```
+STEP 1: Build Tree Structure
+root
+└── alice (owner: "alice")
+    ├── rules: [
+    │     {pattern: "alice/**/*.csv", access: {read: ["data-team"]}},
+    │     {pattern: "alice/**", access: {read: []}}
+    │   ]
+    ├── public
+    │   └── rules: [{pattern: "alice/public/**", access: {read: ["*"]}}]
+    └── private (terminal: true)
+        └── rules: [{pattern: "alice/private/**", access: {read: [], write: []}}]
+
+STEP 2: Lookup Process
+- Path: "alice/public/data.csv"
+- Traverse: root → alice → public
+- Found node with rules at: "alice/public"
+- Rules to evaluate (sorted by specificity):
+  1. From alice/public: "alice/public/**" (score: -96)
+  2. From alice: "alice/**/*.csv" (score: -74)  
+  3. From alice: "alice/**" (score: -100)
+
+STEP 3: Pattern Matching
+- Test "alice/public/**" against "alice/public/data.csv"
+  → MATCH! Check access: "*" includes everyone → ALLOW
+
+RESULT: Access granted (stopped at first matching rule)
+```
+
+### Data Structure States During Execution
+
+Here's how the data structures look during a permission check:
+
+```go
+// ACLNode at "alice/public" after loading rules:
+&ACLNode{
+    path:     "alice/public",
+    owner:    "alice",
+    terminal: false,
+    version:  3,
+    depth:    2,
+    rules: []*ACLRule{
+        {
+            fullPattern: "alice/public/**",
+            rule: &Rule{
+                Pattern: "**",
+                Access: &Access{
+                    Read:  mapset.NewSet("*"),        // Everyone
+                    Write: mapset.NewSet[string](),   // Empty
+                    Admin: mapset.NewSet[string](),   // Empty
+                },
+            },
+            node: /* reference to this node */,
+        },
+    },
+    children: map[string]*ACLNode{
+        "datasets": /* child node */,
+        "reports":  /* child node */,
+    },
+}
+
+// Cache entry after successful lookup:
+cache.entries["bob@example.com:/alice/public/data.csv:1"] = CacheEntry{
+    allowed:   true,
+    timestamp: time.Now(),
+    version:   3,  // Matches node version
+}
+```
 
 ## Terminal Nodes: When and Why
 
@@ -211,19 +493,218 @@ rules:
 
 There is no need to think about what the rules are in these sub folders nor should it be possible for some strange exploit or program on your machine to accidentally write a `syft.pub.yaml` file to some sub folder and suddenly open up data or permissions it shouldn't.
 
+## Concrete Examples with Data Structure Values
+
+### Example 1: Multi-User Collaboration Setup
+
+Consider this YAML configuration and resulting data structures:
+
+```yaml
+# /alice/projects/syft.pub.yaml
+terminal: false
+rules:
+  - pattern: "docs/**/*.md"
+    access:
+      read: ["*"]
+      write: ["alice@example.com", "bob@example.com"]
+  - pattern: "src/**"
+    access:
+      read: ["dev-team"]
+      write: ["alice@example.com"]
+  - pattern: "**"
+    access:
+      read: ["alice@example.com"]
+```
+
+**Resulting ACLNode Structure:**
+```go
+&ACLNode{
+    path:     "alice/projects",
+    owner:    "alice",
+    terminal: false,
+    version:  5,
+    depth:    2,
+    rules: []*ACLRule{
+        {
+            fullPattern: "alice/projects/docs/**/*.md",
+            rule: &Rule{
+                Pattern: "docs/**/*.md",
+                Access: &Access{
+                    Read:  mapset.NewSet("*"),  // Public read
+                    Write: mapset.NewSet("alice@example.com", "bob@example.com"),
+                    Admin: mapset.NewSet[string](),
+                },
+            },
+        },
+        {
+            fullPattern: "alice/projects/src/**",
+            rule: &Rule{
+                Pattern: "src/**",
+                Access: &Access{
+                    Read:  mapset.NewSet("dev-team"),  // Group access
+                    Write: mapset.NewSet("alice@example.com"),
+                    Admin: mapset.NewSet[string](),
+                },
+            },
+        },
+        {
+            fullPattern: "alice/projects/**",
+            rule: &Rule{
+                Pattern: "**",
+                Access: &Access{
+                    Read:  mapset.NewSet("alice@example.com"),
+                    Write: mapset.NewSet[string](),
+                    Admin: mapset.NewSet[string](),
+                },
+            },
+        },
+    },
+}
+```
+
+### Example 2: Terminal Node with Limits
+
+```yaml
+# /alice/uploads/syft.pub.yaml
+terminal: true  # No subdirectory ACLs will be processed
+rules:
+  - pattern: "temp/**"
+    access:
+      write: ["*"]
+      read: ["alice@example.com"]
+    limits:
+      maxFileSize: 5242880  # 5MB
+      maxFiles: 10
+  - pattern: "**"
+    access:
+      read: []
+      write: []
+```
+
+**When user "eve@example.com" uploads to "/alice/uploads/temp/data.json" (2MB):**
+
+```go
+// 1. Tree traversal finds node:
+node := &ACLNode{
+    path:     "alice/uploads",
+    terminal: true,  // STOP HERE - don't look deeper
+    rules: [/* rules array */],
+}
+
+// 2. First matching rule:
+matchedRule := &ACLRule{
+    fullPattern: "alice/uploads/temp/**",
+    rule: &Rule{
+        Pattern: "temp/**",
+        Access: &Access{
+            Write: mapset.NewSet("*"),  // Everyone can write
+        },
+        Limits: &Limits{
+            MaxFileSize: 5242880,
+            MaxFiles: 10,
+        },
+    },
+}
+
+// 3. Permission check:
+canWrite := matchedRule.rule.Access.Write.Contains("*")  // true
+fileSize := 2097152  // 2MB
+sizeOK := fileSize <= matchedRule.rule.Limits.MaxFileSize  // true
+
+// 4. File count check (pseudo-code):
+userFileCount := countUserFiles("eve@example.com", "alice/uploads/temp")  // e.g., 3
+countOK := userFileCount < matchedRule.rule.Limits.MaxFiles  // 3 < 10 = true
+
+// Result: ALLOW
+```
+
+### Example 3: Owner Token Resolution
+
+```yaml
+# /alice/shared/syft.pub.yaml
+rules:
+  - pattern: "team/**"
+    access:
+      read: ["USER", "bob@example.com", "carol@example.com"]
+      write: ["USER"]
+```
+
+**During rule compilation:**
+
+```go
+// Before token resolution:
+originalAccess := &Access{
+    Read:  mapset.NewSet("USER", "bob@example.com", "carol@example.com"),
+    Write: mapset.NewSet("USER"),
+}
+
+// After token resolution (owner = "alice"):
+resolvedAccess := &Access{
+    Read:  mapset.NewSet("alice@example.com", "bob@example.com", "carol@example.com"),
+    Write: mapset.NewSet("alice@example.com"),
+}
+
+// Resulting compiled rule:
+compiledRule := &ACLRule{
+    fullPattern: "alice/shared/team/**",
+    rule: &Rule{
+        Pattern: "team/**",
+        Access: resolvedAccess,  // USER replaced with alice@example.com
+    },
+}
+```
+
 ## Caching Strategy
 
-### Multi-Level Cache
+### Multi-Level Cache Structure
 
-1. **Access Cache**: Caches user+path+level → allow/deny decisions
-2. **Rule Compilation Cache**: Caches compiled rules with resolved tokens
-3. **Tree Node Cache**: In-memory tree structure for fast traversal
+```go
+// 1. Access Cache Entry
+type CacheEntry struct {
+    key:       "bob@example.com:/alice/public/data.csv:1"  // user:path:level
+    allowed:   true,
+    timestamp: time.Time,
+    version:   3,  // Must match node version
+}
 
-### Cache Invalidation
+// 2. Compiled Rules Cache
+type RuleCache struct {
+    key:   "/alice/projects",
+    rules: []*ACLRule{/* sorted compiled rules */},
+    version: 5,
+}
 
-- Version-based invalidation on ruleset updates
-- Prefix-based deletion for path changes
-- Automatic cleanup on file deletions
+// 3. Tree Node Cache (in-memory)
+type NodeCache struct {
+    "/alice": &ACLNode{/* node data */},
+    "/alice/public": &ACLNode{/* node data */},
+    "/alice/projects": &ACLNode{/* node data */},
+}
+```
+
+### Cache Invalidation Example
+
+When ACL file `/alice/projects/syft.pub.yaml` is updated:
+
+```go
+// 1. Update triggers invalidation
+path := "alice/projects"
+
+// 2. Increment node version
+node.version++  // e.g., from 5 to 6
+
+// 3. Clear prefix-based cache entries
+for key := range cache.entries {
+    if strings.HasPrefix(key, "alice/projects") {
+        delete(cache.entries, key)
+    }
+}
+
+// Example cleared entries:
+// - "bob@example.com:/alice/projects/src/main.go:1"
+// - "carol@example.com:/alice/projects/docs/readme.md:4"
+// - "dave@example.com:/alice/projects/data.csv:2"
+```
 
 ## Security Considerations
 
