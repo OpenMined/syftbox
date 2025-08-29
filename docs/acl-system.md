@@ -66,9 +66,74 @@ rules:
 
 ### Special Tokens
 
-- `USER`: Placeholder for the datasite owner
+- `USER`: Placeholder for the datasite owner (used in access lists only, not in patterns)
 - `*`: Wildcard representing all users (public access)
 - `**`: Glob pattern matching all files recursively
+
+**Important Distinction:**
+- The `USER` token is used in **access lists** (admin, read, write) and is replaced with the datasite owner's ID at runtime
+- Template variables like `{{.UserEmail}}` are used in **patterns** for dynamic path matching based on the requesting user
+- These are two separate systems that serve different purposes
+
+### Email Glob Patterns in Access Lists
+
+The ACL system supports glob patterns for email addresses in access control lists, enabling flexible user group management:
+
+```yaml
+rules:
+  - pattern: "team_data/**"
+    access:
+      read: ["*@company.com"]        # All users from company.com domain
+      write: ["admin*@company.com"]  # All admin emails from company.com
+      admin: ["admin-*@*.com"]       # Admin emails from any .com domain
+```
+
+**Supported patterns:**
+- `*@domain.com`: All users from a specific domain
+- `user*@domain.com`: Users with emails starting with "user"
+- `*-team@*`: Any team email from any domain
+- `admin?@company.com`: Single character wildcard (admin1, admin2, etc.)
+
+### Template Variables in Patterns
+
+ACL patterns support dynamic template variables that are resolved at runtime based on the requesting user's context.
+
+The motivating use case for this is to allow paritioning of data from users without knowing who those users are before hand. For example in RPC or an upload folder permissions can be set such that users can read or write to a special sub folder with their user email or hash but not see the other folders of other users.
+
+```yaml
+rules:
+  - pattern: "private_{{.UserEmail}}/**"     # User-specific private folder
+    access:
+      read: []
+      write: []
+      admin: []
+  
+  - pattern: "{{.Year}}/{{.Month}}/{{.Date}}/*"  # Date-based organization
+    access:
+      read: ["*"]
+  
+  - pattern: "users/{{.UserHash}}/data/*"    # Hash-based user folders
+    access:
+      read: []
+```
+
+**Available Variables:**
+- `{{.UserEmail}}`: The requesting user's email address
+- `{{.UserHash}}`: SHA-256 hash of the user's email (16 hex characters)
+- `{{.Year}}`: Current UTC year (4 digits, e.g., "2025")
+- `{{.Month}}`: Current UTC month (2 digits, e.g., "08")
+- `{{.Date}}`: Current UTC day (2 digits, e.g., "29")
+
+**Template Functions:**
+- `{{upper .UserEmail}}`: Convert email to uppercase
+- `{{lower .UserEmail}}`: Convert email to lowercase
+- `{{sha2 .UserEmail}}`: Full SHA-256 hash of email (64 hex characters)
+- `{{sha2 .UserEmail N}}`: First N characters of SHA-256 hash (max 64)
+
+**Important Notes on Dates:**
+- All date/time variables use UTC timezone to ensure consistency
+- Date values are calculated at the time of access check
+- No timezone conversion is performed - all times are UTC
 
 ## Data Structures
 
@@ -127,15 +192,40 @@ root (path: "", owner: "")
 ```
 
 #### ACLRule
-Compiled rule with resolved patterns:
+Compiled rule with resolved patterns and matcher:
 
 ```go
 type ACLRule struct {
     fullPattern string    // Complete pattern (e.g., "alice/public/**/*.csv")
     rule        *Rule     // Original rule from YAML
     node        *ACLNode  // Parent node reference
+    matcher     Matcher   // Pattern matcher (exact, glob, or template)
 }
 ```
+
+#### Matcher Types
+The system uses three types of matchers for pattern evaluation:
+
+```go
+type MatcherType int
+
+const (
+    MatcherTypeExact    MatcherType = iota  // Exact string matching
+    MatcherTypeGlob                         // Glob patterns (*, ?, **, [])
+    MatcherTypeTemplate                     // Template patterns ({{.UserEmail}}, etc.)
+)
+
+// Matcher interface for all pattern matching strategies
+type Matcher interface {
+    Match(path string, ctx MatchContext) (bool, error)
+    Type() MatcherType
+}
+```
+
+**Matcher Selection:**
+- **ExactMatcher**: Used when pattern contains no special characters
+- **GlobMatcher**: Used when pattern contains `*`, `?`, or `[]` characters
+- **TemplateMatcher**: Used when pattern contains `{{...}}` template variables
 
 ### Rule Specification Structures
 
@@ -618,7 +708,9 @@ countOK := userFileCount < matchedRule.rule.Limits.MaxFiles  // 3 < 10 = true
 // Result: ALLOW
 ```
 
-### Example 3: Owner Token Resolution
+### Example 3: USER Token Resolution (Access Lists)
+
+The `USER` token is a special placeholder used in **access lists** (not patterns) that gets replaced with the datasite owner's ID:
 
 ```yaml
 # /alice/shared/syft.pub.yaml
@@ -638,7 +730,7 @@ originalAccess := &Access{
     Write: mapset.NewSet("USER"),
 }
 
-// After token resolution (owner = "alice"):
+// After token resolution (datasite owner = "alice@example.com"):
 resolvedAccess := &Access{
     Read:  mapset.NewSet("alice@example.com", "bob@example.com", "carol@example.com"),
     Write: mapset.NewSet("alice@example.com"),
@@ -648,11 +740,16 @@ resolvedAccess := &Access{
 compiledRule := &ACLRule{
     fullPattern: "alice/shared/team/**",
     rule: &Rule{
-        Pattern: "team/**",
+        Pattern: "team/**",  // Pattern unchanged - USER only affects access lists
         Access: resolvedAccess,  // USER replaced with alice@example.com
     },
 }
 ```
+
+**Key Points:**
+- `USER` token is **only** valid in access lists (admin, read, write)
+- It always resolves to the **datasite owner**, not the requesting user
+- For user-specific paths, use template variables like `{{.UserEmail}}` in patterns instead
 
 ## Caching Strategy
 
@@ -944,6 +1041,266 @@ alice/
 2. Explicit deny over implicit allow
 3. Regular audit of ACL configurations
 4. Test access patterns before deployment
+
+## Advanced Examples
+
+### Email Pattern Matching Examples
+
+#### Domain-Based Access Control
+
+```yaml
+# Grant access to all users from specific organizations
+terminal: false
+rules:
+  - pattern: "company_data/**"
+    access:
+      read: ["*@acme.com", "*@partner.org"]  # All users from these domains
+      write: ["admin@acme.com"]               # Specific admin only
+  
+  - pattern: "public_api/**"
+    access:
+      read: ["*"]                             # Everyone
+      write: ["*@acme.com"]                   # Any acme.com user
+```
+
+#### Role-Based Patterns
+
+```yaml
+# Use email prefixes to implement role-based access
+terminal: false
+rules:
+  - pattern: "admin/**"
+    access:
+      admin: ["admin-*@company.com"]          # admin-john@company.com, admin-jane@company.com
+      read: ["*@company.com"]
+  
+  - pattern: "dev/**"
+    access:
+      write: ["dev-*@company.com", "lead-*@company.com"]
+      read: ["*@company.com"]
+  
+  - pattern: "reports/**"
+    access:
+      read: ["manager-*@*.com", "exec-*@*.com"]  # Managers and execs from any .com domain
+```
+
+### Template Pattern Examples
+
+#### User-Specific Folders
+
+```yaml
+# Each user gets their own private workspace
+terminal: true
+rules:
+  - pattern: "workspaces/{{.UserEmail}}/**"
+    access:
+      admin: []    # User has implicit admin as owner
+      write: []    # Only the user can write
+      read: []     # Only the user can read
+  
+  - pattern: "workspaces/{{.UserEmail}}/shared/**"
+    access:
+      read: ["*@company.com"]  # Company users can read shared folder
+```
+
+#### Date-Based Archives
+
+```yaml
+# Organize data by date with appropriate access
+terminal: false
+rules:
+  - pattern: "archives/{{.Year}}/{{.Month}}/**"
+    access:
+      write: ["archiver@company.com"]
+      read: ["*@company.com"]
+  
+  - pattern: "daily_reports/{{.Year}}-{{.Month}}-{{.Date}}/*.csv"
+    access:
+      write: ["reporter@company.com"]
+      read: ["analyst-*@company.com", "manager-*@company.com"]
+```
+
+#### Hash-Based Anonymous Storage
+
+```yaml
+# Use hashed email for anonymous but user-specific storage
+terminal: false
+rules:
+  - pattern: "anonymous/{{.UserHash}}/**"
+    access:
+      write: []    # User can write (matched by hash)
+      read: []     # User can read (matched by hash)
+  
+  - pattern: "submissions/{{sha2 .UserEmail 8}}/*.json"
+    access:
+      write: []    # Short hash for semi-anonymous submissions
+      read: ["reviewer@company.com"]
+```
+
+### Complex Multi-Pattern Examples
+
+#### Research Project with Tiered Access
+
+```yaml
+terminal: true
+rules:
+  # Principal investigators have full control
+  - pattern: "research/project-alpha/**"
+    access:
+      admin: ["pi-*@university.edu"]
+      write: ["researcher-*@university.edu"]
+      read: ["*@university.edu"]
+  
+  # User-specific notebooks
+  - pattern: "research/project-alpha/notebooks/{{.UserEmail}}/**"
+    access:
+      write: []    # Only the notebook owner
+      read: ["pi-*@university.edu"]  # PIs can read all notebooks
+  
+  # Time-stamped experimental data
+  - pattern: "research/project-alpha/data/{{.Year}}/{{.Month}}/**/*.csv"
+    access:
+      write: ["lab-*@university.edu"]
+      read: ["*@university.edu"]
+    limits:
+      maxFileSize: 104857600  # 100MB limit for data files
+  
+  # Public results after embargo
+  - pattern: "research/project-alpha/published/**"
+    access:
+      read: ["*"]  # Public access
+```
+
+#### Multi-Tenant Application
+
+```yaml
+terminal: true
+rules:
+  # User-specific tenant spaces using email hash for privacy
+  - pattern: "tenants/{{.UserHash}}/**"
+    access:
+      admin: []    # User has implicit admin in their space
+      write: []    # Only the user can write
+      read: []     # Only the user can read
+  
+  # Shared resources between specific organizations
+  - pattern: "shared/acme-partner/**"
+    access:
+      write: ["*@acme.com", "*@partner.com"]
+      read: ["*@acme.com", "*@partner.com", "auditor@external.com"]
+  
+  # Global public resources
+  - pattern: "public/**"
+    access:
+      read: ["*"]
+```
+
+### How Email Matching Works
+
+#### Matching Process
+
+1. **Exact Match**: First checks for exact email match
+   - `alice@example.com` matches `alice@example.com`
+
+2. **Glob Pattern Match**: If no exact match, checks glob patterns
+   - `alice@example.com` matches `*@example.com`
+   - `admin-alice@example.com` matches `admin-*@example.com`
+   - `alice@subdomain.example.com` matches `*@*.example.com`
+   - `admin1@company.com` matches `admin?@company.com` (single char wildcard)
+
+3. **Template Resolution**: Templates resolve before matching
+   - Pattern `{{.UserEmail}}/*` with user `alice@example.com`
+   - Resolves to `alice@example.com/*`
+   - Then matches paths like `alice@example.com/file.txt`
+
+#### Internal Email Matching Flow
+
+When checking if a user has access in an access list:
+
+```go
+// Example: Checking if "alice@example.com" has read access
+func (r *ACLRule) hasAccess(accessList mapset.Set[string], userID string) bool {
+    // 1. Check for everyone token
+    if accessList.Contains("*") {
+        return true  // Everyone has access
+    }
+    
+    // 2. Check exact match
+    if accessList.Contains("alice@example.com") {
+        return true  // Direct match found
+    }
+    
+    // 3. Check glob patterns in access list
+    for pattern := range accessList.Iter() {
+        // Check if pattern contains glob characters
+        if strings.ContainsAny(pattern, "*?[]") {
+            // Example: pattern = "*@example.com"
+            if matched, _ := doublestar.Match(pattern, "alice@example.com"); matched {
+                return true  // Glob pattern matches
+            }
+        }
+    }
+    
+    return false  // No match found
+}
+```
+
+#### Template Pattern Resolution Flow
+
+Templates are resolved at runtime when evaluating rules:
+
+```go
+// Example: Pattern "uploads/{{.UserEmail}}/{{.Year}}/**" 
+// for user "bob@example.com" on 2025-08-29
+
+// 1. Template data creation
+templateData := &templateData{
+    UserEmail: "bob@example.com",
+    UserHash:  "a1b2c3d4e5f6",  // SHA-256 hash truncated to 16 chars
+    Year:      "2025",
+    Month:     "08",
+    Date:      "29",
+}
+
+// 2. Template execution
+pattern := "uploads/{{.UserEmail}}/{{.Year}}/**"
+// Resolves to: "uploads/bob@example.com/2025/**"
+
+// 3. Create appropriate matcher
+resolvedPattern := "uploads/bob@example.com/2025/**"
+matcher := &GlobMatcher{pattern: resolvedPattern}
+
+// 4. Match against actual path
+path := "uploads/bob@example.com/2025/data.csv"
+matches := matcher.Match(path, ctx)  // Returns true
+```
+
+#### Precedence Rules
+
+1. Owner always has full access (implicit)
+2. Admin access includes write and read
+3. Write access includes read
+4. Most specific rule in the ruleset wins
+5. First matching pattern in order wins
+
+#### Example Matching Scenarios
+
+```yaml
+rules:
+  - pattern: "specific/file.txt"
+    access:
+      read: ["bob@example.com"]          # Only Bob can read this specific file
+  
+  - pattern: "specific/**"
+    access:
+      read: ["*@example.com"]             # All example.com users can read other files
+```
+
+**Scenarios:**
+- `alice@example.com` accessing `specific/file.txt`: ❌ Denied (first rule matches, alice not in list)
+- `bob@example.com` accessing `specific/file.txt`: ✅ Allowed (first rule matches, bob in list)
+- `alice@example.com` accessing `specific/other.txt`: ✅ Allowed (second rule matches via glob)
+- `charlie@other.com` accessing `specific/other.txt`: ❌ Denied (no matching rule)
 
 ## Integration Points
 
