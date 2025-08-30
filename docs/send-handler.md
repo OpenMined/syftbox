@@ -72,9 +72,11 @@ sequenceDiagram
 - Polling-based response retrieval
 - HTML and JSON response formats
 - Request/response cleanup
+- ACL permission checking for message sending and polling
+- User-partitioned request/response storage with backward compatibility
+- Sender suffix support for enhanced security
 
 **Not Implemented:**
-- TODO: ACL permission checking for message sending
 - TODO: Header filtering for security
 - Large file uploads/downloads via blob APIs
 
@@ -152,12 +154,13 @@ graph TD
 #### MessageRequest
 ```go
 type MessageRequest struct {
-    SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
-    From    string           `form:"x-syft-from" binding:"required"`
-    Timeout int              `form:"timeout" binding:"gte=0"`
-    AsRaw   bool             `form:"x-syft-raw" default:"false"`
-    Method  string           // Set from request method
-    Headers Headers          // Set from request headers
+    SyftURL      utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
+    From         string           `form:"x-syft-from" binding:"required"`
+    Timeout      int              `form:"timeout" binding:"gte=0"`
+    AsRaw        bool             `form:"x-syft-raw" default:"false"`
+    Method       string           // Set from request method
+    Headers      Headers          // Set from request headers
+    SuffixSender bool             `form:"suffix-sender" default:"false"` // If true, adds sender to endpoint path
 }
 ```
 
@@ -238,6 +241,79 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 2. **Raw mode**: `json.Unmarshal(bodyBytes, &bodyJson)` → Returns raw JSON (body still base64-encoded)
 3. **Standard mode**: `json.Unmarshal(bodyBytes, &rpcMsg)` → `rpcMsg.UnmarshalJSON()` decodes body → `rpcMsg.ToJsonMap()` returns processed structure
 
+### ACL Integration and User Partitioning
+
+#### Permission Checking
+The send service integrates with the ACL system to enforce access control:
+
+```go
+// Check if the user has permission to send message to this application
+if err := s.checkPermission(requestRelPath, req.From, acl.AccessWrite); err != nil {
+    return nil, ErrPermissionDenied
+}
+
+// Check if user has read access to the request
+if err := s.checkPermission(requestRelPath, req.From, acl.AccessRead); err != nil {
+    return nil, ErrPermissionDenied
+}
+```
+
+#### User Partitioning
+The system supports two storage formats for backward compatibility:
+
+**New Format (User-Partitioned):**
+```
+app_data/myapp/rpc/endpoint/
+├── alice@company.com/
+│   ├── request-id-1.request
+│   └── request-id-1.response
+└── bob@company.com/
+    ├── request-id-2.request
+    └── request-id-2.response
+```
+
+**Legacy Format (Shared):**
+```
+app_data/myapp/rpc/endpoint/
+├── request-id-1.request
+├── request-id-1.response
+├── request-id-2.request
+└── request-id-2.response
+```
+
+#### Backward Compatibility
+The polling mechanism automatically checks both formats:
+
+```go
+func (s *SendService) getCandidateRequestPaths(req *PollObjectRequest) []string {
+    filename := fmt.Sprintf("%s.request", req.RequestID)
+    basePath := req.SyftURL.ToLocalPath()
+
+    requestPaths := []string{
+        // Try sender suffix path first (new request path)
+        path.Join(basePath, req.From, filename),
+        // Fallback to legacy path (old request path)
+        path.Join(basePath, filename),
+    }
+
+    return requestPaths
+}
+```
+
+#### ACL Rules Support
+The new user-partitioned format supports ACL rules like:
+```yaml
+rules:
+- pattern: '**/{{.UserEmail}}/*.request'
+  access:
+    read: ['USER']
+    write: ['USER']
+- pattern: '**/{{.UserEmail}}/*.response'
+  access:
+    read: ['USER']
+    write: ['USER']
+```
+
 ### API Reference
 
 #### Send Message Endpoint
@@ -250,6 +326,7 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 - `x-syft-from` (required): Sender datasite (email address)
 - `timeout` (optional): Request timeout in milliseconds
 - `x-syft-raw` (optional): Response format flag (default: false)
+- `suffix-sender` (optional): If true, adds sender email to endpoint path for user partitioning (default: false)
 
 **Headers:** All request headers are forwarded to the RPC message
 
@@ -261,9 +338,20 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 - JWT Bearer token required for authenticated users
 - Use `guest@syft.org` as `x-syft-from` for guest access (no Bearer token needed)
 
+**ACL Permissions:**
+- Users must have write permission to the target endpoint to send messages
+- Users must have read permission to the request file to poll for responses
+- Datasite owners have automatic access to all endpoints within their datasite
+
 **Response Format Behavior:**
 - **`x-syft-raw=false` (default)**: Response is unmarshaled as a `SyftRPCMessage` struct, which decodes the base64 body and returns the full RPC structure with decoded body as JSON
 - **`x-syft-raw=true`**: Response is treated as raw JSON and returned directly (body remains base64-encoded)
+
+**User Partitioning and Backward Compatibility:**
+- **New Format (with `suffix-sender=true`)**: Requests/responses stored as `{endpoint}/{user-email}/{request-id}.{request|response}`
+- **Legacy Format (default)**: Requests/responses stored as `{endpoint}/{request-id}.{request|response}`
+- **Polling**: Automatically checks both new and legacy paths for backward compatibility
+- **ACL Support**: New format supports user-specific ACL rules for enhanced security
 
 **Response:**
 ```json
@@ -722,6 +810,68 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
   }'
 ```
 
+#### Use Case 6: User-Partitioned Storage with ACL (Authenticated User)
+
+**Scenario**: A client wants to use user-partitioned storage for enhanced security with ACL rules.
+
+**Request (with User Partitioning):**
+```bash
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://secure@company.com/app_data/private-api/rpc/process&x-syft-from=alice@company.com&suffix-sender=true" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt-token>" \
+  -d '{
+    "sensitive_data": "encrypted-content",
+    "operation": "decrypt_and_process"
+  }'
+```
+
+**Response (Immediate):**
+```json
+{
+    "request_id": "h8i9j0k1-l2m3-4567-hijk-890123456789",
+    "data": {
+        "message": {
+            "id": "h8i9j0k1-l2m3-4567-hijk-890123456789",
+            "sender": "alice@company.com",
+            "url": "syft://secure@company.com/app_data/private-api/rpc/process/alice@company.com",
+            "method": "POST",
+            "status_code": 200,
+            "body": {
+                "result": "success",
+                "processed_data": "decrypted-content",
+                "timestamp": "2024-01-15T12:05:00Z"
+            },
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "created": "2024-01-15T12:05:00Z",
+            "expires": "2024-01-16T12:05:00Z"
+        }
+    }
+}
+```
+
+**Storage Structure:**
+```
+app_data/private-api/rpc/process/
+└── alice@company.com/
+    ├── h8i9j0k1-l2m3-4567-hijk-890123456789.request
+    └── h8i9j0k1-l2m3-4567-hijk-890123456789.response
+```
+
+**ACL Rules Applied:**
+```yaml
+rules:
+- pattern: '**/alice@company.com/*.request'
+  access:
+    read: ['alice@company.com']
+    write: ['alice@company.com']
+- pattern: '**/alice@company.com/*.response'
+  access:
+    read: ['alice@company.com']
+    write: ['alice@company.com']
+```
+
 **Response (Immediate):**
 ```json
 {
@@ -868,8 +1018,11 @@ dispatcher := send.NewWSMsgDispatcher(websocketHub)
 // Create message store
 store := send.NewBlobMsgStore(blobService)
 
+// Create ACL service
+aclService := acl.NewACLService(blobService)
+
 // Create send service
-service := send.NewSendService(dispatcher, store, &send.Config{
+service := send.NewSendService(dispatcher, store, aclService, &send.Config{
     DefaultTimeout:      1 * time.Second,
     MaxTimeout:          10 * time.Second,
     ObjectPollInterval:  200 * time.Millisecond,
@@ -878,7 +1031,7 @@ service := send.NewSendService(dispatcher, store, &send.Config{
 })
 
 // Create handler
-handler := send.New(dispatcher, store)
+handler := send.New(dispatcher, store, aclService)
 ```
 
 #### 2. Route Registration
@@ -936,6 +1089,8 @@ The sync engine integrates with the send handler through the `processHttpMessage
 7. **Sync Upload**: Client uploads response to cache server using normal sync upload operations
 
 #### File Structure
+
+**Legacy Format (Default):**
 ```
 datasite/
 └── app_data/
@@ -944,6 +1099,21 @@ datasite/
             └── endpoint/
                 ├── {request-id}.request  # RPC request file
                 └── {request-id}.response # RPC response file
+```
+
+**User-Partitioned Format (with `suffix-sender=true`):**
+```
+datasite/
+└── app_data/
+    └── appname/
+        └── rpc/
+            └── endpoint/
+                ├── user1@example.com/
+                │   ├── {request-id}.request  # User-specific request file
+                │   └── {request-id}.response # User-specific response file
+                └── user2@example.com/
+                    ├── {request-id}.request  # User-specific request file
+                    └── {request-id}.response # User-specific response file
 ```
 
 #### Sync Engine Integration Code
@@ -982,11 +1152,11 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 | `invalid_request` | Request validation failed | 400 Bad Request |
 | `internal_error` | Server internal error | 500 Internal Server Error |
 | `not_found` | Request not found | 404 Not Found |
+| `permission_denied` | User lacks required permissions | 403 Forbidden |
 
 ### Limitations
 
 #### Current Limitations
-- **No ACL Enforcement**: TODO: Permission checking not implemented
 - **No Header Filtering**: TODO: All headers are forwarded without filtering
 - **Fixed File Structure**: RPC files follow specific naming convention
 - **Single Response**: Only one response per request is supported
@@ -1001,7 +1171,6 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 ### Future Enhancements
 
 #### TODO Items from Code
-- **ACL Integration**: Implement permission checking for message sending
 - **Header Security**: Add header filtering for security
 - **Enhanced Error Handling**: More granular error responses
 - **Batch Operations**: Support for multiple message operations
@@ -1026,6 +1195,11 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 4. **WebSocket Delivery Failure**
    - **Cause**: Client is offline
    - **Solution**: Use polling mechanism for offline clients
+
+5. **Permission Denied**
+   - **Cause**: User lacks required ACL permissions for the endpoint
+   - **Solution**: Check ACL rules and ensure user has appropriate access rights
+   - **For User-Partitioned Storage**: Ensure ACL rules are configured for the user-specific paths
 
 #### Debug Information
 - **Request ID**: All operations include request ID for tracing
