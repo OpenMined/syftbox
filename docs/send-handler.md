@@ -195,6 +195,43 @@ type Config struct {
 
 **Note**: The default 4MB limit is designed for control messages and small payloads.
 
+### Response Processing
+
+The `unmarshalResponse` function handles response processing based on the `x-syft-raw` flag:
+
+```go
+func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, error) {
+    if asRaw {
+        // For raw mode, treat the entire response as raw JSON (body remains base64-encoded)
+        var bodyJson map[string]interface{}
+        err := json.Unmarshal(bodyBytes, &bodyJson)
+        if err != nil {
+            return nil, fmt.Errorf("failed to unmarshal raw response: %w", err)
+        }
+        return map[string]interface{}{"message": bodyJson}, nil
+    }
+
+    // For standard mode, unmarshal as SyftRPCMessage (body gets decoded)
+    var rpcMsg syftmsg.SyftRPCMessage
+    err := json.Unmarshal(bodyBytes, &rpcMsg)
+    if err != nil {
+        return nil, fmt.Errorf("failed to unmarshal RPC response: %w", err)
+    }
+
+    // Return the RPC message with decoded body
+    return map[string]interface{}{"message": rpcMsg.ToJsonMap()}, nil
+}
+```
+
+**Processing Logic:**
+- **`asRaw=true`**: Treats the entire response as raw JSON, unmarshals directly into a map (body remains base64-encoded)
+- **`asRaw=false`**: Unmarshals response as a `SyftRPCMessage` struct, which calls `UnmarshalJSON()` to decode the base64 body, then calls `ToJsonMap()` to return the full RPC structure with decoded body content
+
+**Data Flow:**
+1. `bodyBytes` contains the serialized `SyftRPCMessage` as JSON bytes
+2. **Raw mode**: `json.Unmarshal(bodyBytes, &bodyJson)` → Returns raw JSON (body still base64-encoded)
+3. **Standard mode**: `json.Unmarshal(bodyBytes, &rpcMsg)` → `rpcMsg.UnmarshalJSON()` decodes body → `rpcMsg.ToJsonMap()` returns processed structure
+
 ### API Reference
 
 #### Send Message Endpoint
@@ -206,7 +243,7 @@ type Config struct {
 - `x-syft-url` (required): SyftBox URL for the target application
 - `x-syft-from` (required): Sender datasite (email address)
 - `timeout` (optional): Request timeout in milliseconds
-- `x-syft-raw` (optional): Return raw response format
+- `x-syft-raw` (optional): Response format flag (default: false)
 
 **Headers:** All request headers are forwarded to the RPC message
 
@@ -217,6 +254,10 @@ type Config struct {
 **Authentication:** 
 - JWT Bearer token required for authenticated users
 - Use `guest@syft.org` as `x-syft-from` for guest access (no Bearer token needed)
+
+**Response Format Behavior:**
+- **`x-syft-raw=false` (default)**: Response is unmarshaled as a `SyftRPCMessage` struct, which decodes the base64 body and returns the full RPC structure with decoded body as JSON
+- **`x-syft-raw=true`**: Response is treated as raw JSON and returned directly (body remains base64-encoded)
 
 **Response:**
 ```json
@@ -239,7 +280,7 @@ type Config struct {
 - `x-syft-from` (required): Original sender datasite (email address)
 - `x-syft-url` (required): Original SyftBox URL
 - `timeout` (optional): Poll timeout in milliseconds
-- `x-syft-raw` (optional): Return raw response format
+- `x-syft-raw` (optional): Response format flag (default: false)
 
 **Response (Success):**
 ```json
@@ -252,7 +293,10 @@ type Config struct {
             "url": "syft://...",
             "method": "POST",
             "status_code": 200,
-            "body": "base64-encoded-response",
+            "body": {
+                "result": "success",
+                "data": "response-content"
+            },
             "headers": {},
             "created": "2024-01-01T00:00:00Z",
             "expires": "2024-01-02T00:00:00Z"
@@ -267,6 +311,59 @@ type Config struct {
     "error": "timeout",
     "message": "Polling timeout reached. The request may still be processing.",
     "request_id": "uuid-string"
+}
+```
+
+#### Response Format Examples
+
+**Standard Response (`x-syft-raw=false`):**
+```json
+{
+    "request_id": "uuid-string",
+    "data": {
+        "message": {
+            "id": "uuid",
+            "sender": "user@example.com",
+            "url": "syft://user@example.com/app_data/myapp/rpc/endpoint",
+            "method": "POST",
+            "status_code": 200,
+            "body": {
+                "result": "success",
+                "data": {
+                    "key": "value",
+                    "count": 42
+                },
+                "timestamp": "2024-01-01T00:00:00Z"
+            },
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "created": "2024-01-01T00:00:00Z",
+            "expires": "2024-01-02T00:00:00Z"
+        }
+    }
+}
+```
+
+**Raw Response (`x-syft-raw=true`):**
+```json
+{
+    "request_id": "uuid-string",
+    "data": {
+        "message": {
+            "id": "uuid",
+            "sender": "user@example.com",
+            "url": "syft://user@example.com/app_data/myapp/rpc/endpoint",
+            "method": "POST",
+            "status_code": 200,
+            "body": "eyJyZXN1bHQiOiJzdWNjZXNzIiwiZGF0YSI6eyJrZXkiOiJ2YWx1ZSIsImNvdW50Ijo0Mn0sInRpbWVzdGFtcCI6IjIwMjQtMDEtMDFUMDA6MDA6MDBaIn0=",
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "created": "2024-01-01T00:00:00Z",
+            "expires": "2024-01-02T00:00:00Z"
+        }
+    }
 }
 ```
 
@@ -298,11 +395,17 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://alice@compan
     "data": {
         "message": {
             "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-            "sender": "web-client",
+            "sender": "alice@company.com",
             "url": "syft://alice@company.com/app_data/db-service/rpc/query",
             "method": "POST",
             "status_code": 200,
-            "body": "eyJyZXN1bHRzIjpbeyJpZCI6MSwibmFtZSI6IkpvaG4gRG9lIiwic3RhdHVzIjoiYWN0aXZlIn0seyJpZCI6MiwibmFtZSI6IkphbmUgU21pdGgiLCJzdGF0dXMiOiJhY3RpdmUifV0sInRvdGFsIjoxMDB9",
+            "body": {
+                "results": [
+                    {"id": 1, "name": "John Doe", "status": "active"},
+                    {"id": 2, "name": "Jane Smith", "status": "active"}
+                ],
+                "total": 100
+            },
             "headers": {
                 "Content-Type": "application/json",
                 "X-Request-ID": "req-12345"
@@ -358,7 +461,12 @@ curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=b2c3d4e5-f6g7-8901-
             "url": "syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict",
             "method": "POST",
             "status_code": 200,
-            "body": "eyJwcmVkaWN0aW9uIjoicG9zaXRpdmUiLCJjb25maWRlbmNlIjowLjk1LCJtb2RlbF92ZXJzaW9uIjoidjIuMSIsInByb2Nlc3NpbmdfdGltZSI6MS4yfQ==",
+            "body": {
+                "prediction": "positive",
+                "confidence": 0.95,
+                "model_version": "v2.1",
+                "processing_time": 1.2
+            },
             "headers": {
                 "Content-Type": "application/json",
                 "X-Model-Version": "v2.1"
@@ -395,7 +503,12 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
             "url": "syft://demo@syftbox.net/app_data/public-sentiment/rpc/analyze",
             "method": "POST",
             "status_code": 200,
-            "body": "eyJzZW50aW1lbnQiOiJwb3NpdGl2ZSIsInNjb3JlIjowLjg1LCJsYW5ndWFnZSI6ImVuIiwidGltZXN0YW1wIjoiMjAyNC0wMS0xNVQxMDo1NTowMFoifQ==",
+            "body": {
+                "sentiment": "positive",
+                "score": 0.85,
+                "language": "en",
+                "timestamp": "2024-01-15T10:55:00Z"
+            },
             "headers": {
                 "Content-Type": "application/json"
             },
@@ -440,7 +553,14 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://data-team@co
             "url": "syft://data-team@company.com/app_data/file-processor/rpc/validate",
             "method": "POST",
             "status_code": 200,
-            "body": "eyJ2YWxpZCI6dHJ1ZSwidmFsaWRhdGlvbl9yZXN1bHRzIjpbeyJydWxlIjoianNvbl9zY2hlbWEiLCJzdGF0dXMiOiJwYXNzZWQifSx7InJ1bGUiOiJyZXF1aXJlZF9maWVsZHMiLCJzdGF0dXMiOiJwYXNzZWQifV0sImVycm9ycyI6W119",
+            "body": {
+                "valid": true,
+                "validation_results": [
+                    {"rule": "json_schema", "status": "passed"},
+                    {"rule": "required_fields", "status": "passed"}
+                ],
+                "errors": []
+            },
             "headers": {
                 "Content-Type": "application/json",
                 "X-File-Type": "config"
@@ -484,7 +604,12 @@ curl -X PUT "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://admin@company
             "url": "syft://admin@company.com/app_data/config-manager/rpc/update",
             "method": "PUT",
             "status_code": 200,
-            "body": "eyJzdWNjZXNzIjp0cnVlLCJjb25maWdfdXBkYXRlZCI6dHJ1ZSwibWVzc2FnZSI6IkNvbmZpZ3VyYXRpb24gdXBkYXRlZCBzdWNjZXNzZnVsbHkiLCJ0aW1lc3RhbXAiOiIyMDI0LTAxLTE1VDEwOjQ1OjAwWiJ9",
+            "body": {
+                "success": true,
+                "config_updated": true,
+                "message": "Configuration updated successfully",
+                "timestamp": "2024-01-15T10:45:00Z"
+            },
             "headers": {
                 "Content-Type": "application/json",
                 "X-Environment": "production"
@@ -496,39 +621,86 @@ curl -X PUT "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://admin@company
 }
 ```
 
-#### Use Case 5: Health Check with Raw Response (Authenticated User)
+#### Use Case 5: Health Check - Raw vs Standard Response (Authenticated User)
 
-**Scenario**: A client performs a health check and wants the raw response format.
+**Scenario**: A client performs a health check and compares raw vs standard response formats.
 
-**Request:**
+**Request (Standard Response):**
+```bash
+curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@company.com/app_data/health-check/rpc/status&x-syft-from=monitoring@company.com&x-syft-raw=false" \
+  -H "Authorization: Bearer <jwt-token>" \
+  -H "X-Check-Type: full"
+```
+
+**Response (Standard Format - `x-syft-raw=false`):**
+```json
+{
+    "request_id": "e5f6g7h8-i9j0-1234-efgh-567890123456",
+    "data": {
+        "message": {
+            "id": "e5f6g7h8-i9j0-1234-efgh-567890123456",
+            "sender": "monitoring@company.com",
+            "url": "syft://monitoring@company.com/app_data/health-check/rpc/status",
+            "method": "GET",
+            "status_code": 200,
+            "body": {
+                "status": "healthy",
+                "timestamp": "2024-01-15T10:50:00Z",
+                "services": {
+                    "database": "ok",
+                    "cache": "ok",
+                    "external_api": "ok"
+                },
+                "metrics": {
+                    "cpu_usage": 45.2,
+                    "memory_usage": 67.8,
+                    "disk_usage": 23.1
+                }
+            },
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Check-Type": "full"
+            },
+            "created": "2024-01-15T10:50:00Z",
+            "expires": "2024-01-16T10:50:00Z"
+        }
+    }
+}
+```
+
+**Request (Raw Response):**
 ```bash
 curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@company.com/app_data/health-check/rpc/status&x-syft-from=monitoring@company.com&x-syft-raw=true" \
   -H "Authorization: Bearer <jwt-token>" \
   -H "X-Check-Type: full"
 ```
 
-**Response (Raw Format):**
+**Response (Raw Format - `x-syft-raw=true`):**
 ```json
 {
     "request_id": "e5f6g7h8-i9j0-1234-efgh-567890123456",
     "data": {
         "message": {
-            "status": "healthy",
-            "timestamp": "2024-01-15T10:50:00Z",
-            "services": {
-                "database": "ok",
-                "cache": "ok",
-                "external_api": "ok"
+            "id": "e5f6g7h8-i9j0-1234-efgh-567890123456",
+            "sender": "monitoring@company.com",
+            "url": "syft://monitoring@company.com/app_data/health-check/rpc/status",
+            "method": "GET",
+            "status_code": 200,
+            "body": "eyJzdGF0dXMiOiJoZWFsdGh5IiwidGltZXN0YW1wIjoiMjAyNC0wMS0xNVQxMDo1MDowMFoiLCJzZXJ2aWNlcyI6eyJkYXRhYmFzZSI6Im9rIiwiY2FjaGUiOiJvayIsImV4dGVybmFsX2FwaSI6Im9rIn0sIm1ldHJpY3MiOnsiY3B1X3VzYWdlIjo0NS4yLCJtZW1vcnlfdXNhZ2UiOjY3LjgsImRpc2tfdXNhZ2UiOjIzLjF9fQ==",
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Check-Type": "full"
             },
-            "metrics": {
-                "cpu_usage": 45.2,
-                "memory_usage": 67.8,
-                "disk_usage": 23.1
-            }
+            "created": "2024-01-15T10:50:00Z",
+            "expires": "2024-01-16T10:50:00Z"
         }
     }
 }
 ```
+
+**Key Differences:**
+- **Standard Response**: Includes full RPC message metadata (id, sender, url, method, status_code, headers, created, expires) with the body decoded from base64 and returned as JSON
+- **Raw Response**: Returns the raw JSON representation of the RPC message (body remains base64-encoded)
 
 #### Use Case 5b: Guest Access - Public Calculator Service
 
@@ -555,7 +727,12 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
             "url": "syft://demo@syftbox.net/app_data/calculator/rpc/compute",
             "method": "POST",
             "status_code": 200,
-            "body": "eyJyZXN1bHQiOjM0NSwib3BlcmF0aW9uIjoibXVsdGlwbHkiLCJvcGVyYW5kcyI6WzE1LDIzXSwidGltZXN0YW1wIjoiMjAyNC0wMS0xNVQxMTo1NTowMFoifQ==",
+            "body": {
+                "result": 345,
+                "operation": "multiply",
+                "operands": [15, 23],
+                "timestamp": "2024-01-15T11:55:00Z"
+            },
             "headers": {
                 "Content-Type": "application/json"
             },
@@ -581,7 +758,21 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasit
 {
     "request_id": "123e4567-e89b-12d3-a456-426614174000",
     "data": {
-        "response": "success"
+        "message": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "sender": "user@datasite.com",
+            "url": "syft://user@datasite.com/app_data/myapp/rpc/endpoint",
+            "method": "POST",
+            "status_code": 200,
+            "body": {
+                "response": "success"
+            },
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "created": "2024-01-15T12:00:00Z",
+            "expires": "2024-01-16T12:00:00Z"
+        }
     }
 }
 ```
