@@ -139,6 +139,12 @@ graph TD
 3. **Response Processing**: Retrieves and formats response data
 4. **Cleanup**: Removes request/response files from storage
 
+#### Client-Side Response Flow
+1. **Application Processing**: Local application processes the RPC request and creates response file
+2. **Sync Upload**: Syftbox Client uploads response to cache server using normal sync upload operations
+3. **Blob Storage**: Response is stored in blob storage via the sync engine
+4. **Polling**: Client can then poll for the response using the poll endpoint
+
 ## 3. Technical Deep Dive
 
 ### Data Structures
@@ -927,7 +933,7 @@ The sync engine integrates with the send handler through the `processHttpMessage
 4. **File Creation**: Writes RPC message to local file system
 5. **Application Processing**: Local application processes the RPC request
 6. **Response Creation**: Application creates response file
-7. **Sync Upload**: Response is uploaded back to blob storage
+7. **Sync Upload**: Client uploads response to cache server using normal sync upload operations
 
 #### File Structure
 ```
