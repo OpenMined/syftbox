@@ -191,9 +191,10 @@ Individual access rule from YAML:
 
 ```go
 type Rule struct {
-    Pattern string   // Glob pattern (e.g., "**/*.csv", "public/**")
-    Access  *Access  // Permission definitions
-    Limits  *Limits  // Resource limits
+    Pattern string  `yaml:"pattern"`   // Glob pattern (e.g., "**/*.csv", "public/**")
+    Access  *Access `yaml:"access"`  // Permission definitions
+    Limits  *Limits  `yaml:"-"`  // Resource Limitation - Current disabled
+    // Limits field is excluded from YAML serialization (yaml:"-")
 }
 ```
 
@@ -526,10 +527,10 @@ When a user attempts to write a file (e.g., `carol` creating `/alice/shared/repo
    └─> Check write access: "carol@example.com" ∈ ["carol@example.com", "dave@example.com"]
        → YES
 
-6. LIMITS CHECK (if applicable)
-   └─> Rule limits: {maxFileSize: 10485760, maxFiles: 100}
-   └─> File size 1024 < 10485760? YES
-   └─> File count for carol in /alice/shared: 5 < 100? YES
+6. ACCESS CHECK
+   └─> Rule access: {write: ["carol@example.com", "dave@example.com"]}
+   └─> Check write access: "carol@example.com" ∈ ["carol@example.com", "dave@example.com"]
+   └─> YES
 
 7. PERMISSION GRANTED
    └─> Cache result
@@ -681,7 +682,7 @@ Here's how the data structures look during a permission check:
                     Write: mapset.NewSet[string](),
                     Admin: mapset.NewSet[string](),
                 },
-                Limits: &aclspec.Limits{},
+                // Limits field is excluded from YAML serialization
             },
             node: /* reference to this node */,
             matcher: &GlobMatcher{pattern: "alice/public/**"},
@@ -833,10 +834,6 @@ rules:
     access:
       read: ["USER"]
       write: ["USER"]
-    limits:
-      maxFileSize: 10485760  # 10MB
-      allowDirs: true
-      allowSymlinks: false
   - pattern: "public/**"
     access:
       read: ["*"]
@@ -867,10 +864,6 @@ resolved: {read: ["bob@example.com"], write: ["bob@example.com"]}
 // 4. Permission check:
 user: "bob@example.com"
 isWriter := access.Write.Contains(user.ID)  // true
-
-// 5. File size check:
-fileSize := 2097152  // 2MB
-sizeOK := fileSize <= limits.MaxFileSize  // true
 
 // Result: ALLOW
 ```
@@ -1071,16 +1064,21 @@ func (s *ACLService) onBlobChange(key string, eventType blob.BlobEventType) {
 
 #### Limits Configuration
 
-The ACL system supports resource limits to prevent abuse and manage storage efficiently:
+The ACL system supports resource limits to prevent abuse and manage storage efficiently, but these are **not configurable through YAML** due to the `yaml:"-"` tag:
 
 ```go
 type Limits struct {
-  MaxFileSize   int64  // Maximum file size in bytes, default: 0 no limit
-  MaxFiles      uint32 // Maximum number of files, default: 0 no limit
-  AllowDirs     bool   // Allow directory creation, default: true
-  AllowSymlinks bool   // Allow symbolic links, default: false
+
+  MaxFileSize   int64 `yaml:"maxFileSize,omitempty"` // Maximum file size in bytes, default: 0 no limit
+  AllowDirs     bool   `yaml:"allowDirs,omitempty"`// Allow directory creation, default: true
+  AllowSymlinks bool   `yaml:"allowSymlinks,omitempty"` // Allow symbolic links, default: false
+  MaxFiles      uint32 `yaml:"maxFiles,omitempty"` //`MaxFiles` limit is defined in the struct but not currently implemented in the codebase
 }
 ```
+
+**Note:** 
+- Limits are not configurable through YAML files and are excluded from YAML serialization
+- Limits functionality is implemented in the code but uses hardcoded default values
 
 #### Example: Storage Quotas
 
@@ -1092,27 +1090,18 @@ rules:
     access:
       write: ["*"]  # Anyone can contribute
       read: ["alice@example.com", "bob@example.com"]
-    limits:
-      maxFileSize: 10485760  # 10MB per file
-      maxFiles: 100          # 100 files max
-      allowDirs: true
-      allowSymlinks: false   # No symlinks for security
 ```
 
 #### Example: Restricted Upload Area
 
 ```yaml
-# Public upload area with strict limits
+# Public upload area with access control
 terminal: true
 rules:
   - pattern: "uploads/temp/**"
     access:
       write: ["*"]
       read: ["alice@example.com"]
-    limits:
-      maxFileSize: 5242880  # 5MB max
-      allowDirs: false      # No subdirectories
-      allowSymlinks: false
 ```
 
 #### Limits Enforcement
@@ -1121,6 +1110,7 @@ rules:
 - File size is validated before accepting uploads
 - Directory creation and symlinks can be controlled
 - Default limits (0) mean no restriction
+- **Note:** Limits are currently hardcoded and not configurable through YAML files
 
 ### Path Depth Limits
 
@@ -1313,8 +1303,6 @@ rules:
     access:
       read: ["USER"]
       write: ["USER"]
-    limits:
-      maxFileSize: 10485760
   - pattern: "public/**"
     access:
       read: ["*"]
@@ -1407,493 +1395,6 @@ rules:
 - Time-based permissions
 - Hash-based user identification
 
-## Advanced Permission Use Cases
-
-### User Isolation and Multi-Tenancy
-
-#### 1. **Personal Workspace Isolation**
-Create individual workspaces for each user automatically:
-
-```yaml
-# /company/shared/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "workspace_{{.UserEmail}}/**"
-    access:
-      read: ["USER"]
-      write: ["USER"]
-      admin: ["USER"]
-    limits:
-      maxFileSize: 104857600  # 100MB
-      maxFiles: 1000
-      allowDirs: true
-      allowSymlinks: false
-  
-  - pattern: "public/**"
-    access:
-      read: ["*"]
-      write: ["alice@example.com", "bob@example.com"]  # Admins only
-  - pattern: "**"
-    access:
-      read: []
-      write: []
-```
-
-**Use Case**: Each user gets their own workspace (`workspace_alice@company.com/`, `workspace_bob@company.com/`) with full control, while public areas remain shared.
-
-#### 2. **Hash-Based User Directories**
-Use hashed user identifiers for privacy:
-
-```yaml
-# /uploads/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "user_{{.UserHash}}/**"
-    access:
-      read: ["USER"]
-      write: ["USER"]
-    limits:
-      maxFileSize: 52428800  # 50MB
-      allowDirs: false       # Flat structure only
-  
-  - pattern: "temp/**"
-    access:
-      read: ["*"]
-      write: ["*"]
-    limits:
-      maxFileSize: 10485760  # 10MB
-      allowDirs: false
-  - pattern: "**"
-    access:
-      read: []
-      write: []
-```
-
-**Use Case**: Users upload to their private hash-based directory (`user_a1b2c3d4/`) while temporary uploads go to a public area.
-
-### Time-Based Access Control
-
-#### 3. **Academic Year Access Control**
-Control access based on academic calendar:
-
-```yaml
-# /university/courses/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "{{.Year}}/fall/**"
-    access:
-      read: ["*"]
-      write: ["faculty@university.edu"]
-    limits:
-      maxFileSize: 52428800  # 50MB
-  
-  - pattern: "{{.Year}}/spring/**"
-    access:
-      read: ["*"]
-      write: ["faculty@university.edu"]
-    limits:
-      maxFileSize: 52428800
-  
-  - pattern: "{{.Year}}/summer/**"
-    access:
-      read: ["faculty@university.edu", "admin@university.edu"]
-      write: ["admin@university.edu"]
-  - pattern: "**"
-    access:
-      read: ["faculty@university.edu"]
-      write: ["admin@university.edu"]
-```
-
-**Use Case**: Course materials are organized by year and semester, with different access levels for regular semesters vs. summer sessions.
-
-#### 4. **Financial Year Data Access**
-Control access to financial data by fiscal year:
-
-```yaml
-# /company/finance/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "fy{{.Year}}/q1/**"
-    access:
-      read: ["finance@company.com", "ceo@company.com"]
-      write: ["finance@company.com"]
-  - pattern: "fy{{.Year}}/q2/**"
-    access:
-      read: ["finance@company.com", "ceo@company.com"]
-      write: ["finance@company.com"]
-  - pattern: "fy{{.Year}}/q3/**"
-    access:
-      read: ["finance@company.com", "ceo@company.com"]
-      write: ["finance@company.com"]
-  - pattern: "fy{{.Year}}/q4/**"
-    access:
-      read: ["finance@company.com", "ceo@company.com", "board@company.com"]
-      write: ["finance@company.com"]
-  - pattern: "fy{{.Year}}/annual/**"
-    access:
-      read: ["*"]  # Public annual reports
-      write: ["finance@company.com"]
-  - pattern: "**"
-    access:
-      read: ["finance@company.com"]
-      write: ["finance@company.com"]
-```
-
-**Use Case**: Financial data is organized by fiscal year and quarter, with Q4 and annual reports having broader access.
-
-### Dynamic Content Management
-
-#### 5. **Blog/Content Publishing System**
-Time-based content publishing with user-specific drafts:
-
-```yaml
-# /blog/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "drafts/{{.UserEmail}}/**"
-    access:
-      read: ["USER"]
-      write: ["USER"]
-    limits:
-      maxFileSize: 10485760  # 10MB
-  
-  - pattern: "published/{{.Year}}/{{.Month}}/**"
-    access:
-      read: ["*"]
-      write: ["editor@blog.com", "admin@blog.com"]
-    limits:
-      maxFileSize: 52428800  # 50MB
-  
-  - pattern: "scheduled/{{.Year}}/{{.Month}}/**"
-    access:
-      read: ["editor@blog.com", "admin@blog.com"]
-      write: ["editor@blog.com", "admin@blog.com"]
-  - pattern: "**"
-    access:
-      read: ["editor@blog.com", "admin@blog.com"]
-      write: ["admin@blog.com"]
-```
-
-**Use Case**: Authors have private draft areas, published content is organized by date and publicly readable, scheduled content is editor-only.
-
-#### 6. **Event-Based File Access**
-Control access based on event timing:
-
-```yaml
-# /events/conference/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "{{.Year}}/before_event/**"
-    access:
-      read: ["organizer@conference.com", "speaker@conference.com"]
-      write: ["organizer@conference.com"]
-  - pattern: "{{.Year}}/during_event/**"
-    access:
-      read: ["*"]
-      write: ["organizer@conference.com"]
-  - pattern: "{{.Year}}/after_event/**"
-    access:
-      read: ["*"]
-      write: ["organizer@conference.com"]
-    limits:
-      maxFileSize: 104857600  # 100MB for post-event materials
-  - pattern: "**"
-    access:
-      read: ["organizer@conference.com"]
-      write: ["organizer@conference.com"]
-```
-
-**Use Case**: Conference materials have different access levels before, during, and after the event.
-
-### Advanced User Management
-
-#### 7. **Role-Based Access with Templates**
-Combine templates with role-based access:
-
-```yaml
-# /company/projects/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "{{.UserEmail}}/personal/**"
-    access:
-      read: ["USER"]
-      write: ["USER"]
-      admin: ["USER"]
-  
-  - pattern: "{{.UserEmail}}/shared/**"
-    access:
-      read: ["USER", "manager@company.com", "team_lead@company.com"]
-      write: ["USER", "manager@company.com"]
-  
-  - pattern: "team_{{.UserHash}}/**"
-    access:
-      read: ["USER", "team_member@company.com"]
-      write: ["USER", "team_lead@company.com"]
-  
-  - pattern: "public/**"
-    access:
-      read: ["*"]
-      write: ["manager@company.com"]
-  - pattern: "**"
-    access:
-      read: ["manager@company.com"]
-      write: ["manager@company.com"]
-```
-
-**Use Case**: Each user has personal, shared, and team areas, with different access levels for different roles.
-
-#### 8. **Department-Based Access Control**
-Organize access by department and user:
-
-```yaml
-# /company/departments/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "{{.UserEmail}}/dept_{{.UserHash}}/**"
-    access:
-      read: ["USER", "dept_head@company.com"]
-      write: ["USER"]
-    limits:
-      maxFileSize: 52428800  # 50MB
-  
-  - pattern: "engineering/{{.Year}}/{{.Month}}/**"
-    access:
-      read: ["engineer@company.com", "tech_lead@company.com"]
-      write: ["tech_lead@company.com"]
-  
-  - pattern: "marketing/{{.Year}}/{{.Month}}/**"
-    access:
-      read: ["marketer@company.com", "marketing_director@company.com"]
-      write: ["marketing_director@company.com"]
-  
-  - pattern: "finance/{{.Year}}/{{.Month}}/**"
-    access:
-      read: ["finance@company.com", "cfo@company.com"]
-      write: ["finance@company.com"]
-  - pattern: "**"
-    access:
-      read: ["ceo@company.com"]
-      write: ["ceo@company.com"]
-```
-
-**Use Case**: Department-specific access with time-based organization and user-specific areas.
-
-### Domain-Based Access Control
-
-#### 9. **Company-Wide Domain Access**
-Grant access to all users within a company domain:
-
-```yaml
-# /company/shared/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "internal/**"
-    access:
-      read: ["*@company.com"]      # All company employees
-      write: ["*@company.com"]     # All company employees
-    limits:
-      maxFileSize: 104857600  # 100MB
-      allowDirs: true
-  
-  - pattern: "public/**"
-    access:
-      read: ["*"]                  # Everyone
-      write: ["*@company.com"]     # Only company employees can write
-  
-  - pattern: "admin/**"
-    access:
-      read: ["*@company.com"]
-      write: ["admin@company.com", "ceo@company.com"]
-  - pattern: "**"
-    access:
-      read: ["*@company.com"]
-      write: []
-```
-
-**Use Case**: Internal documents accessible to all company employees, public areas readable by everyone but writable only by company users.
-
-#### 10. **Department-Specific Domain Access**
-Organize access by department domains:
-
-```yaml
-# /company/departments/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "engineering/**"
-    access:
-      read: ["*@engineering.company.com", "*@tech.company.com"]
-      write: ["*@engineering.company.com"]
-    limits:
-      maxFileSize: 524288000  # 500MB for large files
-  
-  - pattern: "marketing/**"
-    access:
-      read: ["*@marketing.company.com", "*@sales.company.com"]
-      write: ["*@marketing.company.com"]
-  
-  - pattern: "finance/**"
-    access:
-      read: ["*@finance.company.com", "*@accounting.company.com"]
-      write: ["*@finance.company.com"]
-  
-  - pattern: "hr/**"
-    access:
-      read: ["*@hr.company.com", "*@people.company.com"]
-      write: ["*@hr.company.com"]
-  - pattern: "**"
-    access:
-      read: ["*@company.com"]
-      write: ["admin@company.com"]
-```
-
-**Use Case**: Department-specific access with subdomain-based organization and cross-departmental read access.
-
-#### 11. **Multi-Organization Domain Access**
-Control access across multiple organizations:
-
-```yaml
-# /partnership/shared/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "global/**"
-    access:
-      read: ["*@company.com", "*@partner.com", "*@subsidiary.com"]
-      write: ["*@company.com"]
-    limits:
-      maxFileSize: 104857600  # 100MB
-  
-  - pattern: "company_only/**"
-    access:
-      read: ["*@company.com"]
-      write: ["*@company.com"]
-  
-  - pattern: "partner_only/**"
-    access:
-      read: ["*@partner.com"]
-      write: ["*@partner.com"]
-  
-  - pattern: "public/**"
-    access:
-      read: ["*"]
-      write: ["*@company.com", "*@partner.com"]
-  - pattern: "**"
-    access:
-      read: ["*@company.com"]
-      write: ["admin@company.com"]
-```
-
-**Use Case**: Partnership data with different access levels for different organizations and shared public areas.
-
-#### 12. **Role-Based Domain Access**
-Combine domain patterns with role-based access:
-
-```yaml
-# /company/projects/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "managers/**"
-    access:
-      read: ["*@company.com"]
-      write: ["*@manager.company.com", "*@lead.company.com"]
-  
-  - pattern: "executives/**"
-    access:
-      read: ["*@company.com"]
-      write: ["*@exec.company.com", "*@ceo.company.com"]
-  
-  - pattern: "developers/**"
-    access:
-      read: ["*@engineering.company.com", "*@tech.company.com"]
-      write: ["*@engineering.company.com"]
-  
-  - pattern: "designers/**"
-    access:
-      read: ["*@design.company.com", "*@creative.company.com"]
-      write: ["*@design.company.com"]
-  
-  - pattern: "public/**"
-    access:
-      read: ["*"]
-      write: ["*@company.com"]
-  - pattern: "**"
-    access:
-      read: ["*@company.com"]
-      write: ["admin@company.com"]
-```
-
-**Use Case**: Role-based access using subdomain patterns for different job functions within the company.
-
-### Security and Compliance
-
-#### 13. **Audit Trail with Time-Based Access**
-Compliance-focused access control:
-
-```yaml
-# /compliance/audit/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "{{.Year}}/{{.Month}}/{{.Date}}/**"
-    access:
-      read: ["auditor@company.com", "compliance@company.com"]
-      write: ["compliance@company.com"]
-    limits:
-      allowDirs: true
-      allowSymlinks: false  # Security requirement
-  
-  - pattern: "reports/{{.Year}}/{{.Month}}/**"
-    access:
-      read: ["auditor@company.com", "compliance@company.com", "ceo@company.com"]
-      write: ["compliance@company.com"]
-  
-  - pattern: "evidence/{{.UserHash}}/**"
-    access:
-      read: ["USER", "auditor@company.com"]
-      write: ["USER"]
-    limits:
-      maxFileSize: 104857600  # 100MB for evidence files
-  - pattern: "**"
-    access:
-      read: ["compliance@company.com"]
-      write: ["compliance@company.com"]
-```
-
-**Use Case**: Compliance data organized by date with user-specific evidence areas and restricted access.
-
-#### 14. **Backup and Archive Management**
-Time-based backup access control:
-
-```yaml
-# /backups/syft.pub.yaml
-terminal: true
-rules:
-  - pattern: "{{.Year}}/{{.Month}}/daily/**"
-    access:
-      read: ["backup_admin@company.com", "system_admin@company.com"]
-      write: ["backup_admin@company.com"]
-    limits:
-      maxFileSize: 1073741824  # 1GB for daily backups
-  
-  - pattern: "{{.Year}}/{{.Month}}/weekly/**"
-    access:
-      read: ["backup_admin@company.com", "system_admin@company.com", "ceo@company.com"]
-      write: ["backup_admin@company.com"]
-  
-  - pattern: "{{.Year}}/monthly/**"
-    access:
-      read: ["backup_admin@company.com", "system_admin@company.com", "ceo@company.com"]
-      write: ["backup_admin@company.com"]
-  
-  - pattern: "{{.UserEmail}}/restore/**"
-    access:
-      read: ["USER", "backup_admin@company.com"]
-      write: ["backup_admin@company.com"]
-  - pattern: "**"
-    access:
-      read: ["backup_admin@company.com"]
-      write: ["backup_admin@company.com"]
-```
-
-**Use Case**: Backup data organized by frequency and time, with user-specific restore areas.
 
 ### Best Practices for Advanced Permissions
 
