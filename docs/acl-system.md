@@ -153,9 +153,10 @@ Individual access rule from YAML:
 
 ```go
 type Rule struct {
-    Pattern string   // Glob pattern (e.g., "**/*.csv", "public/**")
-    Access  *Access  // Permission definitions
-    Limits  *Limits  // Resource limits
+    Pattern string  `yaml:"pattern"`   // Glob pattern (e.g., "**/*.csv", "public/**")
+    Access  *Access `yaml:"access"`  // Permission definitions
+    Limits  *Limits  `yaml:"-"`  // Resource Limitation - Current disabled
+    // Limits field is excluded from YAML serialization (yaml:"-")
 }
 ```
 
@@ -279,10 +280,10 @@ When a user attempts to write a file (e.g., `carol` creating `/alice/shared/repo
    └─> Check write access: "carol@example.com" ∈ ["carol@example.com", "dave@example.com"]
        → YES
 
-6. LIMITS CHECK (if applicable)
-   └─> Rule limits: {maxFileSize: 10485760, maxFiles: 100}
-   └─> File size 1024 < 10485760? YES
-   └─> File count for carol in /alice/shared: 5 < 100? YES
+6. ACCESS CHECK
+   └─> Rule access: {write: ["carol@example.com", "dave@example.com"]}
+   └─> Check write access: "carol@example.com" ∈ ["carol@example.com", "dave@example.com"]
+   └─> YES
 
 7. PERMISSION GRANTED
    └─> Cache result
@@ -430,7 +431,7 @@ Here's how the data structures look during a permission check:
                     Write: mapset.NewSet[string](),
                     Admin: mapset.NewSet[string](),
                 },
-                Limits: &aclspec.Limits{},
+                // Limits field is excluded from YAML serialization
             },
             node: /* reference to this node */,
         },
@@ -572,7 +573,7 @@ rules:
 }
 ```
 
-### Example 2: Terminal Node with File Size Limits
+### Example 2: Terminal Node with Access Control
 
 ```yaml
 # /alice/uploads/syft.pub.yaml
@@ -582,17 +583,13 @@ rules:
     access:
       write: ["*"]
       read: ["alice@example.com"]
-    limits:
-      maxFileSize: 5242880  # 5MB
-      allowDirs: false      # No directories allowed
-      allowSymlinks: false  # No symlinks allowed
   - pattern: "**"
     access:
       read: []
       write: []
 ```
 
-**When user "eve@example.com" uploads to "/alice/uploads/temp/data.json" (2MB):**
+**When user "eve@example.com" uploads to "/alice/uploads/temp/data.json":**
 
 ```go
 // 1. Tree traversal finds node:
@@ -610,25 +607,12 @@ matchedRule := &ACLRule{
         Access: &Access{
             Write: mapset.NewSet("*"),  // Everyone can write
         },
-        Limits: &Limits{
-            MaxFileSize: 5242880,
-            AllowDirs: false,
-            AllowSymlinks: false,
-        },
     },
 }
 
 // 3. Permission check (actual implementation):
 everyoneWrite := matchedRule.rule.Access.Write.Contains("*")  // true
 isWriter := everyoneWrite  // true (since eve@example.com is not admin)
-
-// 4. File size check:
-fileSize := 2097152  // 2MB
-sizeOK := fileSize <= matchedRule.rule.Limits.MaxFileSize  // true
-
-// 5. Directory check:
-isDir := false  // data.json is a file
-dirOK := matchedRule.rule.Limits.AllowDirs || !isDir  // true
 
 // Result: ALLOW
 ```
@@ -808,17 +792,20 @@ func (s *ACLService) onBlobChange(key string, eventType blob.BlobEventType) {
 
 #### Limits Configuration
 
-The ACL system supports resource limits to prevent abuse and manage storage efficiently:
+The ACL system supports resource limits to prevent abuse and manage storage efficiently, but these are **not configurable through YAML** due to the `yaml:"-"` tag:
 
 ```go
 type Limits struct {
-  MaxFileSize   int64  // Maximum file size in bytes, default: 0 no limit
-  AllowDirs     bool   // Allow directory creation, default: true
-  AllowSymlinks bool   // Allow symbolic links, default: false
+  MaxFileSize   int64 `yaml:"maxFileSize,omitempty"` // Maximum file size in bytes, default: 0 no limit
+  AllowDirs     bool   `yaml:"allowDirs,omitempty"`// Allow directory creation, default: true
+  AllowSymlinks bool   `yaml:"allowSymlinks,omitempty"` // Allow symbolic links, default: false
+  MaxFiles      uint32 `yaml:"maxFiles,omitempty"` //`MaxFiles` limit is defined in the struct but not currently implemented in the codebase
 }
 ```
 
-**Note:** `MaxFiles` limit is defined in the struct but not currently implemented in the codebase.
+**Note:** 
+- Limits are excluded from YAML serialization (`yaml:"-"`) and cannot be configured through ACL files
+- Limits functionality is implemented in the code but uses hardcoded default values
 
 #### Example: Storage Quotas
 
@@ -830,26 +817,18 @@ rules:
     access:
       write: ["*"]  # Anyone can contribute
       read: ["alice@example.com", "bob@example.com"]
-    limits:
-      maxFileSize: 10485760  # 10MB per file
-      allowDirs: true
-      allowSymlinks: false   # No symlinks for security
 ```
 
 #### Example: Restricted Upload Area
 
 ```yaml
-# Public upload area with strict limits
+# Public upload area with access control
 terminal: true
 rules:
   - pattern: "uploads/temp/**"
     access:
       write: ["*"]
       read: ["alice@example.com"]
-    limits:
-      maxFileSize: 5242880  # 5MB max
-      allowDirs: false      # No subdirectories
-      allowSymlinks: false
 ```
 
 #### Limits Enforcement
@@ -858,6 +837,7 @@ rules:
 - File size is validated before accepting uploads
 - Directory creation and symlinks can be controlled
 - Default limits (0) mean no restriction
+- **Note:** Limits are currently hardcoded and not configurable through YAML files
 
 ### Path Depth Limits
 
