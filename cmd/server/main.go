@@ -22,6 +22,7 @@ import (
 const (
 	DefaultBindAddr           = "localhost:8080"
 	DefaultDataDir            = ".data"
+	DefaultLogDir             = ".logs"
 	DefaultAuthEnabled        = false
 	DefaultEmailOTPLength     = 8
 	DefaultEmailOTPExpiry     = 5 * time.Minute
@@ -74,6 +75,7 @@ func init() {
 	rootCmd.Flags().StringP("cert", "c", "", "Path to the certificate file for HTTPS")
 	rootCmd.Flags().StringP("key", "k", "", "Path to the key file for HTTPS")
 	rootCmd.Flags().StringP("dataDir", "d", DefaultDataDir, "Directory for server data")
+	rootCmd.Flags().StringP("logDir", "l", DefaultLogDir, "Directory for server logs")
 
 	if err := godotenv.Load(".env"); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -176,10 +178,12 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("http.cert_file", cmd.Flags().Lookup("cert"))
 	v.BindPFlag("http.key_file", cmd.Flags().Lookup("key"))
 	v.BindPFlag("data_dir", cmd.Flags().Lookup("dataDir"))
+	v.BindPFlag("log_dir", cmd.Flags().Lookup("logDir"))
 
 	// Set default values. REQUIRED to make env vars work
 	// Data directory
 	v.SetDefault("data_dir", DefaultDataDir)
+	v.SetDefault("log_dir", DefaultLogDir)
 	// HTTP section
 	v.SetDefault("http.addr", DefaultBindAddr)
 	v.SetDefault("http.cert_file", "")
