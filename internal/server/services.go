@@ -16,12 +16,12 @@ import (
 )
 
 type Services struct {
-	Blob       *blob.BlobService
-	ACL        *acl.ACLService
-	Datasite   *datasite.DatasiteService
-	Auth       *auth.AuthService
-	Email      *email.EmailService
-	AccessLog  *accesslog.AccessLogger
+	Blob      *blob.BlobService
+	ACL       *acl.ACLService
+	Datasite  *datasite.DatasiteService
+	Auth      *auth.AuthService
+	Email     *email.EmailService
+	AccessLog *accesslog.AccessLogger
 }
 
 func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
@@ -37,7 +37,7 @@ func NewServices(config *Config, db *sqlx.DB) (*Services, error) {
 	datasiteSvc := datasite.NewDatasiteService(blobSvc, aclSvc, config.HTTP.Domain)
 
 	authSvc := auth.NewAuthService(&config.Auth, emailSvc)
-	
+
 	// Create access logger
 	accessLogDir := filepath.Join(config.LogDir, "access")
 	accessLogger, err := accesslog.New(accessLogDir, slog.Default())
@@ -81,7 +81,7 @@ func (s *Services) Shutdown(ctx context.Context) error {
 	if err := s.Datasite.Shutdown(ctx); err != nil {
 		return fmt.Errorf("stop datasite service: %w", err)
 	}
-	
+
 	if err := s.AccessLog.Close(); err != nil {
 		return fmt.Errorf("close access logger: %w", err)
 	}

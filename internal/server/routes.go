@@ -40,7 +40,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	if cfg.HTTP.HTTPSEnabled() {
 		r.Use(middlewares.HSTS())
 	}
-	
+
 	// Add access logging middleware
 	if svc.AccessLog != nil {
 		accessLogMiddleware := accesslog.NewMiddleware(svc.AccessLog)
