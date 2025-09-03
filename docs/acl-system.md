@@ -924,6 +924,12 @@ resolved: {read: ["bob@example.com"], write: ["bob@example.com"]}
 user: "bob@example.com"
 isWriter := access.Write.Contains(user.ID)  // true
 
+// 4. Permission check:
+user: "bob@example.com"
+isWriter := access.Write.Contains(user.ID)  // true
+
+// 5. Permission validation:
+// Note: File size and other limits are enforced by the system but not configurable via YAML
 // Result: ALLOW
 ```
 
@@ -1149,6 +1155,7 @@ rules:
     access:
       write: ["*"]  # Anyone can contribute
       read: ["alice@example.com", "bob@example.com"]
+
 ```
 
 #### Example: Restricted Upload Area
