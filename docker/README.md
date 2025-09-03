@@ -37,7 +37,22 @@ To deploy this docker image, a minimal interaction is required. The container sh
 docker run -d -it syftbox-prod
 ```
 
-Then, we suggest attaching VSCode to the container and perform the initial manual setup. The following commands must run within the container.
+Then, we suggest attaching VSCode to the container and perform the initial manual setup.
+
+#### How to attach VSCode to the container:
+
+1. **Install the Remote - Containers extension** in VSCode (for example, [this one](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers))
+2. **Start the container:**
+   ```bash
+   docker run -d --name syftbox-client -it syftbox-prod
+   ```
+3. **Attach VSCode:**
+   - Open Command Palette (`Cmd/Ctrl+Shift+P`)
+   - Run "Remote-Containers: Attach to Running Container"
+   - Select your container (`syftbox-client`)
+4. **VSCode automatically opens a new IDE window connected to the container** - You're now working inside it
+
+Then, run the following commands in the container environment:
 
 ```bash
 syftbox login
