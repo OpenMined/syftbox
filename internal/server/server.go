@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -201,8 +200,6 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 	switch msg.Message.Type {
 	case syftmsg.MsgFileWrite:
 		s.handleFileWrite(msg)
-	// case message.MsgFileDelete:
-	// 	s.handleFileDelete(msg)
 	default:
 		slog.Info("unhandled message", "msgType", msg.Message.Type)
 	}
@@ -217,7 +214,9 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	msgGroup := slog.Group("wsmsg", "id", msg.Message.Id, "type", msg.Message.Type, "connId", msg.ConnID, "from", from, "path", data.Path, "size", data.Length)
 
 	// check if the SENDER has permission to write to the file
-	if err := s.checkPermission(from, data.Path, acl.AccessWrite); err != nil {
+	if err := s.svc.ACL.CanAccess(
+		acl.NewRequest(data.Path, &acl.User{ID: from}, acl.AccessWrite),
+	); err != nil {
 		slog.Error("wsmsg handler permission denied", msgGroup, "error", err)
 		errMsg := syftmsg.NewError(http.StatusForbidden, data.Path, "permission denied for write operation")
 		s.hub.SendMessage(msg.ConnID, errMsg)
@@ -225,6 +224,17 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	}
 
 	slog.Info("wsmsg handler recieved", msgGroup)
+
+	go func() {
+		if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
+			Key:  data.Path,
+			ETag: msg.Message.Id,
+			Body: bytes.NewReader(data.Content),
+			Size: data.Length,
+		}); err != nil {
+			slog.Error("ws file write put object", "error", err)
+		}
+	}()
 
 	// broadcast the message to all clients except the sender
 	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
@@ -236,7 +246,9 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 		}
 
 		// check if the RECIPIENT has permission to read the file
-		if err := s.checkPermission(to, data.Path, acl.AccessRead); err != nil {
+		if err := s.svc.ACL.CanAccess(
+			acl.NewRequest(data.Path, &acl.User{ID: to}, acl.AccessRead),
+		); err != nil {
 			slog.Warn("wsmsg handler permission denied", msgGroup, "to", to, "error", err)
 			return false
 		} else {
@@ -245,44 +257,4 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 
 		return true
 	})
-
-	if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
-		Key:  data.Path,
-		ETag: msg.Message.Id,
-		Body: bytes.NewReader(data.Content),
-		Size: data.Length,
-	}); err != nil {
-		slog.Error("ws file write put object", "error", err)
-	}
 }
-
-func (s *Server) checkPermission(user string, path string, access acl.AccessLevel) error {
-	// todo remove hax once perms can be updated through sync
-	if isRpc(path) {
-		return nil
-	}
-	return s.svc.ACL.CanAccess(
-		&acl.User{ID: user},
-		&acl.File{Path: path},
-		access,
-	)
-}
-
-func isRpc(path string) bool {
-	return strings.Contains(path, "/rpc/") &&
-		(strings.HasSuffix(path, ".request") ||
-			strings.HasSuffix(path, ".response") ||
-			strings.HasSuffix(path, "rpc.schema.json"))
-}
-
-// func (s *Server) handleFileDelete(msg *ws.ClientMessage) {
-// 	slog.Info("FILE_DELETE", "client", msg.Info.User, "msgId", msg.Message.Id)
-// }
-
-// func datasiteOwner(path string) string {
-// 	parts := strings.Split(path, "/")
-// 	if len(parts) < 2 {
-// 		return ""
-// 	}
-// 	return parts[1]
-// }

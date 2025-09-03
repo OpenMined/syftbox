@@ -11,6 +11,7 @@ SyftBox is a privacy-preserving compute platform that enables secure data sharin
   - [ACL File Format](./acl-system.md#acl-file-format)
   - [Data Structures](./acl-system.md#data-structures)
   - [Access Levels](./acl-system.md#access-levels)
+  - [Advanced Pattern Matching](./acl-system.md#advanced-pattern-matching)
   - [Detailed Execution Flows](./acl-system.md#detailed-execution-flows)
   - [Tree-Based Lookup Algorithm](./acl-system.md#tree-based-lookup-algorithm)
   - [Terminal Nodes: When and Why](./acl-system.md#terminal-nodes-when-and-why)
