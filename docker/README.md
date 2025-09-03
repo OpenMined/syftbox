@@ -1,6 +1,6 @@
-## Dockerfile.prod - Production
+## Dockerfile.client.ds
 
-The Dockerfile.prod builds an image containing the SyftBox client CLI.
+The Dockerfile.client.ds builds an image containing the SyftBox client CLI.
 
 ### Features
 - **Multi-architecture support**: Supports both `linux/amd64` and `linux/arm64`
@@ -13,28 +13,28 @@ The Dockerfile.prod builds an image containing the SyftBox client CLI.
 
 ```bash
 # Build for current architecture
-docker build -f docker/Dockerfile.prod \
+docker build -f docker/Dockerfile.client.ds \
   --build-arg SYFTBOX_VERSION=v0.8.3 \
-  -t syftbox-prod .
+  -t syftbox-client .
 
 # Build for specific architecture
-docker build -f docker/Dockerfile.prod \
+docker build -f docker/Dockerfile.client.ds \
   --build-arg SYFTBOX_VERSION=v0.8.3 \
   --platform linux/amd64 \
-  -t syftbox-prod:amd64 .
+  -t syftbox-client:amd64 .
 
 # Multi-architecture build (requires Docker Buildx)
-docker buildx build -f docker/Dockerfile.prod \
+docker buildx build -f docker/Dockerfile.client.ds \
   --platform linux/amd64,linux/arm64 \
   --build-arg SYFTBOX_VERSION=v0.8.3 \
-  -t syftbox-prod:multi .
+  -t syftbox-client:multi .
 ```
 ### Deployment
 
 To deploy this docker image, a minimal interaction is required. The container should run with an infinite command (it is the default entrypoint).
 
 ```bash
-docker run -d -it syftbox-prod
+docker run -d -it syftbox-client
 ```
 
 Then, we suggest attaching VSCode to the container and perform the initial manual setup.
@@ -44,7 +44,7 @@ Then, we suggest attaching VSCode to the container and perform the initial manua
 1. **Install the Remote - Containers extension** in VSCode (for example, [this one](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers))
 2. **Start the container:**
    ```bash
-   docker run -d --name syftbox-client -it syftbox-prod
+   docker run -d --name syftbox-client -it syftbox-client
    ```
 3. **Attach VSCode:**
    - Open Command Palette (`Cmd/Ctrl+Shift+P`)
@@ -69,21 +69,21 @@ From there, you can start using the container to interact with syftbox.
 
 ```bash
 # Run interactively
-docker run --rm -it syftbox-prod syftbox --help
+docker run --rm -it syftbox-client syftbox --help
 
 # Check version
-docker run --rm syftbox-prod syftbox --version
+docker run --rm syftbox-client syftbox --version
 
 # Test Python environment
-docker run --rm syftbox-prod python --version
+docker run --rm syftbox-client python --version
 
 # Test file permissions (runs as non-root)
-docker run --rm syftbox-prod whoami  # Should output: devuser
+docker run --rm syftbox-client whoami  # Should output: devuser
 ```
 
 ### Testing
 
 ```bash
 # Test basic functionality
-docker run --rm syftbox-prod syftbox --version
+docker run --rm syftbox-client syftbox --version
 ```
