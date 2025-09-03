@@ -358,6 +358,8 @@ rules:
 
 #### Available Template Variables
 
+**`TokenUser='USER'` is applicable to ALL template variables** and can be used in access lists with any template pattern:
+
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `{{.UserEmail}}` | User's email address | `alice@example.com` |
@@ -377,7 +379,19 @@ rules:
 
 ### USER Token Resolution
 
-The `USER` token dynamically resolves to the requesting user's ID during access evaluation:
+The `USER` token dynamically resolves to the requesting user's ID during access evaluation. **Important**: The behavior of `USER` token depends on the pattern context:
+
+#### **With Template Patterns (e.g., `{UserEmail}/**`)**
+- `TokenUser` provides **user segregation** and **individual access control**
+- Example: `"private_{{.UserEmail}}/**"` with `read: ["USER"]`
+- This creates **user-specific private spaces** where each user can only access their own directory
+- `USER` token resolves to the requesting user's email, ensuring isolation
+
+#### **With Universal Patterns (e.g., `**`)**
+- `TokenUser` becomes **equivalent to TokenEveryone** (`*`)
+- Example: `"**"` with `read: ["USER"]`
+- This grants access to **any authenticated user**, not just the requesting user
+- The `**` pattern matches everything, so `USER` effectively becomes public access
 
 ```yaml
 rules:
@@ -419,6 +433,11 @@ func (r *ACLRule) resolveAccessList(accessList mapset.Set[string], userID string
 - **Non-Destructive**: Original rule is not modified, resolution happens per request
 - **Efficient**: Uses set operations for fast token replacement
 - **Flexible**: Can be combined with other user IDs in the same access list
+
+**Security Implications:**
+- **Template Patterns**: Provide **true user isolation** and **multi-tenancy**
+- **Universal Patterns**: `USER` token provides **authentication requirement** but not **authorization isolation**
+- **Best Practice**: Use template patterns for user-specific resources, avoid `USER` with `**` for sensitive data
 
 ### Pattern Matching Types
 
