@@ -358,6 +358,8 @@ rules:
 
 #### Available Template Variables
 
+**`TokenUser='USER'` is applicable to ALL template variables** and can be used in access lists with any template pattern:
+
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `{{.UserEmail}}` | User's email address | `alice@example.com` |
@@ -377,7 +379,19 @@ rules:
 
 ### USER Token Resolution
 
-The `USER` token dynamically resolves to the requesting user's ID during access evaluation:
+The `USER` token dynamically resolves to the requesting user's ID during access evaluation. **Important**: The behavior of `USER` token depends on the pattern context:
+
+#### **With Template Patterns (e.g., `{UserEmail}/**`)**
+- `TokenUser` provides **user segregation** and **individual access control**
+- Example: `"private_{{.UserEmail}}/**"` with `read: ["USER"]`
+- This creates **user-specific private spaces** where each user can only access their own directory
+- `USER` token resolves to the requesting user's email, ensuring isolation
+
+#### **With Universal Patterns (e.g., `**`)**
+- `TokenUser` becomes **equivalent to TokenEveryone** (`*`)
+- Example: `"**"` with `read: ["USER"]`
+- This grants access to **any authenticated user**, not just the requesting user
+- The `**` pattern matches everything, so `USER` effectively becomes public access
 
 ```yaml
 rules:
@@ -419,6 +433,11 @@ func (r *ACLRule) resolveAccessList(accessList mapset.Set[string], userID string
 - **Non-Destructive**: Original rule is not modified, resolution happens per request
 - **Efficient**: Uses set operations for fast token replacement
 - **Flexible**: Can be combined with other user IDs in the same access list
+
+**Security Implications:**
+- **Template Patterns**: Provide **true user isolation** and **multi-tenancy**
+- **Universal Patterns**: `USER` token provides **authentication requirement** but not **authorization isolation**
+- **Best Practice**: Use template patterns for user-specific resources, avoid `USER` with `**` for sensitive data
 
 ### Pattern Matching Types
 
@@ -579,8 +598,7 @@ baseScore := len("public/**/*.csv")*2 + strings.Count("public/**/*.csv", "/")*10
 
 // Apply wildcard penalties
 score := 50
-score -= 10  // for first '*' in "**"
-score -= 10  // for second '*' in "**"
+score -= 20  // for "**" (leading wildcard penalty)
 score -= 10  // for '*' in "*.csv"
 // Final score: 20
 
@@ -590,11 +608,52 @@ if hasTemplatePattern(pattern) {
 }
 
 // Comparison with other patterns:
-"public/data.csv"    → score: 34 (most specific)
-"public/*.csv"       → score: 14
+"public/*.txt"       → score: 24
 "public/**/*.csv"    → score: 20
 "**"                 → score: -100 (least specific)
 ```
+
+**Scoring Formula Breakdown:**
+- **Base Score**: `2 × Length + 10 × DirectoryCount`
+- **Template Bonus**: `+50` for any pattern containing `{{...}}`
+- **Wildcard Penalties**: 
+  - `-20` for leading wildcards (`*`, `**`)
+  - `-10` for non-leading wildcards (`*`)
+  - `-2` for other wildcard characters (`?`, `[abc]`, `{...}`)
+- **Special Cases**: `"**" = -100`, `"**/*" = -99`
+
+**Detailed Scoring Examples:**
+
+```go
+// Simple file pattern
+"file.txt" → 2(8) + 10(0) = 16
+
+// Directory with wildcard
+"public/*.txt" → 2(12) + 10(1) - 10 = 24
+
+// Deep wildcard pattern
+"public/**/*.csv" → 2(15) + 10(2) - 20 - 10 = 20
+
+// Template pattern
+"{{.UserEmail}}/*" → 2(18) + 10(1) + 50 = 78
+
+// Complex nested template
+"alice@email.com/{{.UserEmail}}/ben@email.com/{{.UserHash}}/*" 
+→ 2(60) + 10(3) + 50 = 192
+
+// Universal patterns (special cases)
+"**" → -100
+"**/*" → -99
+```
+
+**How Scoring Ensures Proper Rule Ordering:**
+
+1. **Template Patterns Get Highest Priority**: The +50 bonus ensures user-specific patterns are evaluated first
+2. **Specific Patterns Override General Ones**: `"public/*.txt"` (24) > `"public/**/*.csv"` (20) > `"**"` (-100)
+3. **Leading Wildcards Are Heavily Penalized**: Patterns starting with `*` or `**` get -20 penalty
+4. **Directory Depth Matters**: More specific paths get higher scores due to directory separator bonuses
+
+**Result**: Rules are automatically sorted from most specific to least specific, ensuring security and preventing accidental permission overrides.
 
 ### Complete Example: Complex Permission Check
 
