@@ -27,9 +27,7 @@ func (h *ACLHandler) CheckAccess(ctx *gin.Context) {
 
 	// Check access using the ACL service
 	if err := h.aclSvc.CanAccess(
-		&acl.User{ID: req.User},
-		&acl.File{Path: req.Path, Size: req.Size},
-		acl.AccessLevel(req.Level),
+		acl.NewRequest(req.Path, &acl.User{ID: req.User}, acl.AccessLevel(req.Level)),
 	); err != nil {
 		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
 		return

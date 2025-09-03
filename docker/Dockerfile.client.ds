@@ -1,0 +1,91 @@
+# Single stage - Alpine Linux with Python for development
+FROM python:3.11-alpine3.19
+
+# Application-level configuration (must be after FROM in single-stage)
+ARG SYFTBOX_VERSION
+ARG BASE_DOWNLOAD_URL=https://github.com/OpenMined/syftbox/releases/download/
+
+# Get target architecture for multi-arch support  
+ARG TARGETARCH
+
+# Install runtime dependencies (cached layer - changes rarely)
+USER root
+RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    && rm -rf /var/cache/apk/*
+
+# Install build tools, download syftbox, cleanup in single layer (invalidated when version changes)
+RUN apk add --no-cache --virtual .build-deps \
+    curl \
+    tar \
+    gzip \
+    && \
+    \
+    # Architecture detection
+    case "${TARGETARCH}" in \
+        amd64) SYFTBOX_NAME="syftbox_client_linux_amd64" ;; \
+        arm64) SYFTBOX_NAME="syftbox_client_linux_arm64" ;; \
+        *) echo "ERROR: Unsupported target architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    \
+    # Download and verify syftbox binary
+    SYFTBOX_URL="${BASE_DOWNLOAD_URL}${SYFTBOX_VERSION}/${SYFTBOX_NAME}.tar.gz"; \
+    CHECKSUM_URL="${BASE_DOWNLOAD_URL}${SYFTBOX_VERSION}/syft_${SYFTBOX_VERSION}_checksums.txt"; \
+    \
+    echo "INFO: Building for ${TARGETARCH} from: $SYFTBOX_URL"; \
+    \
+    mkdir -p /tmp/syftbox-install; \
+    cd /tmp/syftbox-install; \
+    \
+    # Download binary and checksums
+    curl -fsSL --retry 3 --retry-delay 2 \
+         --connect-timeout 10 --max-time 300 \
+         -o "${SYFTBOX_NAME}.tar.gz" "$SYFTBOX_URL"; \
+    \
+    curl -fsSL --retry 3 --retry-delay 2 \
+         --connect-timeout 10 --max-time 300 \
+         -o checksums.txt "$CHECKSUM_URL" || \
+         { echo "WARN: Could not download checksums, skipping verification"; }; \
+    \
+    # Verify checksum if available
+    if [ -f checksums.txt ]; then \
+        echo "INFO: Verifying checksum..."; \
+        grep "${SYFTBOX_NAME}.tar.gz" checksums.txt | sha256sum -c - || \
+        { echo "ERROR: Checksum verification failed"; exit 1; }; \
+        echo "INFO: Checksum verification passed"; \
+    fi; \
+    \
+    # Extract and install binary
+    gzip -t "${SYFTBOX_NAME}.tar.gz"; \
+    tar -xzf "${SYFTBOX_NAME}.tar.gz"; \
+    mv "$SYFTBOX_NAME" syftbox; \
+    chmod +x syftbox/syftbox; \
+    mv syftbox/syftbox /usr/local/bin/syftbox; \
+    \
+    # Cleanup temp directory and build tools
+    cd /; \
+    rm -rf /tmp/syftbox-install; \
+    apk del .build-deps
+
+# Create user and setup workspace in single cached layer  
+RUN addgroup -g 1000 devuser && \
+    adduser -u 1000 -G devuser -h /home/devuser -s /bin/bash -D devuser && \
+    mkdir -p /home/devuser/workspace && \
+    chown -R devuser:devuser /home/devuser
+
+# Switch to non-root user
+USER devuser
+WORKDIR /home/devuser/workspace
+ENV PATH="/home/devuser/.local/bin:/usr/local/bin:$PATH"
+
+# Verify syftbox works as the actual runtime user
+RUN syftbox --version && echo "SUCCESS: syftbox ready for devuser"
+
+# Health check
+HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 \
+    CMD ["/usr/local/bin/syftbox", "--version"]
+
+# Default to long-running process for background execution
+# Can be overridden for specific use cases
+CMD ["sleep", "infinity"]

@@ -45,6 +45,8 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 			Domain:  cfg.HTTP.Domain,
 			Mapping: svc.Datasite.GetSubdomainMapping(),
 		}))
+		// Add security headers for subdomain requests
+		r.Use(middlewares.SubdomainSecurityHeaders())
 	}
 
 	// Load HTML templates from embedded filesystem

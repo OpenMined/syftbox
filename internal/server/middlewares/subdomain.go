@@ -147,7 +147,11 @@ func abortWithInvalidSubdomain(c *gin.Context, host string) {
 }
 
 func isLocalDevRequest(host string) bool {
-	return strings.Contains(host, "127.0.0.1") || strings.Contains(host, "0.0.0.0") || strings.Contains(host, "localhost")
+	return strings.Contains(host, "127.0.0.1") || 
+		strings.Contains(host, "0.0.0.0") || 
+		strings.Contains(host, "localhost") ||
+		strings.Contains(host, "syftbox-server") || // Docker container hostname
+		strings.Contains(host, "host.docker.internal") // Docker host machine
 }
 
 func IsSubdomainRequest(c *gin.Context) bool {
