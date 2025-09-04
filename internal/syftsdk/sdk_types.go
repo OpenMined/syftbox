@@ -17,7 +17,32 @@ const (
 	HeaderSyftDeviceId = "X-Syft-Device-Id"
 )
 
-var SyftBoxUserAgent = fmt.Sprintf("SyftBox/%s (%s; %s; %s)", version.Version, version.Revision, runtime.GOOS, runtime.GOARCH)
+var SyftBoxUserAgent = getUserAgent()
+
+func getUserAgent() string {
+	osVersion := getOSVersion()
+	return fmt.Sprintf("SyftBox/%s (%s; %s/%s; Go/%s; %s)", 
+		version.Version, 
+		version.Revision, 
+		runtime.GOOS, 
+		runtime.GOARCH,
+		runtime.Version(),
+		osVersion,
+	)
+}
+
+func getOSVersion() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return getMacOSVersion()
+	case "linux":
+		return getLinuxVersion()
+	case "windows":
+		return getWindowsVersion()
+	default:
+		return runtime.GOOS
+	}
+}
 
 // A simple HTTP client with some common values set
 var HTTPClient = req.C().

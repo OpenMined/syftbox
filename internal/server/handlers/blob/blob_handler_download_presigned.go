@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/accesslog"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
@@ -35,6 +36,9 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 		}
 
 		if err := h.checkPermissions(key, user, acl.AccessRead); err != nil {
+			if logger := accesslog.GetAccessLogger(ctx); logger != nil {
+				logger.LogAccess(ctx, key, accesslog.AccessTypeRead, acl.AccessRead, false, err.Error())
+			}
 			errors = append(errors, &BlobAPIError{
 				SyftAPIError: api.SyftAPIError{
 					Code:    api.CodeAccessDenied,
@@ -43,6 +47,10 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 				Key: key,
 			})
 			continue
+		}
+		
+		if logger := accesslog.GetAccessLogger(ctx); logger != nil {
+			logger.LogAccess(ctx, key, accesslog.AccessTypeRead, acl.AccessRead, true, "")
 		}
 
 		_, ok := index.Get(key)
