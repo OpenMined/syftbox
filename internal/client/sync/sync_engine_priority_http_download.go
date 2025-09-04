@@ -17,7 +17,10 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 
 	// rpc message file name
 	fileName := httpMsg.Id + ".request"
-	relPath := filepath.Join(httpMsg.SyftURL.ToLocalPath(), fileName)
+	relPath := filepath.Join(
+		httpMsg.SyftURL.ToLocalPath(),
+		fileName,
+	)
 	syncRelPath := SyncPath(relPath)
 
 	se.syncStatus.SetSyncing(syncRelPath)

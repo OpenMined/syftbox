@@ -1129,6 +1129,7 @@ The ACL system supports resource limits to prevent abuse and manage storage effi
 
 ```go
 type Limits struct {
+
   MaxFileSize   int64 `yaml:"maxFileSize,omitempty"` // Maximum file size in bytes, default: 0 no limit
   AllowDirs     bool   `yaml:"allowDirs,omitempty"`// Allow directory creation, default: true
   AllowSymlinks bool   `yaml:"allowSymlinks,omitempty"` // Allow symbolic links, default: false
@@ -1455,7 +1456,6 @@ rules:
 - User-specific access control
 - Time-based permissions
 - Hash-based user identification
-
 
 
 ### Best Practices for Advanced Permissions

@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/acl"
 )
 
 // SendHandler handles HTTP requests for sending messages
@@ -17,8 +18,8 @@ type SendHandler struct {
 }
 
 // New creates a new send handler
-func New(msgDispatcher MessageDispatcher, msgStore RPCMsgStore) *SendHandler {
-	service := NewSendService(msgDispatcher, msgStore, nil)
+func New(msgDispatcher MessageDispatcher, msgStore RPCMsgStore, acl *acl.ACLService) *SendHandler {
+	service := NewSendService(msgDispatcher, msgStore, acl, nil)
 	return &SendHandler{service: service}
 }
 
@@ -62,6 +63,13 @@ func (h *SendHandler) SendMsg(ctx *gin.Context) {
 
 	result, err := h.service.SendMessage(ctx.Request.Context(), &req, bodyBytes)
 	if err != nil {
+		if errors.Is(err, ErrPermissionDenied) {
+			ctx.PureJSON(http.StatusForbidden, APIError{
+				Error:   ErrorPermissionDenied,
+				Message: "Permission denied.",
+			})
+			return
+		}
 		slog.Error("failed to send message", "error", err)
 		ctx.PureJSON(http.StatusInternalServerError, APIError{
 			Error:   ErrorInternal,
@@ -162,6 +170,15 @@ func (h *SendHandler) PollForResponse(ctx *gin.Context) {
 			ctx.PureJSON(http.StatusNotFound, APIError{
 				Error:     ErrorNotFound,
 				Message:   "No request found.",
+				RequestID: req.RequestID,
+			})
+			return
+		}
+
+		if errors.Is(err, ErrPermissionDenied) {
+			ctx.PureJSON(http.StatusForbidden, APIError{
+				Error:     ErrorPermissionDenied,
+				Message:   "Permission denied.",
 				RequestID: req.RequestID,
 			})
 			return
