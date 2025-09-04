@@ -91,7 +91,7 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	var filterPrefix string
 	if datasite == "" {
 		// root index - show all datasites with ACL files
-		filterPrefix = "*/" + aclspec.ACLFileName
+		filterPrefix = "*/" + aclspec.FileName
 	} else {
 		// Show content based on the actual path, let ACL system control access
 		filterPrefix = prefix
@@ -112,9 +112,7 @@ func (e *ExplorerHandler) listContents(prefix string) *directoryContents {
 	for _, blob := range blobs {
 		// check if public readable
 		if err := e.acl.CanAccess(
-			&acl.User{ID: aclspec.Everyone},
-			&acl.File{Path: blob.Key},
-			acl.AccessRead,
+			acl.NewRequest(blob.Key, &acl.User{ID: aclspec.TokenEveryone}, acl.AccessRead),
 		); err != nil {
 			// don't reveal if the file is private or not
 			continue
@@ -218,9 +216,7 @@ func (e *ExplorerHandler) serveFile(c *gin.Context, key string) {
 	}
 
 	if err := e.acl.CanAccess(
-		&acl.User{ID: aclspec.Everyone},
-		&acl.File{Path: key},
-		acl.AccessRead,
+		acl.NewRequest(key, &acl.User{ID: aclspec.TokenEveryone}, acl.AccessRead),
 	); err != nil {
 		// don't reveal if the file is private or not
 		api.Serve403HTML(c)
