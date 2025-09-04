@@ -39,20 +39,15 @@ func (c *Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("invalid data directory: %w", err)
 	}
-	
+
 	// Resolve LogDir path
-	if c.LogDir != "" {
-		c.LogDir, err = utils.ResolvePath(c.LogDir)
-		if err != nil {
-			return fmt.Errorf("invalid log directory: %w", err)
-		}
-	} else {
+	if c.LogDir == "" {
 		// Default to .logs in the current working directory if not set
 		c.LogDir = ".logs"
-		c.LogDir, err = utils.ResolvePath(c.LogDir)
-		if err != nil {
-			return fmt.Errorf("invalid log directory: %w", err)
-		}
+	}
+	c.LogDir, err = utils.ResolvePath(c.LogDir)
+	if err != nil {
+		return fmt.Errorf("invalid log directory: %w", err)
 	}
 
 	if err := c.HTTP.Validate(); err != nil {
@@ -105,4 +100,3 @@ func (c *HTTPConfig) Validate() error {
 	}
 	return nil
 }
-
