@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/aclspec"
+	"github.com/openmined/syftbox/internal/server/accesslog"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
@@ -41,8 +42,15 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 	}
 
 	if err := h.checkPermissions(req.Key, user, acl.AccessWrite); err != nil {
+		if logger := accesslog.GetAccessLogger(ctx); logger != nil {
+			logger.LogAccess(ctx, req.Key, accesslog.AccessTypeWrite, acl.AccessWrite, false, err.Error())
+		}
 		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
 		return
+	}
+	
+	if logger := accesslog.GetAccessLogger(ctx); logger != nil {
+		logger.LogAccess(ctx, req.Key, accesslog.AccessTypeWrite, acl.AccessWrite, true, "")
 	}
 
 	// get form file

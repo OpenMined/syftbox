@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/openmined/syftbox/internal/server/accesslog"
 	"github.com/openmined/syftbox/internal/server/handlers/acl"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
@@ -38,6 +39,12 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	r.Use(middlewares.GZIP())
 	if cfg.HTTP.HTTPSEnabled() {
 		r.Use(middlewares.HSTS())
+	}
+
+	// Add access logging middleware
+	if svc.AccessLog != nil {
+		accessLogMiddleware := accesslog.NewMiddleware(svc.AccessLog)
+		r.Use(accessLogMiddleware.Handler())
 	}
 
 	if cfg.HTTP.Domain != "" {
