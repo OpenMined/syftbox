@@ -553,7 +553,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://ml-team@rese
 {
     "request_id": "b2c3d4e5-f6g7-8901-bcde-f23456789012",
     "data": {
-        "poll_url": "/api/v1/send/poll?x-syft-request-id=b2c3d4e5-f6g7-8901-bcde-f23456789012&x-syft-url=syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict&x-syft-from=ml-team@research.com&suffix-sender=true&x-syft-raw=false"
+        "poll_url": "/api/v1/send/poll?x-syft-request-id=b2c3d4e5-f6g7-8901-bcde-f23456789012&x-syft-url=syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict&x-syft-from=ml-team@research.com&x-syft-raw=false"
     },
     "message": "Request has been accepted. Please check back later."
 }
@@ -561,7 +561,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://ml-team@rese
 
 **Poll Request:**
 ```bash
-curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=b2c3d4e5-f6g7-8901-bcde-f23456789012&x-syft-url=syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict&x-syft-from=ml-team@research.com&suffix-sender=true&timeout=10000" \
+curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=b2c3d4e5-f6g7-8901-bcde-f23456789012&x-syft-url=syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict&x-syft-from=ml-team@research.com&timeout=10000" \
   -H "Authorization: Bearer <jwt-token>"
 ```
 
@@ -1103,7 +1103,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasit
 {
     "request_id": "123e4567-e89b-12d3-a456-426614174000",
     "data": {
-        "poll_url": "/api/v1/send/poll?x-syft-request-id=123e4567-e89b-12d3-a456-426614174000&x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com&suffix-sender=true&x-syft-raw=false"
+        "poll_url": "/api/v1/send/poll?x-syft-request-id=123e4567-e89b-12d3-a456-426614174000&x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com&x-syft-raw=false"
     },
     "message": "Request has been accepted. Please check back later."
 }
@@ -1111,7 +1111,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasit
 
 #### 3. Poll for Response
 ```bash
-curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=123e4567-e89b-12d3-a456-426614174000&x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com&suffix-sender=true" \
+curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=123e4567-e89b-12d3-a456-426614174000&x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com" \
   -H "Authorization: Bearer <jwt-token>"
 ```
 
