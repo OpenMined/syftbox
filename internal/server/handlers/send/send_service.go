@@ -59,6 +59,12 @@ func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, acl *acl.ACLS
 // SendMessage handles sending a message to a user
 func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error) {
 
+	// if the sender suffix is enabled, add the sender to the endpoint
+	syftURL := req.SyftURL
+	if req.SuffixSender {
+		syftURL.Endpoint = path.Join(syftURL.Endpoint, req.From)
+	}
+
 	// create an RPC message
 	rpcMsg, err := syftmsg.NewSyftRPCMessage(
 		req.From,
@@ -76,18 +82,13 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 		return nil, fmt.Errorf("failed to marshal RPC message: %w", err)
 	}
 
-	// if the sender suffix is enabled, add the sender to the endpoint
-	if req.SuffixSender {
-		req.SyftURL.Endpoint = path.Join(req.SyftURL.Endpoint, req.From)
-	}
-
 	// create an etag for the request
 	etag := fmt.Sprintf("%x", md5.Sum(rpcMsgBytes))
 
 	// create a new HTTP message
 	msg := syftmsg.NewHttpMsg(
 		req.From,
-		req.SyftURL,
+		syftURL,
 		req.Method,
 		rpcMsgBytes,
 		req.Headers,
@@ -97,7 +98,7 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 
 	// Relative path to the request file
 	requestRelPath := path.Join(
-		req.SyftURL.ToLocalPath(),
+		syftURL.ToLocalPath(),
 		fmt.Sprintf("%s.%s", rpcMsg.ID.String(), "request"),
 	)
 
@@ -107,7 +108,7 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 	}
 
 	// Dispatch the message to the user via websocket
-	dispatched := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg)
+	dispatched := s.dispatcher.Dispatch(syftURL.Datasite, msg)
 
 	// Store the request in blob storage
 	err = s.store.StoreMsg(ctx, requestRelPath, rpcMsgBytes)
@@ -138,8 +139,14 @@ func (s *SendService) checkForResponse(
 	req *MessageRequest,
 	rpcMsg *syftmsg.SyftRPCMessage,
 ) (*SendResult, error) {
+
+	syftURL := rpcMsg.URL
+	if req.SuffixSender {
+		syftURL.Endpoint = path.Join(syftURL.Endpoint, req.From)
+	}
+
 	responseRelPath := path.Join(
-		rpcMsg.URL.ToLocalPath(),
+		syftURL.ToLocalPath(),
 		fmt.Sprintf("%s.response", rpcMsg.ID.String()),
 	)
 
@@ -156,7 +163,12 @@ func (s *SendService) checkForResponse(
 			return &SendResult{
 				Status:    http.StatusAccepted,
 				RequestID: rpcMsg.ID.String(),
-				PollURL:   s.constructPollURL(rpcMsg.ID.String(), req.SyftURL, req.From, req.AsRaw),
+				PollURL: s.constructPollURL(
+					rpcMsg.ID.String(),
+					req.SyftURL,
+					req.From,
+					req.AsRaw,
+				),
 			}, nil
 		}
 		return nil, err
@@ -174,7 +186,7 @@ func (s *SendService) checkForResponse(
 	}
 
 	// Clean up in background
-	go s.cleanReqResponse(req.SyftURL, rpcMsg.ID.String())
+	go s.cleanReqResponse(syftURL, rpcMsg.ID.String())
 
 	return &SendResult{
 		Status:    http.StatusOK,
@@ -187,13 +199,13 @@ func (s *SendService) checkForResponse(
 func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error) {
 
 	// Validate if the corresponding request exists
-	findValidRequest := func() (string, error) {
+	findValidRequest := func() (string, bool, error) {
 
 		// Get the candidate request paths
 		requestRelPaths := s.getCandidateRequestPaths(req)
 
 		// Check if the request exists in the candidate paths
-		for _, requestRelPath := range requestRelPaths {
+		for i, requestRelPath := range requestRelPaths {
 			// Get the request from the blob storage
 			_, err := s.store.GetMsg(ctx, requestRelPath)
 			if err != nil {
@@ -202,17 +214,20 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 					continue
 				}
 				// If the request is found, return nil
-				return "", err
+				return "", false, err
 			}
 
-			return requestRelPath, nil
+			// i == 0 means withSender (new path),
+			// i == 1 means withoutSender (legacy path)
+			withSender := (i == 0)
+			return requestRelPath, withSender, nil
 		}
 
 		// If the request is not found in any of the candidate paths, return an error
-		return "", ErrRequestNotFound
+		return "", false, ErrRequestNotFound
 	}
 
-	requestRelPath, err := findValidRequest()
+	requestRelPath, withSender, err := findValidRequest()
 	if err != nil {
 		return nil, err
 	}
@@ -242,13 +257,24 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 		return nil, fmt.Errorf("failed to read object: %w", err)
 	}
 
+	// Check if user has read access to the response
+	if err := s.checkPermission(responseRelPath, req.From, acl.AccessRead); err != nil {
+		return nil, ErrPermissionDenied
+	}
+
 	responseBody, err := unmarshalResponse(bodyBytes, req.AsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	// Check if sender suffix needs to be added to the request path
+	syftURL := req.SyftURL
+	if withSender {
+		syftURL.Endpoint = path.Join(syftURL.Endpoint, req.From)
+	}
+
 	// Clean up in background
-	go s.cleanReqResponse(req.SyftURL, req.RequestID)
+	go s.cleanReqResponse(syftURL, req.RequestID)
 
 	return &PollResult{
 		Status:    http.StatusOK,
