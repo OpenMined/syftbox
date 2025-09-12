@@ -1,5 +1,5 @@
-# Single stage - Alpine Linux with Python for development
-FROM python:3.11-alpine3.19
+# Single stage - Debian slim with Python for development
+FROM python:3.11-slim
 
 # Application-level configuration (must be after FROM in single-stage)
 ARG SYFTBOX_VERSION
@@ -10,14 +10,35 @@ ARG TARGETARCH
 
 # Install runtime dependencies (cached layer - changes rarely)
 USER root
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Basic utilities
     bash \
+    curl \
+    wget \
+    git \
+    vim \
+    nano \
+    # SSL/TLS support
     ca-certificates \
-    && rm -rf /var/cache/apk/*
+    # Build tools for Python packages with C extensions
+    build-essential \
+    gcc \
+    g++ \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH
+ENV PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
+RUN uv --version
+
+# Copy uv to system-wide location
+RUN cp $(which uv) /usr/local/bin/uv && chmod +x /usr/local/bin/uv
 
 # Install build tools, download syftbox, cleanup in single layer (invalidated when version changes)
-RUN apk add --no-cache --virtual .build-deps \
-    curl \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tar \
     gzip \
     && \
@@ -66,11 +87,14 @@ RUN apk add --no-cache --virtual .build-deps \
     # Cleanup temp directory and build tools
     cd /; \
     rm -rf /tmp/syftbox-install; \
-    apk del .build-deps
+    apt-get purge -y tar gzip; \
+    apt-get autoremove -y; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
 
 # Create user and setup workspace in single cached layer  
-RUN addgroup -g 1000 devuser && \
-    adduser -u 1000 -G devuser -h /home/devuser -s /bin/bash -D devuser && \
+RUN groupadd -g 1000 devuser && \
+    useradd -u 1000 -g devuser -m -d /home/devuser -s /bin/bash devuser && \
     mkdir -p /home/devuser/workspace && \
     chown -R devuser:devuser /home/devuser
 
