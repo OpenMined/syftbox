@@ -74,6 +74,11 @@ func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
 			h.Headers[lowerKey] = v[0]
 		}
 	}
+	// Normalize guest identity: prefer guest@syftbox.net but accept legacy guest@syft.org
+	fromLower := strings.ToLower(h.From)
+	if fromLower == "guest@syft.org" {
+		h.From = "guest@syftbox.net"
+	}
 	// Bind x-syft-from to Headers (already lowercase)
 	h.Headers["x-syft-from"] = h.From
 }

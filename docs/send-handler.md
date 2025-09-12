@@ -3,6 +3,10 @@
 ## 1. Overview
 
 ### At a Glance
+Updates:
+- Default guest email is now `guest@syftbox.net` (legacy `guest@syft.org` still accepted).
+- `.request` files include header `x-syft-url` with the original Syft URL.
+- `Authorization` header is not forwarded to RPC endpoint (dropped from passthrough).
 The Send Handler and Service components provide an HTTP-to-RPC bridge that enables asynchronous communication between clients and SyftBox applications. The system supports both online (WebSocket) and offline (polling) message delivery mechanisms.
 
 ### System Interaction Overview
@@ -328,7 +332,7 @@ rules:
 - `x-syft-raw` (optional): Response format flag (default: false)
 - `suffix-sender` (optional): If true, adds sender email to endpoint path for user partitioning (default: false)
 
-**Headers:** All request headers are forwarded to the RPC message
+**Headers:** All request headers except `Authorization` are forwarded to the RPC message
 
 **Request Body:** Any content (up to 4MB by default)
 
@@ -336,7 +340,7 @@ rules:
 
 **Authentication:** 
 - JWT Bearer token required for authenticated users
-- Use `guest@syft.org` as `x-syft-from` for guest access (no Bearer token needed)
+- Use `guest@syftbox.net` as `x-syft-from` for guest access (legacy `guest@syft.org` still accepted; no Bearer token needed)
 
 **ACL Permissions:**
 - Users must have write permission to the target endpoint to send messages
@@ -635,7 +639,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
     "data": {
         "message": {
             "id": "f6g7h8i9-j0k1-2345-fghi-678901234567",
-            "sender": "guest@syft.org",
+            "sender": "guest@syftbox.net",
             "url": "syft://demo@syftbox.net/app_data/public-sentiment/rpc/analyze",
             "method": "POST",
             "status_code": 200,
@@ -657,7 +661,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
 
 **Poll Request (if needed):**
 ```bash
-curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=f6g7h8i9-j0k1-2345-fghi-678901234567&x-syft-url=syft://demo@syftbox.net/app_data/public-sentiment/rpc/analyze&x-syft-from=guest@syft.org"
+curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=f6g7h8i9-j0k1-2345-fghi-678901234567&x-syft-url=syft://demo@syftbox.net/app_data/public-sentiment/rpc/analyze&x-syft-from=guest@syftbox.net"
 ```
 
 #### Use Case 3: File Processing Service (Authenticated User)
@@ -1036,7 +1040,7 @@ rules:
     "data": {
         "message": {
             "id": "g7h8i9j0-k1l2-3456-ghij-789012345678",
-            "sender": "guest@syft.org",
+            "sender": "guest@syftbox.net",
             "url": "syft://demo@syftbox.net/app_data/calculator/rpc/compute",
             "method": "POST",
             "status_code": 200,
@@ -1314,7 +1318,8 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 ### Limitations
 
 #### Current Limitations
-- **No Header Filtering**: TODO: All headers are forwarded without filtering
+- **No ACL Enforcement**: TODO: Permission checking not implemented
+- **Header Filtering**: `Authorization` header is intentionally not forwarded; other headers are forwarded
 - **Fixed File Structure**: RPC files follow specific naming convention
 - **Single Response**: Only one response per request is supported
 - **File Size Restrictions**: Maximum 4MB per request/response (use blob API for larger files)

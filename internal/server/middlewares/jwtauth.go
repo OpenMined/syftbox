@@ -45,17 +45,17 @@ func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 
 	return func(ctx *gin.Context) {
 		// Check for guest access first if allowed
-		if allowGuest {
-			user := ctx.Query("user")
-			if user == "" {
-				user = ctx.Query("x-syft-from")
-			}
-			if user == "guest@syft.org" {
-				ctx.Set("user", user)
-				ctx.Next()
-				return
-			}
-		}
+        if allowGuest {
+            user := ctx.Query("user")
+            if user == "" {
+                user = ctx.Query("x-syft-from")
+            }
+            if strings.EqualFold(user, "guest@syftbox.net") || strings.EqualFold(user, "guest@syft.org") {
+                ctx.Set("user", user)
+                ctx.Next()
+                return
+            }
+        }
 
 		// Proceed with normal JWT authentication
 		authHeaderValue := ctx.GetHeader(authHeader)
