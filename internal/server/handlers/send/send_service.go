@@ -10,15 +10,19 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
 var (
-	ErrPollTimeout     = errors.New("poll timeout")
-	ErrRequestNotFound = errors.New("request not found")
+	ErrPollTimeout      = errors.New("poll timeout")
+	ErrRequestNotFound  = errors.New("request not found")
+	ErrPermissionDenied = errors.New("permission denied")
 )
 
 // Config holds the service configuration
@@ -35,10 +39,11 @@ type SendService struct {
 	dispatcher MessageDispatcher
 	store      RPCMsgStore
 	cfg        *Config
+	acl        *acl.ACLService
 }
 
 // NewSendService creates a new send service
-func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) *SendService {
+func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, acl *acl.ACLService, cfg *Config) *SendService {
 	if cfg == nil {
 		cfg = &Config{
 			DefaultTimeout:      1 * time.Second,
@@ -48,16 +53,25 @@ func NewSendService(dispatch MessageDispatcher, store RPCMsgStore, cfg *Config) 
 			MaxBodySize:         4 << 20, // 4MB
 		}
 	}
-	return &SendService{dispatcher: dispatch, store: store, cfg: cfg}
+	return &SendService{dispatcher: dispatch, store: store, acl: acl, cfg: cfg}
 }
 
-// SendMessage handles sending a message to a user
+// SendMessage processes an HTTP request and converts it to an RPC message for delivery.
+// It handles both online (WebSocket) and offline (polling) scenarios, with ACL permission
+// checking and support for user-partitioned storage via the suffix-sender feature.
 func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, bodyBytes []byte) (*SendResult, error) {
 
-	// create an RPC message
+	// If suffix-sender is enabled, append the sender's email to the endpoint path
+	// This enables user-partitioned storage: /app/rpc/endpoint/user@domain.com/
+	syftURL := req.SyftURL
+	if req.SuffixSender {
+		syftURL.Endpoint = path.Join(syftURL.Endpoint, req.From)
+	}
+
+	// Create the RPC message that will be sent to the target application
 	rpcMsg, err := syftmsg.NewSyftRPCMessage(
 		req.From,
-		req.SyftURL,
+		req.SyftURL, // Use original URL to keep endpoint unchanged in the RPC message
 		syftmsg.SyftMethod(req.Method),
 		bodyBytes,
 		req.Headers,
@@ -71,11 +85,13 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 		return nil, fmt.Errorf("failed to marshal RPC message: %w", err)
 	}
 
+	// Generate ETag for request validation and caching
 	etag := fmt.Sprintf("%x", md5.Sum(rpcMsgBytes))
 
+	// Create HTTP message wrapper for WebSocket dispatch
 	msg := syftmsg.NewHttpMsg(
 		req.From,
-		req.SyftURL,
+		syftURL,
 		req.Method,
 		rpcMsgBytes,
 		req.Headers,
@@ -83,45 +99,62 @@ func (s *SendService) SendMessage(ctx context.Context, req *MessageRequest, body
 		etag,
 	)
 
-	// TODO: Check if user has permission to send message to this application
-
-	// Dispatch the message to the user via websocket
-	dispatched := s.dispatcher.Dispatch(req.SyftURL.Datasite, msg)
-
-	// relative rpc request file path to datasite
-	relPath := path.Join(
-		req.SyftURL.ToLocalPath(),
+	// Build the storage path for the request file
+	requestRelPath := path.Join(
+		syftURL.ToLocalPath(),
 		fmt.Sprintf("%s.%s", rpcMsg.ID.String(), "request"),
 	)
 
-	// Store the request in blob storage
-	err = s.store.StoreMsg(ctx, relPath, rpcMsgBytes)
+	// Verify user has write permission to store request files at this path
+	if err := s.checkPermission(requestRelPath, req.From, acl.AccessWrite); err != nil {
+		return nil, ErrPermissionDenied
+	}
+
+	// Attempt to deliver message immediately via WebSocket if user is online
+	dispatched := s.dispatcher.Dispatch(syftURL.Datasite, msg)
+
+	// Persist request in blob storage for offline delivery and polling
+	err = s.store.StoreMsg(ctx, requestRelPath, rpcMsgBytes)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to store RPC request: %w", err)
 	}
 
-	// If the message is not dispatched via websocket, return the poll url
+	// If user is offline, return polling URL for async response retrieval
 	if !dispatched {
 		return &SendResult{
 			Status:    http.StatusAccepted,
 			RequestID: rpcMsg.ID.String(),
-			PollURL:   s.constructPollURL(rpcMsg.ID.String(), req.SyftURL, req.From, req.AsRaw),
+			PollURL: s.constructPollURL(
+				rpcMsg.ID.String(),
+				req.SyftURL, // Use original URL to maintain consistent polling endpoint
+				req.From,
+				req.AsRaw,
+			),
 		}, nil
 	}
 
-	// If the message is sent via websocket, handle the response
+	// User is online - poll for immediate response
 	return s.checkForResponse(ctx, req, rpcMsg)
 }
 
-// checkForResponse handles sending a message when the user is online
+// checkForResponse polls for a response when the user is online.
+// It waits for the application to process the request and create a response file.
+// Returns the response if found within timeout, otherwise returns a polling URL.
 func (s *SendService) checkForResponse(
 	ctx context.Context,
 	req *MessageRequest,
 	rpcMsg *syftmsg.SyftRPCMessage,
 ) (*SendResult, error) {
+
+	// Apply sender suffix to response path if it was used for the request
+	syftURL := rpcMsg.URL
+	if req.SuffixSender {
+		syftURL.Endpoint = path.Join(syftURL.Endpoint, req.From)
+	}
+
 	responseRelPath := path.Join(
-		rpcMsg.URL.ToLocalPath(),
+		syftURL.ToLocalPath(),
 		fmt.Sprintf("%s.response", rpcMsg.ID.String()),
 	)
 
@@ -138,13 +171,18 @@ func (s *SendService) checkForResponse(
 			return &SendResult{
 				Status:    http.StatusAccepted,
 				RequestID: rpcMsg.ID.String(),
-				PollURL:   s.constructPollURL(rpcMsg.ID.String(), req.SyftURL, req.From, req.AsRaw),
+				PollURL: s.constructPollURL(
+					rpcMsg.ID.String(),
+					req.SyftURL, // Use original URL to maintain consistent polling endpoint
+					req.From,
+					req.AsRaw,
+				),
 			}, nil
 		}
 		return nil, err
 	}
 
-	// Read the object
+	// Read the response file from blob storage
 	bodyBytes, err := io.ReadAll(object)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read object: %w", err)
@@ -155,13 +193,8 @@ func (s *SendService) checkForResponse(
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Clean up in background
-	go s.cleanReqResponse(
-		req.SyftURL.Datasite,
-		req.SyftURL.AppName,
-		req.SyftURL.Endpoint,
-		rpcMsg.ID.String(),
-	)
+	// Clean up request and response files asynchronously
+	go s.cleanReqResponse(syftURL, rpcMsg.ID.String())
 
 	return &SendResult{
 		Status:    http.StatusOK,
@@ -170,23 +203,51 @@ func (s *SendService) checkForResponse(
 	}, nil
 }
 
-// PollForResponse handles polling for a response
+// PollForResponse retrieves a response for a previously sent request.
+// It supports both new (user-partitioned) and legacy (shared) storage formats
+// and includes ACL permission checking for security.
 func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectRequest) (*PollResult, error) {
 
-	// Validate if the corresponding request exists
-	requestBlobPath := path.Join(req.SyftURL.ToLocalPath(), fmt.Sprintf("%s.request", req.RequestID))
+	// Find the request file using dual-path resolution (new + legacy)
+	findValidRequest := func() (string, bool, error) {
 
-	_, err := s.store.GetMsg(ctx, requestBlobPath)
-	if err != nil {
-		if errors.Is(err, ErrMsgNotFound) {
-			return nil, ErrRequestNotFound
+		// Get both new (user-partitioned) and legacy (shared) path candidates
+		requestRelPaths := s.getCandidateRequestPaths(req)
+
+		// Try each path until we find an existing request file
+		for i, requestRelPath := range requestRelPaths {
+			// Check if request file exists at this path
+			_, err := s.store.GetMsg(ctx, requestRelPath)
+			if err != nil {
+				// File not found at this path, try the next candidate
+				if errors.Is(err, ErrMsgNotFound) {
+					continue
+				}
+				// File found but error occurred, return the error
+				return "", false, err
+			}
+
+			// Index 0 = new user-partitioned path, Index 1 = legacy shared path
+			withSender := (i == 0)
+			return requestRelPath, withSender, nil
 		}
+
+		// No request file found in any candidate path
+		return "", false, ErrRequestNotFound
+	}
+
+	requestRelPath, withSender, err := findValidRequest()
+	if err != nil {
 		return nil, err
 	}
 
-	// Check if the corresponding response exists
-	responseFileName := fmt.Sprintf("%s.response", req.RequestID)
-	responseBlobPath := path.Join(req.SyftURL.ToLocalPath(), responseFileName)
+	// Verify user has permission to read the request file
+	if err := s.checkPermission(requestRelPath, req.From, acl.AccessRead); err != nil {
+		return nil, ErrPermissionDenied
+	}
+
+	// Build response file path from request path
+	responseRelPath := strings.Replace(requestRelPath, ".request", ".response", 1)
 
 	var timeout time.Duration
 	if req.Timeout > 0 {
@@ -195,7 +256,7 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 		timeout = s.cfg.DefaultTimeout
 	}
 
-	object, err := s.pollForObject(ctx, responseBlobPath, timeout)
+	object, err := s.pollForObject(ctx, responseRelPath, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -205,18 +266,24 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 		return nil, fmt.Errorf("failed to read object: %w", err)
 	}
 
+	// Verify user has permission to read the response file
+	if err := s.checkPermission(responseRelPath, req.From, acl.AccessRead); err != nil {
+		return nil, ErrPermissionDenied
+	}
+
 	responseBody, err := unmarshalResponse(bodyBytes, req.AsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
-	// Clean up in background
-	go s.cleanReqResponse(
-		req.SyftURL.Datasite,
-		req.SyftURL.AppName,
-		req.SyftURL.Endpoint,
-		req.RequestID,
-	)
+	// Apply same sender suffix logic for cleanup path consistency
+	syftURL := req.SyftURL
+	if withSender {
+		syftURL.Endpoint = path.Join(syftURL.Endpoint, req.From)
+	}
+
+	// Clean up request and response files asynchronously
+	go s.cleanReqResponse(syftURL, req.RequestID)
 
 	return &PollResult{
 		Status:    http.StatusOK,
@@ -225,11 +292,11 @@ func (s *SendService) PollForResponse(ctx context.Context, req *PollObjectReques
 	}, nil
 }
 
-// pollForObject polls for an object in blob storage until the timeout is reached
-// if the object is found, it returns the object
+// pollForObject continuously checks blob storage for a file until timeout.
+// Returns the file when found, or ErrPollTimeout if not found within timeout.
 func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeout time.Duration) (io.ReadCloser, error) {
 
-	// start the timer
+	// Record start time for timeout calculation
 	startTime := time.Now()
 
 	for {
@@ -237,7 +304,7 @@ func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeou
 		if err == nil && object != nil {
 			return object, nil
 		}
-		// If the error is not "not found", log and return immediately (permanent error)
+		// Non-"not found" errors are permanent and should be returned immediately
 		if err != nil && !errors.Is(err, ErrMsgNotFound) {
 			slog.Error("poll for object failed", "error", err, "blobPath", blobPath)
 			return nil, err
@@ -247,7 +314,7 @@ func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeou
 			return nil, ErrPollTimeout
 		}
 
-		// Always sleep between polling attempts
+		// Wait before next polling attempt to avoid excessive load
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -257,10 +324,11 @@ func (s *SendService) pollForObject(ctx context.Context, blobPath string, timeou
 	}
 }
 
-// cleanReqResponse cleans up request and response files
-func (s *SendService) cleanReqResponse(sender, appName, appEp, requestID string) {
-	requestPath := path.Join(sender, "app_data", appName, "rpc", appEp, fmt.Sprintf("%s.request", requestID))
-	responsePath := path.Join(sender, "app_data", appName, "rpc", appEp, fmt.Sprintf("%s.response", requestID))
+// cleanReqResponse removes both request and response files from blob storage.
+// This is called after successful response delivery to free up storage space.
+func (s *SendService) cleanReqResponse(syftURL utils.SyftBoxURL, requestID string) {
+	requestPath := path.Join(syftURL.ToLocalPath(), fmt.Sprintf("%s.request", requestID))
+	responsePath := path.Join(syftURL.ToLocalPath(), fmt.Sprintf("%s.response", requestID))
 
 	if err := s.store.DeleteMsg(context.Background(), requestPath); err != nil {
 		slog.Error("failed to delete request object", "error", err, "path", requestPath)
@@ -271,7 +339,7 @@ func (s *SendService) cleanReqResponse(sender, appName, appEp, requestID string)
 	}
 }
 
-// constructPollURL constructs the poll URL for a request
+// constructPollURL builds the polling endpoint URL for async response retrieval.
 func (s *SendService) constructPollURL(requestID string, syftURL utils.SyftBoxURL, from string, asRaw bool) string {
 	return fmt.Sprintf(
 		PollURL,
@@ -282,10 +350,10 @@ func (s *SendService) constructPollURL(requestID string, syftURL utils.SyftBoxUR
 	)
 }
 
-// unmarshalResponse handles the unmarshaling of a response from blob storage
-// It expects the response to have a base64 encoded body field that contains JSON
+// unmarshalResponse converts blob storage response data into a JSON map.
+// Handles both raw responses and structured SyftRPCMessage responses.
 func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, error) {
-	// If the request is raw, return the body as bytes
+	// For raw requests, parse the response body directly as JSON
 	if asRaw {
 		var bodyJson map[string]interface{}
 		err := json.Unmarshal(bodyBytes, &bodyJson)
@@ -295,19 +363,50 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 		return map[string]interface{}{"message": bodyJson}, nil
 	}
 
-	// Otherwise, unmarshal it as a SyftRPCMessage
+	// For structured requests, parse as SyftRPCMessage and extract the payload
 	var rpcMsg syftmsg.SyftRPCMessage
 
 	err := json.Unmarshal(bodyBytes, &rpcMsg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-	// decode the body if it is base64 encoded
-	// return the SyftRPCMessage as a different json representation
+	// Convert SyftRPCMessage to a standardized JSON format for API response
 	return map[string]interface{}{"message": rpcMsg.ToJsonMap()}, nil
 }
 
-// GetConfig returns the service configuration
+// GetConfig returns the current service configuration settings.
 func (s *SendService) GetConfig() *Config {
 	return s.cfg
+}
+
+// getCandidateRequestPaths returns both new (user-partitioned) and legacy (shared)
+// request file paths for backward compatibility during polling.
+func (s *SendService) getCandidateRequestPaths(req *PollObjectRequest) []string {
+	filename := fmt.Sprintf("%s.request", req.RequestID)
+	basePath := req.SyftURL.ToLocalPath()
+
+	requestPaths := []string{
+		// New format: /app/rpc/endpoint/user@domain.com/request-id.request
+		path.Join(basePath, req.From, filename),
+		// Legacy format: /app/rpc/endpoint/request-id.request
+		path.Join(basePath, filename),
+	}
+
+	return requestPaths
+}
+
+// checkPermission verifies if a user has the required access level to a path.
+// Datasite owners have full access, others are checked against ACL rules.
+func (s *SendService) checkPermission(path string, user string, level acl.AccessLevel) error {
+	// Datasite owners have full access to all files in their datasite
+	if datasite.IsOwner(path, user) {
+		return nil
+	}
+
+	// Non-owners must pass ACL permission checks
+	return s.acl.CanAccess(&acl.ACLRequest{
+		Path:  path,
+		User:  &acl.User{ID: user},
+		Level: level,
+	})
 }

@@ -72,9 +72,11 @@ sequenceDiagram
 - Polling-based response retrieval
 - HTML and JSON response formats
 - Request/response cleanup
+- ACL permission checking for message sending and polling
+- User-partitioned request/response storage with backward compatibility
+- Sender suffix support for enhanced security
 
 **Not Implemented:**
-- TODO: ACL permission checking for message sending
 - TODO: Header filtering for security
 - Large file uploads/downloads via blob APIs
 
@@ -152,12 +154,13 @@ graph TD
 #### MessageRequest
 ```go
 type MessageRequest struct {
-    SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
-    From    string           `form:"x-syft-from" binding:"required"`
-    Timeout int              `form:"timeout" binding:"gte=0"`
-    AsRaw   bool             `form:"x-syft-raw" default:"false"`
-    Method  string           // Set from request method
-    Headers Headers          // Set from request headers
+    SyftURL      utils.SyftBoxURL `form:"x-syft-url" binding:"required"`
+    From         string           `form:"x-syft-from" binding:"required"`
+    Timeout      int              `form:"timeout" binding:"gte=0"`
+    AsRaw        bool             `form:"x-syft-raw" default:"false"`
+    Method       string           // Set from request method
+    Headers      Headers          // Set from request headers
+    SuffixSender bool             `form:"suffix-sender" default:"false"` // If true, adds sender to endpoint path
 }
 ```
 
@@ -238,6 +241,79 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 2. **Raw mode**: `json.Unmarshal(bodyBytes, &bodyJson)` → Returns raw JSON (body still base64-encoded)
 3. **Standard mode**: `json.Unmarshal(bodyBytes, &rpcMsg)` → `rpcMsg.UnmarshalJSON()` decodes body → `rpcMsg.ToJsonMap()` returns processed structure
 
+### ACL Integration and User Partitioning
+
+#### Permission Checking
+The send service integrates with the ACL system to enforce access control:
+
+```go
+// Check if the user has permission to send message to this application
+if err := s.checkPermission(requestRelPath, req.From, acl.AccessWrite); err != nil {
+    return nil, ErrPermissionDenied
+}
+
+// Check if user has read access to the request
+if err := s.checkPermission(requestRelPath, req.From, acl.AccessRead); err != nil {
+    return nil, ErrPermissionDenied
+}
+```
+
+#### User Partitioning
+The system supports two storage formats for backward compatibility:
+
+**New Format (User-Partitioned):**
+```
+app_data/myapp/rpc/endpoint/
+├── alice@company.com/
+│   ├── request-id-1.request
+│   └── request-id-1.response
+└── bob@company.com/
+    ├── request-id-2.request
+    └── request-id-2.response
+```
+
+**Legacy Format (Shared):**
+```
+app_data/myapp/rpc/endpoint/
+├── request-id-1.request
+├── request-id-1.response
+├── request-id-2.request
+└── request-id-2.response
+```
+
+#### Backward Compatibility
+The polling mechanism automatically checks both formats:
+
+```go
+func (s *SendService) getCandidateRequestPaths(req *PollObjectRequest) []string {
+    filename := fmt.Sprintf("%s.request", req.RequestID)
+    basePath := req.SyftURL.ToLocalPath()
+
+    requestPaths := []string{
+        // Try sender suffix path first (new request path)
+        path.Join(basePath, req.From, filename),
+        // Fallback to legacy path (old request path)
+        path.Join(basePath, filename),
+    }
+
+    return requestPaths
+}
+```
+
+#### ACL Rules Support
+The new user-partitioned format supports ACL rules like:
+```yaml
+rules:
+- pattern: '**/{{.UserEmail}}/*.request'
+  access:
+    read: ['USER']
+    write: ['USER']
+- pattern: '**/{{.UserEmail}}/*.response'
+  access:
+    read: ['USER']
+    write: ['USER']
+```
+
 ### API Reference
 
 #### Send Message Endpoint
@@ -250,6 +326,7 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 - `x-syft-from` (required): Sender datasite (email address)
 - `timeout` (optional): Request timeout in milliseconds
 - `x-syft-raw` (optional): Response format flag (default: false)
+- `suffix-sender` (optional): If true, adds sender email to endpoint path for user partitioning (default: false)
 
 **Headers:** All request headers are forwarded to the RPC message
 
@@ -261,9 +338,20 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 - JWT Bearer token required for authenticated users
 - Use `guest@syft.org` as `x-syft-from` for guest access (no Bearer token needed)
 
+**ACL Permissions:**
+- Users must have write permission to the target endpoint to send messages
+- Users must have read permission to the request file to poll for responses
+- Datasite owners have automatic access to all endpoints within their datasite
+
 **Response Format Behavior:**
 - **`x-syft-raw=false` (default)**: Response is unmarshaled as a `SyftRPCMessage` struct, which decodes the base64 body and returns the full RPC structure with decoded body as JSON
 - **`x-syft-raw=true`**: Response is treated as raw JSON and returned directly (body remains base64-encoded)
+
+**User Partitioning and Backward Compatibility:**
+- **New Format (with `suffix-sender=true`)**: Requests/responses stored as `{endpoint}/{user-email}/{request-id}.{request|response}`
+- **Legacy Format (default)**: Requests/responses stored as `{endpoint}/{request-id}.{request|response}`
+- **Polling**: Automatically checks both new and legacy paths for backward compatibility
+- **ACL Support**: New format supports user-specific ACL rules for enhanced security
 
 **Response:**
 ```json
@@ -379,11 +467,11 @@ func unmarshalResponse(bodyBytes []byte, asRaw bool) (map[string]interface{}, er
 
 #### Use Case 1: Database Query Service (Authenticated User)
 
-**Scenario**: A client wants to query a database through a SyftBox application that processes SQL queries and returns results.
+**Scenario**: A client wants to query a database through a SyftBox application that processes SQL queries and returns results. Uses user partitioning for data security.
 
 **Request:**
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://alice@company.com/app_data/db-service/rpc/query&x-syft-from=alice@company.com&timeout=5000" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://alice@company.com/app_data/db-service/rpc/query&x-syft-from=alice@company.com&suffix-sender=true&timeout=5000" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt-token>" \
   -H "X-Request-ID: req-12345" \
@@ -423,13 +511,34 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://alice@compan
 }
 ```
 
+**Storage Structure:**
+```
+app_data/db-service/rpc/query/
+└── alice@company.com/
+    ├── a1b2c3d4-e5f6-7890-abcd-ef1234567890.request
+    └── a1b2c3d4-e5f6-7890-abcd-ef1234567890.response
+```
+
+**ACL Rules Applied:**
+```yaml
+rules:
+- pattern: '**/alice@company.com/*.request'
+  access:
+    read: ['alice@company.com']
+    write: ['alice@company.com']
+- pattern: '**/alice@company.com/*.response'
+  access:
+    read: ['alice@company.com']
+    write: ['alice@company.com']
+```
+
 #### Use Case 2: Machine Learning Model Inference (Authenticated User)
 
-**Scenario**: A client sends data to a machine learning model for prediction.
+**Scenario**: A client sends data to a machine learning model for prediction. Uses user partitioning for data privacy and model access control.
 
 **Request:**
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict&x-syft-from=ml-team@research.com" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://ml-team@research.com/app_data/sentiment-analysis/rpc/predict&x-syft-from=ml-team@research.com&suffix-sender=true" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt-token>" \
   -d '{
@@ -484,6 +593,27 @@ curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=b2c3d4e5-f6g7-8901-
 }
 ```
 
+**Storage Structure:**
+```
+app_data/sentiment-analysis/rpc/predict/
+└── ml-team@research.com/
+    ├── b2c3d4e5-f6g7-8901-bcde-f23456789012.request
+    └── b2c3d4e5-f6g7-8901-bcde-f23456789012.response
+```
+
+**ACL Rules Applied:**
+```yaml
+rules:
+- pattern: '**/ml-team@research.com/*.request'
+  access:
+    read: ['ml-team@research.com']
+    write: ['ml-team@research.com']
+- pattern: '**/ml-team@research.com/*.response'
+  access:
+    read: ['ml-team@research.com']
+    write: ['ml-team@research.com']
+```
+
 #### Use Case 2b: Guest Access - Public API Demo
 
 **Scenario**: A guest user wants to try a public sentiment analysis API without authentication.
@@ -532,11 +662,11 @@ curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=f6g7h8i9-j0k1-2345-
 
 #### Use Case 3: File Processing Service (Authenticated User)
 
-**Scenario**: A client sends a small configuration file for processing (note: large files should use blob API directly).
+**Scenario**: A client sends a small configuration file for processing (note: large files should use blob API directly). Uses user partitioning for configuration data security.
 
 **Request:**
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://data-team@company.com/app_data/file-processor/rpc/validate&x-syft-from=data-team@company.com" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://data-team@company.com/app_data/file-processor/rpc/validate&x-syft-from=data-team@company.com&suffix-sender=true" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt-token>" \
   -H "X-File-Type: config" \
@@ -578,13 +708,34 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://data-team@co
 }
 ```
 
+**Storage Structure:**
+```
+app_data/file-processor/rpc/validate/
+└── data-team@company.com/
+    ├── c3d4e5f6-g7h8-9012-cdef-345678901234.request
+    └── c3d4e5f6-g7h8-9012-cdef-345678901234.response
+```
+
+**ACL Rules Applied:**
+```yaml
+rules:
+- pattern: '**/data-team@company.com/*.request'
+  access:
+    read: ['data-team@company.com']
+    write: ['data-team@company.com']
+- pattern: '**/data-team@company.com/*.response'
+  access:
+    read: ['data-team@company.com']
+    write: ['data-team@company.com']
+```
+
 #### Use Case 4: Configuration Update (Authenticated User)
 
-**Scenario**: A client updates application configuration settings.
+**Scenario**: A client updates application configuration settings. Uses user partitioning for admin-level configuration security.
 
 **Request:**
 ```bash
-curl -X PUT "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://admin@company.com/app_data/config-manager/rpc/update&x-syft-from=admin@company.com" \
+curl -X PUT "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://admin@company.com/app_data/config-manager/rpc/update&x-syft-from=admin@company.com&suffix-sender=true" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt-token>" \
   -H "X-Environment: production" \
@@ -627,13 +778,34 @@ curl -X PUT "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://admin@company
 }
 ```
 
+**Storage Structure:**
+```
+app_data/config-manager/rpc/update/
+└── admin@company.com/
+    ├── d4e5f6g7-h8i9-0123-defg-456789012345.request
+    └── d4e5f6g7-h8i9-0123-defg-456789012345.response
+```
+
+**ACL Rules Applied:**
+```yaml
+rules:
+- pattern: '**/admin@company.com/*.request'
+  access:
+    read: ['admin@company.com']
+    write: ['admin@company.com']
+- pattern: '**/admin@company.com/*.response'
+  access:
+    read: ['admin@company.com']
+    write: ['admin@company.com']
+```
+
 #### Use Case 5: Health Check - Raw vs Standard Response (Authenticated User)
 
-**Scenario**: A client performs a health check and compares raw vs standard response formats.
+**Scenario**: A client performs a health check and compares raw vs standard response formats. Uses user partitioning for monitoring data isolation.
 
 **Request (Standard Response):**
 ```bash
-curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@company.com/app_data/health-check/rpc/status&x-syft-from=monitoring@company.com&x-syft-raw=false" \
+curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@company.com/app_data/health-check/rpc/status&x-syft-from=monitoring@company.com&suffix-sender=true&x-syft-raw=false" \
   -H "Authorization: Bearer <jwt-token>" \
   -H "X-Check-Type: full"
 ```
@@ -676,7 +848,7 @@ curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@co
 
 **Request (Raw Response):**
 ```bash
-curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@company.com/app_data/health-check/rpc/status&x-syft-from=monitoring@company.com&x-syft-raw=true" \
+curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@company.com/app_data/health-check/rpc/status&x-syft-from=monitoring@company.com&suffix-sender=true&x-syft-raw=true" \
   -H "Authorization: Bearer <jwt-token>" \
   -H "X-Check-Type: full"
 ```
@@ -708,6 +880,79 @@ curl -X GET "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://monitoring@co
 - **Standard Response**: Includes full RPC message metadata (id, sender, url, method, status_code, headers, created, expires) with the body decoded from base64 and returned as JSON
 - **Raw Response**: Returns the raw JSON representation of the RPC message (body remains base64-encoded)
 
+#### Use Case 7: Backward Compatibility - Legacy Application Support
+
+**Scenario**: An existing application uses the legacy storage format without user partitioning. The system automatically handles backward compatibility.
+
+**Request (Legacy Format - No User Partitioning):**
+```bash
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://legacy@company.com/app_data/old-app/rpc/process&x-syft-from=legacy@company.com" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt-token>" \
+  -d '{
+    "action": "process_data",
+    "data": "legacy-format-data"
+  }'
+```
+
+**Response (Immediate):**
+```json
+{
+    "request_id": "i9j0k1l2-m3n4-5678-ijkl-901234567890",
+    "data": {
+        "message": {
+            "id": "i9j0k1l2-m3n4-5678-ijkl-901234567890",
+            "sender": "legacy@company.com",
+            "url": "syft://legacy@company.com/app_data/old-app/rpc/process",
+            "method": "POST",
+            "status_code": 200,
+            "body": {
+                "result": "processed",
+                "data": "legacy-format-data",
+                "timestamp": "2024-01-15T12:10:00Z"
+            },
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "created": "2024-01-15T12:10:00Z",
+            "expires": "2024-01-16T12:10:00Z"
+        }
+    }
+}
+```
+
+**Storage Structure (Legacy Format):**
+```
+app_data/old-app/rpc/process/
+├── i9j0k1l2-m3n4-5678-ijkl-901234567890.request
+└── i9j0k1l2-m3n4-5678-ijkl-901234567890.response
+```
+
+**Poll Request (Backward Compatible):**
+```bash
+curl "https://syftbox.net/api/v1/send/poll?x-syft-request-id=i9j0k1l2-m3n4-5678-ijkl-901234567890&x-syft-url=syft://legacy@company.com/app_data/old-app/rpc/process&x-syft-from=legacy@company.com" \
+  -H "Authorization: Bearer <jwt-token>"
+```
+
+**Backward Compatibility Notes:**
+- **No `suffix-sender` parameter**: Uses legacy storage format
+- **Automatic Path Resolution**: Polling checks both new and legacy paths
+- **ACL Rules**: Uses legacy ACL patterns for shared access
+- **Migration Path**: Can be gradually migrated to user partitioning by adding `suffix-sender=true`
+
+**Legacy ACL Rules:**
+```yaml
+rules:
+- pattern: '**/*.request'
+  access:
+    read: ['*']
+    write: ['*']
+- pattern: '**/*.response'
+  access:
+    read: ['*']
+    write: ['*']
+```
+
 #### Use Case 5b: Guest Access - Public Calculator Service
 
 **Scenario**: A guest user wants to use a public calculator service without authentication.
@@ -720,6 +965,68 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
     "operation": "multiply",
     "operands": [15, 23]
   }'
+```
+
+#### Use Case 6: User-Partitioned Storage with ACL (Authenticated User)
+
+**Scenario**: A client wants to use user-partitioned storage for enhanced security with ACL rules.
+
+**Request (with User Partitioning):**
+```bash
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://secure@company.com/app_data/private-api/rpc/process&x-syft-from=alice@company.com&suffix-sender=true" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt-token>" \
+  -d '{
+    "sensitive_data": "encrypted-content",
+    "operation": "decrypt_and_process"
+  }'
+```
+
+**Response (Immediate):**
+```json
+{
+    "request_id": "h8i9j0k1-l2m3-4567-hijk-890123456789",
+    "data": {
+        "message": {
+            "id": "h8i9j0k1-l2m3-4567-hijk-890123456789",
+            "sender": "alice@company.com",
+            "url": "syft://secure@company.com/app_data/private-api/rpc/process",
+            "method": "POST",
+            "status_code": 200,
+            "body": {
+                "result": "success",
+                "processed_data": "decrypted-content",
+                "timestamp": "2024-01-15T12:05:00Z"
+            },
+            "headers": {
+                "Content-Type": "application/json"
+            },
+            "created": "2024-01-15T12:05:00Z",
+            "expires": "2024-01-16T12:05:00Z"
+        }
+    }
+}
+```
+
+**Storage Structure:**
+```
+app_data/private-api/rpc/process/
+└── alice@company.com/
+    ├── h8i9j0k1-l2m3-4567-hijk-890123456789.request
+    └── h8i9j0k1-l2m3-4567-hijk-890123456789.response
+```
+
+**ACL Rules Applied:**
+```yaml
+rules:
+- pattern: '**/alice@company.com/*.request'
+  access:
+    read: ['alice@company.com']
+    write: ['alice@company.com']
+- pattern: '**/alice@company.com/*.response'
+  access:
+    read: ['alice@company.com']
+    write: ['alice@company.com']
 ```
 
 **Response (Immediate):**
@@ -753,7 +1060,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox
 
 #### 1. Send Message (Online Client)
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com&suffix-sender=true" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt-token>" \
   -d '{"key": "value"}'
@@ -785,7 +1092,7 @@ curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasit
 
 #### 2. Send Message (Offline Client)
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://user@datasite.com/app_data/myapp/rpc/endpoint&x-syft-from=user@datasite.com&suffix-sender=true" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt-token>" \
   -d '{"key": "value"}'
@@ -868,8 +1175,11 @@ dispatcher := send.NewWSMsgDispatcher(websocketHub)
 // Create message store
 store := send.NewBlobMsgStore(blobService)
 
+// Create ACL service
+aclService := acl.NewACLService(blobService)
+
 // Create send service
-service := send.NewSendService(dispatcher, store, &send.Config{
+service := send.NewSendService(dispatcher, store, aclService, &send.Config{
     DefaultTimeout:      1 * time.Second,
     MaxTimeout:          10 * time.Second,
     ObjectPollInterval:  200 * time.Millisecond,
@@ -878,7 +1188,7 @@ service := send.NewSendService(dispatcher, store, &send.Config{
 })
 
 // Create handler
-handler := send.New(dispatcher, store)
+handler := send.New(dispatcher, store, aclService)
 ```
 
 #### 2. Route Registration
@@ -936,6 +1246,8 @@ The sync engine integrates with the send handler through the `processHttpMessage
 7. **Sync Upload**: Client uploads response to cache server using normal sync upload operations
 
 #### File Structure
+
+**Legacy Format (Default):**
 ```
 datasite/
 └── app_data/
@@ -944,6 +1256,21 @@ datasite/
             └── endpoint/
                 ├── {request-id}.request  # RPC request file
                 └── {request-id}.response # RPC response file
+```
+
+**User-Partitioned Format (with `suffix-sender=true`):**
+```
+datasite/
+└── app_data/
+    └── appname/
+        └── rpc/
+            └── endpoint/
+                ├── user1@example.com/
+                │   ├── {request-id}.request  # User-specific request file
+                │   └── {request-id}.response # User-specific response file
+                └── user2@example.com/
+                    ├── {request-id}.request  # User-specific request file
+                    └── {request-id}.response # User-specific response file
 ```
 
 #### Sync Engine Integration Code
@@ -982,11 +1309,11 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 | `invalid_request` | Request validation failed | 400 Bad Request |
 | `internal_error` | Server internal error | 500 Internal Server Error |
 | `not_found` | Request not found | 404 Not Found |
+| `permission_denied` | User lacks required permissions | 403 Forbidden |
 
 ### Limitations
 
 #### Current Limitations
-- **No ACL Enforcement**: TODO: Permission checking not implemented
 - **No Header Filtering**: TODO: All headers are forwarded without filtering
 - **Fixed File Structure**: RPC files follow specific naming convention
 - **Single Response**: Only one response per request is supported
@@ -1001,7 +1328,6 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 ### Future Enhancements
 
 #### TODO Items from Code
-- **ACL Integration**: Implement permission checking for message sending
 - **Header Security**: Add header filtering for security
 - **Enhanced Error Handling**: More granular error responses
 - **Batch Operations**: Support for multiple message operations
@@ -1026,6 +1352,11 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 4. **WebSocket Delivery Failure**
    - **Cause**: Client is offline
    - **Solution**: Use polling mechanism for offline clients
+
+5. **Permission Denied**
+   - **Cause**: User lacks required ACL permissions for the endpoint
+   - **Solution**: Check ACL rules and ensure user has appropriate access rights
+   - **For User-Partitioned Storage**: Ensure ACL rules are configured for the user-specific paths
 
 #### Debug Information
 - **Request ID**: All operations include request ID for tracing
