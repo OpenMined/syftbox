@@ -13,6 +13,9 @@ var (
 	ErrInvalidEmail = errors.New("invalid email")
 )
 
+const GuestEmail = "guest@syftbox.net"
+const GuestEmailLegacy = "guest@syft.org"
+
 func IsValidEmail(email string) bool {
 	return ValidateEmail(email) == nil
 }

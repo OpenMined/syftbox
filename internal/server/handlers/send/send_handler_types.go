@@ -3,6 +3,7 @@ package send
 import (
 	"context"
 	"io"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -58,14 +59,27 @@ type MessageRequest struct {
 }
 
 func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
-
 	h.Headers = make(Headers)
 	for k, v := range ctx.Request.Header {
 		if len(v) > 0 {
-			h.Headers[k] = v[0]
+			// Convert header key to lowercase
+			lowerKey := strings.ToLower(k)
+
+			// Skip the Authorization header as it's used for Syftbox authentication
+			// and should not be forwarded to the RPC endpoint
+			if lowerKey == "authorization" {
+				continue
+			}
+
+			h.Headers[lowerKey] = v[0]
 		}
 	}
-	// Bind x-syft-from to Headers
+	// Normalize guest identity: prefer guest@syftbox.net but accept legacy guest@syft.org
+	fromLower := strings.ToLower(h.From)
+	if fromLower == utils.GuestEmailLegacy {
+		h.From = utils.GuestEmail
+	}
+	// Bind x-syft-from to Headers (already lowercase)
 	h.Headers["x-syft-from"] = h.From
 }
 
