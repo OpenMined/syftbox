@@ -624,7 +624,7 @@ rules:
 
 **Request:**
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox.net/app_data/public-sentiment/rpc/analyze&x-syft-from=guest@syft.org" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox.net/app_data/public-sentiment/rpc/analyze&x-syft-from=guest@syftbox.net" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "This is amazing!",
@@ -963,7 +963,7 @@ rules:
 
 **Request:**
 ```bash
-curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox.net/app_data/calculator/rpc/compute&x-syft-from=guest@syft.org" \
+curl -X POST "https://syftbox.net/api/v1/send/msg?x-syft-url=syft://demo@syftbox.net/app_data/calculator/rpc/compute&x-syft-from=guest@syftbox.net" \
   -H "Content-Type: application/json" \
   -d '{
     "operation": "multiply",

@@ -6,32 +6,33 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestBindHeaders(t *testing.T) {
-    tests := []struct {
-        name           string
-        inputHeaders   map[string]string
-        from           string
-        expectedHeaders map[string]string
-    }{
-        {
-            name: "normalizes legacy guest email to syftbox.net",
-            inputHeaders: map[string]string{
-                "Content-Type": "application/json",
-            },
-            from: "guest@syft.org",
-            expectedHeaders: map[string]string{
-                "content-type": "application/json",
-                "x-syft-from":  "guest@syftbox.net",
-            },
-        },
-        {
-            name: "converts headers to lowercase",
-            inputHeaders: map[string]string{
-                "Content-Type":    "application/json",
-                "Accept":          "*/*",
+	tests := []struct {
+		name            string
+		inputHeaders    map[string]string
+		from            string
+		expectedHeaders map[string]string
+	}{
+		{
+			name: "normalizes legacy guest email to syftbox.net",
+			inputHeaders: map[string]string{
+				"Content-Type": "application/json",
+			},
+			from: utils.GuestEmailLegacy,
+			expectedHeaders: map[string]string{
+				"content-type": "application/json",
+				"x-syft-from":  utils.GuestEmail,
+			},
+		},
+		{
+			name: "converts headers to lowercase",
+			inputHeaders: map[string]string{
+				"Content-Type":    "application/json",
+				"Accept":          "*/*",
 				"User-Agent":      "test-agent",
 				"X-Custom-Header": "custom-value",
 			},
