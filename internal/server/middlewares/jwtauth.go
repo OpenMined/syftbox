@@ -50,7 +50,7 @@ func JWTAuth(authService *auth.AuthService, allowGuest bool) gin.HandlerFunc {
 			if user == "" {
 				user = ctx.Query("x-syft-from")
 			}
-			if user == "guest@syft.org" {
+			if strings.EqualFold(user, utils.GuestEmail) || strings.EqualFold(user, utils.GuestEmailLegacy) {
 				ctx.Set("user", user)
 				ctx.Next()
 				return
