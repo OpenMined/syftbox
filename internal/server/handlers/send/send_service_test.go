@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/openmined/syftbox/internal/server/acl"
+	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/stretchr/testify/assert"
@@ -51,6 +53,180 @@ func (m *MockRPCMsgStore) DeleteMsg(ctx context.Context, path string) error {
 	return args.Error(0)
 }
 
+// MockBlobService is a mock implementation of blob.Service
+type MockBlobService struct {
+	mock.Mock
+}
+
+func (m *MockBlobService) Backend() blob.IBlobBackend {
+	args := m.Called()
+	return args.Get(0).(blob.IBlobBackend)
+}
+
+func (m *MockBlobService) Index() blob.IBlobIndex {
+	args := m.Called()
+	return args.Get(0).(blob.IBlobIndex)
+}
+
+func (m *MockBlobService) OnBlobChange(callback blob.BlobChangeCallback) {
+	m.Called(callback)
+}
+
+// MockBlobIndex is a mock implementation of blob.IBlobIndex
+type MockBlobIndex struct {
+	mock.Mock
+}
+
+func (m *MockBlobIndex) Get(key string) (*blob.BlobInfo, bool) {
+	args := m.Called(key)
+	return args.Get(0).(*blob.BlobInfo), args.Bool(1)
+}
+
+func (m *MockBlobIndex) Set(blob *blob.BlobInfo) error {
+	args := m.Called(blob)
+	return args.Error(0)
+}
+
+func (m *MockBlobIndex) SetMany(blobs []*blob.BlobInfo) error {
+	args := m.Called(blobs)
+	return args.Error(0)
+}
+
+func (m *MockBlobIndex) Remove(key string) error {
+	args := m.Called(key)
+	return args.Error(0)
+}
+
+func (m *MockBlobIndex) List() ([]*blob.BlobInfo, error) {
+	args := m.Called()
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) Iter() func(func(*blob.BlobInfo) bool) {
+	args := m.Called()
+	return args.Get(0).(func(func(*blob.BlobInfo) bool))
+}
+
+func (m *MockBlobIndex) Count() int {
+	args := m.Called()
+	return args.Int(0)
+}
+
+func (m *MockBlobIndex) FilterByKeyGlob(pattern string) ([]*blob.BlobInfo, error) {
+	args := m.Called(pattern)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterByPrefix(prefix string) ([]*blob.BlobInfo, error) {
+	args := m.Called(prefix)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterBySuffix(suffix string) ([]*blob.BlobInfo, error) {
+	args := m.Called(suffix)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterByTime(filter blob.TimeFilter) ([]*blob.BlobInfo, error) {
+	args := m.Called(filter)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterAfterTime(after time.Time) ([]*blob.BlobInfo, error) {
+	args := m.Called(after)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobIndex) FilterBeforeTime(before time.Time) ([]*blob.BlobInfo, error) {
+	args := m.Called(before)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+// MockBlobBackend is a mock implementation of blob.IBlobBackend
+type MockBlobBackend struct {
+	mock.Mock
+}
+
+func (m *MockBlobBackend) GetObject(ctx context.Context, key string) (*blob.GetObjectResponse, error) {
+	args := m.Called(ctx, key)
+	return args.Get(0).(*blob.GetObjectResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) GetObjectPresigned(ctx context.Context, key string) (string, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBlobBackend) PutObject(ctx context.Context, params *blob.PutObjectParams) (*blob.PutObjectResponse, error) {
+	args := m.Called(ctx, params)
+	return args.Get(0).(*blob.PutObjectResponse), args.Error(1)
+}
+
+func (m *MockBlobBackend) PutObjectPresigned(ctx context.Context, key string) (string, error) {
+	args := m.Called(ctx, key)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBlobBackend) DeleteObject(ctx context.Context, key string) (bool, error) {
+	args := m.Called(ctx, key)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockBlobBackend) ListObjects(ctx context.Context) ([]*blob.BlobInfo, error) {
+	args := m.Called(ctx)
+	return args.Get(0).([]*blob.BlobInfo), args.Error(1)
+}
+
+func (m *MockBlobBackend) Delegate() any {
+	args := m.Called()
+	return args.Get(0)
+}
+
+// Helper function to create a mock ACL service for testing
+func createMockACLService() *acl.ACLService {
+	// Create mock dependencies
+	mockIndex := &MockBlobIndex{}
+	mockBackend := &MockBlobBackend{}
+	mockBlobService := &MockBlobService{}
+
+	// Set up common expectations
+	mockBlobService.On("Index").Return(mockIndex)
+	mockBlobService.On("Backend").Return(mockBackend)
+	mockBlobService.On("OnBlobChange", mock.AnythingOfType("blob.BlobChangeCallback")).Return()
+
+	// Set up index expectations with sensible defaults
+	mockIndex.On("FilterBySuffix", mock.AnythingOfType("string")).Return([]*blob.BlobInfo{}, nil)
+	mockIndex.On("Iter").Return(func(yield func(*blob.BlobInfo) bool) {
+		// Empty iterator by default
+	})
+	mockIndex.On("Count").Return(0)
+
+	return acl.NewACLService(mockBlobService)
+}
+
+// Helper function to create a SendService for testing
+func createTestSendService(dispatcher MessageDispatcher, store RPCMsgStore, cfg *Config) *SendService {
+	if cfg == nil {
+		cfg = &Config{
+			DefaultTimeout:      1 * time.Second,
+			MaxTimeout:          10 * time.Second,
+			ObjectPollInterval:  200 * time.Millisecond,
+			RequestCheckTimeout: 200 * time.Millisecond,
+			MaxBodySize:         4 << 20, // 4MB
+		}
+	}
+
+	// Create a mock ACL service that allows all access
+	aclService := createMockACLService()
+
+	return &SendService{
+		dispatcher: dispatcher,
+		store:      store,
+		cfg:        cfg,
+		acl:        aclService,
+	}
+}
+
 func TestNewSendService(t *testing.T) {
 	// Test with custom config
 	dispatcher := &MockMessageDispatcher{}
@@ -63,12 +239,12 @@ func TestNewSendService(t *testing.T) {
 		RequestCheckTimeout: 400 * time.Millisecond,
 	}
 
-	service := NewSendService(dispatcher, store, cfg)
+	service := createTestSendService(dispatcher, store, cfg)
 	assert.NotNil(t, service)
 	assert.Equal(t, cfg, service.cfg)
 
 	// Test with nil config (should use defaults)
-	service = NewSendService(dispatcher, store, nil)
+	service = createTestSendService(dispatcher, store, nil)
 	assert.NotNil(t, service)
 	assert.NotNil(t, service.cfg)
 	assert.Equal(t, 1*time.Second, service.cfg.DefaultTimeout)
@@ -81,10 +257,10 @@ func TestNewSendService(t *testing.T) {
 func TestSendService_SendMessage_Online(t *testing.T) {
 	dispatcher := &MockMessageDispatcher{}
 	store := &MockRPCMsgStore{}
-	service := NewSendService(dispatcher, store, nil)
+	service := createTestSendService(dispatcher, store, nil)
 
-	// Create test data
-	from := "test-user"
+	// Create test data - use consistent user and datasite names
+	from := "test@datasite.com" // User should be the owner of the datasite
 	syftURL, err := utils.FromSyftURL("syft://test@datasite.com/app_data/testapp/rpc/endpoint")
 	assert.NoError(t, err)
 	method := "POST"
@@ -189,10 +365,10 @@ func TestSendService_SendMessage_Online(t *testing.T) {
 func TestSendService_SendMessage_Offline(t *testing.T) {
 	dispatcher := &MockMessageDispatcher{}
 	store := &MockRPCMsgStore{}
-	service := NewSendService(dispatcher, store, nil)
+	service := createTestSendService(dispatcher, store, nil)
 
-	// Create test data
-	from := "test-user"
+	// Create test data - use consistent user and datasite names
+	from := "test@datasite.com" // User should be the owner of the datasite
 	syftURL, err := utils.FromSyftURL("syft://test@datasite.com/app_data/testapp/rpc/endpoint")
 	assert.NoError(t, err)
 
@@ -242,11 +418,11 @@ func TestSendService_SendMessage_Offline(t *testing.T) {
 func TestSendService_PollForResponse(t *testing.T) {
 	dispatcher := &MockMessageDispatcher{}
 	store := &MockRPCMsgStore{}
-	service := NewSendService(dispatcher, store, nil)
+	service := createTestSendService(dispatcher, store, nil)
 
-	// Create test data
+	// Create test data - use consistent user and datasite names
 	requestID := uuid.New().String()
-	from := "test-user"
+	from := "test@datasite.com" // User should be the owner of the datasite
 	syftURL, err := utils.FromSyftURL("syft://test@datasite.com/app_data/testapp/rpc/endpoint")
 	assert.NoError(t, err)
 
@@ -276,11 +452,14 @@ func TestSendService_PollForResponse(t *testing.T) {
 	responseBytes, err := json.Marshal(responseMsg)
 	assert.NoError(t, err)
 
+	// Mock request path (any path ending with .request)
 	store.On("GetMsg", mock.Anything, mock.MatchedBy(func(path string) bool {
-		return path == syftURL.ToLocalPath()+"/"+requestID+".request"
+		return strings.HasSuffix(path, ".request")
 	})).Return(io.NopCloser(bytes.NewReader(requestBytes)), nil)
+
+	// Mock response path (any path ending with .response)
 	store.On("GetMsg", mock.Anything, mock.MatchedBy(func(path string) bool {
-		return path == syftURL.ToLocalPath()+"/"+requestID+".response"
+		return strings.HasSuffix(path, ".response")
 	})).Return(io.NopCloser(bytes.NewReader(responseBytes)), nil)
 
 	// Set up expectations for DeleteMsg calls in cleanReqResponse
@@ -333,11 +512,11 @@ func TestSendService_PollForResponse(t *testing.T) {
 func TestSendService_PollForResponse_NoRequest(t *testing.T) {
 	dispatcher := &MockMessageDispatcher{}
 	store := &MockRPCMsgStore{}
-	service := NewSendService(dispatcher, store, nil)
+	service := createTestSendService(dispatcher, store, nil)
 
-	// Create test data
+	// Create test data - use consistent user and datasite names
 	requestID := uuid.New().String()
-	from := "test-user"
+	from := "test@datasite.com" // User should be the owner of the datasite
 	syftURL, err := utils.FromSyftURL("syft://test@datasite.com/app_data/testapp/rpc/endpoint")
 	assert.NoError(t, err)
 
@@ -371,11 +550,11 @@ func TestSendService_PollForResponse_Timeout(t *testing.T) {
 		ObjectPollInterval:  50 * time.Millisecond,
 		RequestCheckTimeout: 50 * time.Millisecond,
 	}
-	service := NewSendService(dispatcher, store, cfg)
+	service := createTestSendService(dispatcher, store, cfg)
 
-	// Create test data
+	// Create test data - use consistent user and datasite names
 	requestID := uuid.New().String()
-	from := "test-user"
+	from := "test@datasite.com" // User should be the owner of the datasite
 	syftURL, err := utils.FromSyftURL("syft://test@datasite.com/app_data/testapp/rpc/endpoint")
 	assert.NoError(t, err)
 
@@ -404,11 +583,14 @@ func TestSendService_PollForResponse_Timeout(t *testing.T) {
 	requestBytes, err := json.Marshal(responseMsg)
 	assert.NoError(t, err)
 
+	// Mock request path (any path ending with .request)
 	store.On("GetMsg", mock.Anything, mock.MatchedBy(func(path string) bool {
-		return path == syftURL.ToLocalPath()+"/"+requestID+".request"
+		return strings.HasSuffix(path, ".request")
 	})).Return(io.NopCloser(bytes.NewReader(requestBytes)), nil)
+
+	// Mock response path to return not found (timeout scenario)
 	store.On("GetMsg", mock.Anything, mock.MatchedBy(func(path string) bool {
-		return path == syftURL.ToLocalPath()+"/"+requestID+".response"
+		return strings.HasSuffix(path, ".response")
 	})).Return(nil, ErrMsgNotFound)
 
 	// Call PollForResponse

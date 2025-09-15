@@ -3,6 +3,7 @@ package send
 import (
 	"context"
 	"io"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -18,11 +19,12 @@ const (
 
 // Error constants
 const (
-	ErrorTimeout        = "timeout"
-	ErrorInvalidRequest = "invalid_request"
-	ErrorInternal       = "internal_error"
-	ErrorNotFound       = "not_found"
-	PollURL             = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s&x-syft-from=%s&x-syft-raw=%t"
+	ErrorTimeout          = "timeout"
+	ErrorInvalidRequest   = "invalid_request"
+	ErrorInternal         = "internal_error"
+	ErrorNotFound         = "not_found"
+	ErrorPermissionDenied = "permission_denied"
+	PollURL               = "/api/v1/send/poll?x-syft-request-id=%s&x-syft-url=%s&x-syft-from=%s&x-syft-raw=%t"
 )
 
 // APIError represents a standardized error response
@@ -47,24 +49,37 @@ type Headers map[string]string
 
 // MessageRequest represents the request for sending a message
 type MessageRequest struct {
-	SyftURL utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
-	From    string           `form:"x-syft-from" binding:"required"` // The sender of the message
-	Timeout int              `form:"timeout" binding:"gte=0"`        // The timeout for the request in milliseconds
-	AsRaw   bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
-	Method  string           // Will be set from request method
-	Headers Headers          // Will be set from request headers
+	SyftURL      utils.SyftBoxURL `form:"x-syft-url" binding:"required"`  // Binds to the syft url using UnmarshalParam
+	From         string           `form:"x-syft-from" binding:"required"` // The sender of the message
+	Timeout      int              `form:"timeout" binding:"gte=0"`        // The timeout for the request in milliseconds
+	AsRaw        bool             `form:"x-syft-raw" default:"false"`     // If true, the request body will be read and sent as is
+	Method       string           // Will be set from request method
+	Headers      Headers          // Will be set from request headers
+	SuffixSender bool             `form:"suffix-sender" default:"false"` // If true, the sender prefix will be added to the request
 }
 
 func (h *MessageRequest) BindHeaders(ctx *gin.Context) {
-
-	// TODO: Filter out headers that are not allowed
 	h.Headers = make(Headers)
 	for k, v := range ctx.Request.Header {
 		if len(v) > 0 {
-			h.Headers[k] = v[0]
+			// Convert header key to lowercase
+			lowerKey := strings.ToLower(k)
+
+			// Skip the Authorization header as it's used for Syftbox authentication
+			// and should not be forwarded to the RPC endpoint
+			if lowerKey == "authorization" {
+				continue
+			}
+
+			h.Headers[lowerKey] = v[0]
 		}
 	}
-	// Bind x-syft-from to Headers
+	// Normalize guest identity: prefer guest@syftbox.net but accept legacy guest@syft.org
+	fromLower := strings.ToLower(h.From)
+	if fromLower == utils.GuestEmailLegacy {
+		h.From = utils.GuestEmail
+	}
+	// Bind x-syft-from to Headers (already lowercase)
 	h.Headers["x-syft-from"] = h.From
 }
 
