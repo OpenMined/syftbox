@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2025-09-16
+
 ### [PR #78](https://github.com/OpenMined/syftbox/pull/78) - HTTP Message Header Fixes *(2025-09-12)*
 
 #### Added
