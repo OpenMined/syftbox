@@ -18,7 +18,8 @@ func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) 
 	}
 
 	// Create temporary file in same directory to ensure atomic operation
-	// Filename is base name + temporary suffix
+	// Filename is base name + temporary suffix 
+	// Pattern *.syft.tmp.* is part of syftignore list, so it will be ignored by the sync engine
 	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".syft.tmp.*")
 	if err != nil {
 		return fmt.Errorf("Failed to create temp file: %w", err)
