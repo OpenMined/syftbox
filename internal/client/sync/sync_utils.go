@@ -61,33 +61,9 @@ func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) 
 	// Rename the temp file to the final path (atomic operation)
 	// Falls back to copy if rename fails due to cross-device link
 	if err := os.Rename(tempPath, path); err != nil {
-		if err := copyFile(tempPath, path); err != nil {
-			return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
-		}
-		os.Remove(tempPath)
+		return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
 	}
 
 	success = true
 	return nil
-}
-
-// copyFile copies a file from src to dst for cross-device scenarios
-func copyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	if _, err := io.Copy(destFile, sourceFile); err != nil {
-		return err
-	}
-
-	return destFile.Sync()
 }
