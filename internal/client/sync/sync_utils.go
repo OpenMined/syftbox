@@ -18,19 +18,21 @@ func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) 
 	}
 
 	// Create temporary file in same directory to ensure atomic operation
-	// Filename is base name + temporary suffix 
-	// Pattern *.syft.tmp.* is part of syftignore list, so it will be ignored by the sync engine
+	// Uses pattern *.syft.tmp.* which is part of syftignore list to be ignored by sync engine
 	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".syft.tmp.*")
 	if err != nil {
 		return fmt.Errorf("Failed to create temp file: %w", err)
 	}
-	
+
 	tempPath := tempFile.Name()
-	
-	// Ensure temp file is cleaned up on any error
+	success := false
+
+	// Cleanup temp file only on failure
 	defer func() {
-		tempFile.Close()
-		os.Remove(tempPath)
+		if !success {
+			tempFile.Close()
+			os.Remove(tempPath)
+		}
 	}()
 
 	hasher := md5.New()
@@ -46,16 +48,46 @@ func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) 
 		return fmt.Errorf("Integrity check failed expected %q got %q", expectedETag, computedETag)
 	}
 
+	// Sync to disk before rename to ensure durability
+	if err := tempFile.Sync(); err != nil {
+		return fmt.Errorf("Failed to sync temp file: %w", err)
+	}
+
 	// Close temp file before atomic move
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("Failed to close temp file: %w", err)
 	}
 
-	// Rename the temp file to the final path
-	// This is atomic and prevents race conditions
+	// Rename the temp file to the final path (atomic operation)
+	// Falls back to copy if rename fails due to cross-device link
 	if err := os.Rename(tempPath, path); err != nil {
-		return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
+		if err := copyFile(tempPath, path); err != nil {
+			return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
+		}
+		os.Remove(tempPath)
 	}
 
+	success = true
 	return nil
+}
+
+// copyFile copies a file from src to dst for cross-device scenarios
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		return err
+	}
+
+	return destFile.Sync()
 }

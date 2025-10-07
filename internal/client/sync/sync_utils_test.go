@@ -267,7 +267,7 @@ func TestWriteFileWithIntegrityCheckTempFileCleanup(t *testing.T) {
 		require.NoError(t, err)
 
 		for _, entry := range entries {
-			assert.False(t, entry.Name() != "cleanup_test.txt",
+			assert.True(t, entry.Name() == "cleanup_test.txt",
 				"Temp file not cleaned up: %s", entry.Name())
 		}
 	})
@@ -285,10 +285,7 @@ func TestWriteFileWithIntegrityCheckTempFileCleanup(t *testing.T) {
 		entries, err := os.ReadDir(tempDir)
 		require.NoError(t, err)
 
-		for _, entry := range entries {
-			assert.False(t, entry.Name() != "error_cleanup_test.txt",
-				"Temp file not cleaned up after error: %s", entry.Name())
-		}
+		assert.Empty(t, entries, "Temp files should be cleaned up after error, found: %v", entries)
 	})
 }
 
