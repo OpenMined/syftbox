@@ -59,7 +59,6 @@ func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) 
 	}
 
 	// Rename the temp file to the final path (atomic operation)
-	// Falls back to copy if rename fails due to cross-device link
 	if err := os.Rename(tempPath, path); err != nil {
 		return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
 	}
