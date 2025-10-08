@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2025-10-08
+
+### [PR #81](https://github.com/OpenMined/syftbox/pull/81) - Tweaks to Race Condition Changes *(2025-10-08)*
+
+#### Enhanced
+- **Code Cleanup**: Removed unnecessary `copyFile` function and simplified error handling in `writeFileWithIntegrityCheck`
+- **Test Improvements**: Enhanced test assertions and consolidated test files for better maintainability
+
+### [PR #80](https://github.com/OpenMined/syftbox/pull/80) - Fix Race Condition in File Operations *(2025-10-07)*
+
+#### Added
+- **Atomic Writes**: Implemented atomic file operations using temporary files with `.syft.tmp.*` pattern
+- **Sync Ignore Pattern**: Added `*.syft.tmp.*` to ignore list to prevent false sync events during file operations
+- **Comprehensive Testing**: Added extensive test coverage for atomic write operations and race condition scenarios
+
+#### Enhanced
+- **File Integrity**: Improved `writeFileWithIntegrityCheck` function with atomic write implementation
+- **Race Condition Prevention**: Files now only appear when completely written, eliminating race conditions
+- **Error Handling**: Streamlined error handling and file operation logic
+
+#### Fixed
+- **Race Conditions**: Eliminated race conditions in file operations through atomic writes
+- **File Sync Issues**: Prevented partial files from triggering sync events during write operations
+- **Test Reliability**: Improved test stability and coverage for file operation scenarios
+
 ## [0.8.5] - 2025-09-16
 
 ### [PR #78](https://github.com/OpenMined/syftbox/pull/78) - HTTP Message Header Fixes *(2025-09-12)*
@@ -54,9 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **API Examples**: Updated curl commands to include `suffix-sender` parameter
 - **Storage Structure**: Added comprehensive examples of ACL rules for various use cases
 - **Backward Compatibility**: Documented migration path and legacy support
-
-
-
 
 
 ## [0.8.4] - 2025-09-04
