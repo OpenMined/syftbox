@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/openmined/syftbox/internal/server/accesslog"
 	"github.com/openmined/syftbox/internal/server/handlers/acl"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/server/handlers/auth"
@@ -40,6 +41,12 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 		r.Use(middlewares.HSTS())
 	}
 
+	// Add access logging middleware
+	if svc.AccessLog != nil {
+		accessLogMiddleware := accesslog.NewMiddleware(svc.AccessLog)
+		r.Use(accessLogMiddleware.Handler())
+	}
+
 	if cfg.HTTP.Domain != "" {
 		r.Use(middlewares.SubdomainRewrite(r, &middlewares.SubdomainRewriteConfig{
 			Domain:  cfg.HTTP.Domain,
@@ -60,7 +67,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
 	aclH := acl.NewACLHandler(svc.ACL)
-	sendH := send.New(send.NewWSMsgDispatcher(hub), send.NewBlobMsgStore(svc.Blob))
+	sendH := send.New(send.NewWSMsgDispatcher(hub), send.NewBlobMsgStore(svc.Blob), svc.ACL)
 	didH := did.NewDIDHandler(svc.Blob)
 
 	// --------------------------- routes ---------------------------

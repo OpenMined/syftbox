@@ -17,12 +17,14 @@ type Config struct {
 	Auth    auth.Config   `mapstructure:"auth"`
 	Email   email.Config  `mapstructure:"email"`
 	DataDir string        `mapstructure:"data_dir"`
+	LogDir  string        `mapstructure:"log_dir"`
 }
 
 // LogValue for Config
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("data_dir", c.DataDir),
+		slog.String("log_dir", c.LogDir),
 		slog.Any("http", c.HTTP),
 		slog.Any("blob", c.Blob),
 		slog.Any("auth", c.Auth),
@@ -36,6 +38,16 @@ func (c *Config) Validate() error {
 	c.DataDir, err = utils.ResolvePath(c.DataDir)
 	if err != nil {
 		return fmt.Errorf("invalid data directory: %w", err)
+	}
+
+	// Resolve LogDir path
+	if c.LogDir == "" {
+		// Default to .logs in the current working directory if not set
+		c.LogDir = ".logs"
+	}
+	c.LogDir, err = utils.ResolvePath(c.LogDir)
+	if err != nil {
+		return fmt.Errorf("invalid log directory: %w", err)
 	}
 
 	if err := c.HTTP.Validate(); err != nil {

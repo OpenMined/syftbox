@@ -5,6 +5,7 @@
 SyftBox is a privacy-preserving compute platform that enables secure data sharing and computation across distributed datasites.
 
 ## Documentation
+- [Access Logging System](./access-logging.md)
 - [Access Control List (ACL) System](./acl-system.md)
   - [Overview](./acl-system.md#overview)
   - [Architecture](./acl-system.md#architecture)
@@ -23,6 +24,7 @@ SyftBox is a privacy-preserving compute platform that enables secure data sharin
   - [ACL File Management](./acl-system.md#acl-file-management)
   - [Best Practices](./acl-system.md#best-practices)
   - [Integration Points](./acl-system.md#integration-points)
+  - [Advanced Permission Use Cases](./acl-system.md#advanced-permission-use-cases)
 - [Send Handler & Service - RPC Using HTTP](./send-handler.md)
   - [Overview](./send-handler.md#overview)
   - [Architecture](./send-handler.md#architecture)

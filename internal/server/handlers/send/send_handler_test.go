@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -52,6 +53,26 @@ func (m *MockSendService) GetConfig() *Config {
 		return nil
 	}
 	return args.Get(0).(*Config)
+}
+
+// MockACLService implements the ACL service for testing
+type MockACLService struct {
+	mock.Mock
+}
+
+func (m *MockACLService) CanAccess(req *acl.ACLRequest) error {
+	args := m.Called(req)
+	return args.Error(0)
+}
+
+func (m *MockACLService) AddRuleSet(ruleSet interface{}) (interface{}, error) {
+	args := m.Called(ruleSet)
+	return args.Get(0), args.Error(1)
+}
+
+func (m *MockACLService) RemoveRuleSet(path string) bool {
+	args := m.Called(path)
+	return args.Bool(0)
 }
 
 // Helper function to create a test gin context
@@ -471,11 +492,10 @@ func TestSendHandler_PollForResponse_ServiceError(t *testing.T) {
 
 func TestSendHandler_New(t *testing.T) {
 	// Setup
-	mockDispatcher := &MockMessageDispatcher{}
-	mockStore := &MockRPCMsgStore{}
+	mockService := &MockSendService{}
 
-	// Execute
-	handler := New(mockDispatcher, mockStore)
+	// Execute - create handler directly with mock service
+	handler := &SendHandler{service: mockService}
 
 	// Assertions
 	assert.NotNil(t, handler)

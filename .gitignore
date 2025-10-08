@@ -40,6 +40,9 @@ go.work.sum
 *.db-shm
 *.db-wal
 
+# Access logs
+.logs/
+
 # Syft-related Files
 **/certs
 **/syft.pub.*

@@ -282,7 +282,8 @@ func TestFileWatcher_FilterPaths_MultipleCriteria(t *testing.T) {
 		filename := filepath.Base(path)
 		return filepath.Ext(path) == ".tmp" ||
 			filepath.Ext(path) == ".log" ||
-			filepath.Base(filename) == "ignore_me.txt"
+			filepath.Base(filename) == "ignore_me.txt" ||
+			filepath.Base(filename) == "file.syft.tmp.123456"
 	})
 
 	err = fw.Start(t.Context())
@@ -297,6 +298,7 @@ func TestFileWatcher_FilterPaths_MultipleCriteria(t *testing.T) {
 		"temp.tmp",        // Should be filtered
 		"debug.log",       // Should be filtered
 		"ignore_me.txt",   // Should be filtered
+		"file.syft.tmp.123456", // Should be filtered
 		"normal_file.doc", // Should generate event
 	}
 

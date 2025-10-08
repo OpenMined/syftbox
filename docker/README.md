@@ -10,7 +10,7 @@ The Dockerfile.client.ds builds an image containing the SyftBox client CLI.
 - **Minimal size**: Uses Alpine Linux base
 
 ### Building
-
+Please refer to https://github.com/OpenMined/syftbox to get the latest version (for example it's `v0.8.4` as of Sep 12, 2025).
 ```bash
 # Build for current architecture
 docker build -f docker/Dockerfile.client.ds \

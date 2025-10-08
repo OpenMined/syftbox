@@ -19,6 +19,7 @@ var defaultIgnoreLines = []string{
 	"**/*syftconflict*", // legacy marker
 	"**/*.conflict.*",
 	"**/*.rejected.*",
+	"*.syft.tmp.*", // temporary files
 	".syftkeep",
 	// python
 	".ipynb_checkpoints/",

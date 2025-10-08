@@ -119,18 +119,25 @@ type SyftRPCMessage struct {
 
 // NewSyftMessage creates a new SyftMessage with default values
 func NewSyftRPCMessage(
-	sender string, url utils.SyftBoxURL, method SyftMethod, body []byte, headers map[string]string,
+    sender string, url utils.SyftBoxURL, method SyftMethod, body []byte, headers map[string]string,
 ) (*SyftRPCMessage, error) {
 
-	created_at := time.Now().UTC()
+    created_at := time.Now().UTC()
 
-	// Timezone is UTC by default for SyftRPC messages
+    // Timezone is UTC by default for SyftRPC messages
 
-	msg := &SyftRPCMessage{
-		ID:      uuid.New(),
-		Sender:  sender,
-		URL:     url,
-		Body:    body,
+    // Ensure headers is initialized and include the original URL as a header
+    if headers == nil {
+        headers = make(map[string]string)
+    }
+    // Pass through the original URL so downstream apps can read it from the request file
+    headers["x-syft-url"] = url.String()
+
+    msg := &SyftRPCMessage{
+        ID:      uuid.New(),
+        Sender:  sender,
+        URL:     url,
+        Body:    body,
 		Headers: headers,
 		Created: created_at,
 		Expires: created_at.Add(time.Duration(DefaultMessageExpiry)),
