@@ -1,0 +1,152 @@
+# Data Owner Client Dockerfile - builds from source like ../docker/Dockerfile.client
+# This client handles data owner operations with enhanced Python/Jupyter capabilities
+
+# Build stage
+FROM golang:1.24.3-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod and sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the client binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o syftbox ./cmd/client
+
+# Final stage
+FROM alpine:latest
+
+# Install ca-certificates, Python, and database tools
+RUN apk add --no-cache \
+    ca-certificates \
+    bash \
+    postgresql15-client \
+    python3 \
+    python3-dev \
+    curl \
+    git \
+    vim \
+    gcc \
+    g++ \
+    musl-dev \
+    libffi-dev \
+    openssl-dev \
+    make \
+    jq \
+    linux-headers \
+    postgresql15-dev \
+    build-base \
+    libpq-dev \
+    gfortran \
+    openblas-dev \
+    lapack-dev
+
+# Install uv for fast Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH and verify installation
+ENV PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
+RUN uv --version
+
+# Copy uv to system-wide location
+RUN cp $(which uv) /usr/local/bin/uv && chmod +x /usr/local/bin/uv
+
+# Create syftbox user
+RUN addgroup -g 1000 syftbox && \
+    adduser -D -s /bin/bash -u 1000 -G syftbox syftbox
+
+# Copy the binary from builder
+COPY --from=builder /app/syftbox /usr/local/bin/syftbox
+
+# Create base directories
+RUN mkdir -p /home/syftbox/.syftbox /home/syftbox/notebooks /home/syftbox/data /home/syftbox/.jupyter && \
+    chown -R syftbox:syftbox /home/syftbox
+
+# Create a virtual environment and install packages
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python packages directly
+RUN uv pip install \
+    # Jupyter ecosystem
+    jupyter>=1.0.0 \
+    jupyterlab>=4.0.0 \
+    notebook>=7.0.0 \
+    ipython-sql>=0.5.0 \
+    # Data science libraries
+    pandas>=2.0.0 \
+    numpy>=1.24.0 \
+    matplotlib>=3.6.0 \
+    seaborn>=0.12.0 \
+    scikit-learn>=1.4.0 \
+    plotly>=5.0.0 \
+    # Database connectivity
+    psycopg2-binary>=2.9.0 \
+    sqlalchemy>=2.0.0 \
+    # HTTP utilities
+    requests>=2.28.0
+
+# Switch to syftbox user after package installation
+USER syftbox
+
+# Configure Jupyter Lab
+RUN jupyter lab --generate-config && \
+    echo "c.ServerApp.ip = '0.0.0.0'" >> /home/syftbox/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.allow_root = False" >> /home/syftbox/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.token = ''" >> /home/syftbox/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.password = ''" >> /home/syftbox/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.open_browser = False" >> /home/syftbox/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.notebook_dir = '/home/syftbox/notebooks'" >> /home/syftbox/.jupyter/jupyter_lab_config.py
+
+# Switch back to root to create helper scripts
+USER root
+
+# Create basic database connection helpers (simplified)
+RUN echo '#!/bin/bash' > /usr/local/bin/db-connect-private && \
+    echo 'PGPASSWORD="${PRIVATE_DATABASE_PASSWORD}" psql -h "${PRIVATE_DATABASE_HOST}" -p "${PRIVATE_DATABASE_PORT:-5432}" -U "${PRIVATE_DATABASE_USER:-syftbox}" -d "${PRIVATE_DATABASE_NAME:-syftbox_private}" "$@"' >> /usr/local/bin/db-connect-private && \
+    chmod +x /usr/local/bin/db-connect-private
+
+RUN echo '#!/bin/bash' > /usr/local/bin/db-connect-mock && \
+    echo 'PGPASSWORD="${MOCK_DATABASE_PASSWORD}" psql -h "${MOCK_DATABASE_HOST}" -p "${MOCK_DATABASE_PORT:-5432}" -U "${MOCK_DATABASE_USER:-syftbox}" -d "${MOCK_DATABASE_NAME:-syftbox_mock}" "$@"' >> /usr/local/bin/db-connect-mock && \
+    chmod +x /usr/local/bin/db-connect-mock
+
+# Legacy db-connect script points to private database
+RUN ln -sf /usr/local/bin/db-connect-private /usr/local/bin/db-connect
+
+# Create sample notebook
+RUN echo '{"cells": [{"cell_type": "markdown", "metadata": {}, "source": ["# SyftBox Database Connection\\n", "\\n", "This notebook shows how to connect to databases from Python.\\n"]}], "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}}, "nbformat": 4, "nbformat_minor": 4}' > /home/syftbox/notebooks/database_example.ipynb
+
+# Set proper ownership
+RUN chown -R syftbox:syftbox /home/syftbox
+
+# Switch back to syftbox user
+USER syftbox
+
+# Set working directory
+WORKDIR /home/syftbox
+
+# Expose ports - SyftBox daemon API (7938) and Jupyter (8888)
+EXPOSE 7938 8888
+
+# Switch back to root to create entrypoint script
+USER root
+
+# Create default entrypoint script
+RUN echo '#!/bin/bash\nexec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Switch back to syftbox user
+USER syftbox
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command
+CMD ["syftbox", "--help"]

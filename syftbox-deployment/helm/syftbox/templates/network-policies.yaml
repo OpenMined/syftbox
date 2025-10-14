@@ -1,0 +1,333 @@
+{{- if .Values.networkPolicies.enabled }}
+---
+# Network Policy for High Pod
+# - Deny all inbound traffic (except from system namespaces for health checks)
+# - Allow outbound to Low pod and database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "syftbox.fullname" . }}-high-netpol
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: high-pod
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: high-pod
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Deny all inbound by default (no rules specified)
+  # Only allow from kube-system for health checks
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8889
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow connection to Low pod (no cache server access needed)
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: low-pod
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 8000
+  # Allow connection to database (if internal)
+  {{- if not .Values.database.external }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  {{- else }}
+  # Allow connection to external database
+  - to:
+    - namespaceSelector: {}
+      podSelector: {}
+    ports:
+    - protocol: TCP
+      port: {{ .Values.database.port }}
+  {{- end }}
+  # Allow outbound HTTPS for package downloads
+  - to:
+    - namespaceSelector: {}
+      podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+---
+# Network Policy for Low Pod
+# - Allow inbound from High pod
+# - Allow inbound from allowed IPs/DNS (if configured)
+# - Allow outbound connections
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "syftbox.fullname" . }}-low-netpol
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: low-pod
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: low-pod
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from High pod
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: high-pod
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 8000
+    - protocol: TCP
+      port: 8888
+  # Allow from kube-system for health checks
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 80
+  # Allow from ingress controller (if using LoadBalancer or Ingress)
+  {{- if or (eq .Values.lowPod.service.type "LoadBalancer") .Values.ingress.enabled }}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 80
+  {{- end }}
+  # Allow from specific IPs if configured
+  {{- if .Values.networkPolicies.allowedIPs }}
+  {{- range .Values.networkPolicies.allowedIPs }}
+  - from:
+    - ipBlock:
+        cidr: {{ . }}
+    ports:
+    - protocol: TCP
+      port: 80
+  {{- end }}
+  {{- end }}
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow connection to Cache Server (local only)
+  {{- if .Values.cacheServer.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          component: cache-server
+    ports:
+    - protocol: TCP
+      port: {{ .Values.cacheServer.service.port }}
+  {{- end }}
+  # Allow outbound connections for internet access
+  - to:
+    - namespaceSelector: {}
+      podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+---
+# Network Policy for Database (if internal)
+{{- if not .Values.database.external }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "syftbox.fullname" . }}-database-netpol
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  policyTypes:
+  - Ingress
+  ingress:
+  # Only allow from High pod
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: high-pod
+    ports:
+    - protocol: TCP
+      port: 5432
+{{- end }}
+---
+# Network Policy for Cache Server (if enabled)
+{{- if .Values.cacheServer.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "syftbox.fullname" . }}-cache-server-netpol
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    component: cache-server
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      component: cache-server
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from Low pod
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: low-pod
+    ports:
+    - protocol: TCP
+      port: {{ .Values.cacheServer.service.port }}
+  # Allow from DS VM pod (if enabled)
+  {{- if .Values.dsVm.enabled }}
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: ds-vm-pod
+    ports:
+    - protocol: TCP
+      port: {{ .Values.cacheServer.service.port }}
+  {{- end }}
+  # Allow from kube-system for health checks
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: {{ .Values.cacheServer.service.port }}
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow connection to MinIO (local only)
+  {{- if .Values.minio.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: minio
+    ports:
+    - protocol: TCP
+      port: {{ .Values.minio.service.port }}
+  {{- end }}
+  # No internet access for cache server (local cluster only)
+{{- end }}
+---
+# Network Policy for Data Scientist VM (if enabled)
+{{- if .Values.dsVm.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "syftbox.fullname" . }}-ds-vm-netpol
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ds-vm-pod
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ds-vm-pod
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from kube-system for health checks
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 8888
+  # Allow from ingress controller if public IP enabled
+  {{- if .Values.dsVm.publicIp.enabled }}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8888
+  {{- end }}
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow connection to Cache Server (local only)
+  {{- if .Values.cacheServer.enabled }}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+          component: cache-server
+    ports:
+    - protocol: TCP
+      port: {{ .Values.cacheServer.service.port }}
+  {{- end }}
+  # Allow outbound connections for internet access (if needed for data science work)
+  - to:
+    - namespaceSelector: {}
+      podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+{{- end }}
+{{- end }}
