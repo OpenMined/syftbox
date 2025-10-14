@@ -19,6 +19,10 @@ type ClientDaemon struct {
 
 func NewClientDaemon(config *controlplane.CPServerConfig) (*ClientDaemon, error) {
 	mgr := datasitemgr.New()
+	// Pass the config path to the datasite manager
+	if config.ConfigPath != "" {
+		mgr.SetConfigPath(config.ConfigPath)
+	}
 	cps, err := controlplane.NewControlPlaneServer(config, mgr)
 	if err != nil {
 		return nil, err
