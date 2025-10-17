@@ -26,7 +26,8 @@ func TestWriteFileWithIntegrityCheck(t *testing.T) {
 		hasher.Write(content)
 		expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-		err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 		assert.NoError(t, err)
 
 		// Verify file exists and has correct content
@@ -41,7 +42,8 @@ func TestWriteFileWithIntegrityCheck(t *testing.T) {
 		content := []byte("Hello, World!")
 		wrongETag := "wrongetag123"
 
-		err := writeFileWithIntegrityCheck(filePath, content, wrongETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, wrongETag)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "Integrity check failed")
 
@@ -60,7 +62,8 @@ func TestWriteFileWithIntegrityCheck(t *testing.T) {
 		hasher.Write(content)
 		expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-		err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 		assert.NoError(t, err)
 
 		// Verify file exists in nested directory
@@ -78,7 +81,8 @@ func TestWriteFileWithIntegrityCheck(t *testing.T) {
 		hasher.Write(content)
 		expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-		err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 		assert.NoError(t, err)
 
 		// Verify empty file was created
@@ -108,7 +112,8 @@ func TestWriteFileWithIntegrityCheckConcurrency(t *testing.T) {
 				hasher.Write(content)
 				expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-				err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+				tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 				if err != nil {
 					errors <- err
 				}
@@ -150,7 +155,8 @@ func TestWriteFileWithIntegrityCheckConcurrency(t *testing.T) {
 				hasher.Write(content)
 				expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-				err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+				tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 				if err != nil {
 					errors <- err
 				}
@@ -230,7 +236,8 @@ func TestWriteFileWithIntegrityCheckRaceCondition(t *testing.T) {
 		// Start writer
 		go func() {
 			close(writeStarted)
-			err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+			tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 			if err != nil {
 				t.Errorf("Write error: %v", err)
 			}
@@ -259,16 +266,25 @@ func TestWriteFileWithIntegrityCheckTempFileCleanup(t *testing.T) {
 		hasher.Write(content)
 		expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-		err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 		assert.NoError(t, err)
 
 		// Check that no temp files remain in the directory
 		entries, err := os.ReadDir(tempDir)
 		require.NoError(t, err)
 
+		// Should only have the final file and possibly the .tmp directory
 		for _, entry := range entries {
-			assert.True(t, entry.Name() == "cleanup_test.txt",
-				"Temp file not cleaned up: %s", entry.Name())
+			assert.True(t, entry.Name() == "cleanup_test.txt" || entry.Name() == ".tmp",
+				"Unexpected file: %s", entry.Name())
+		}
+
+		// Check inside .tmp directory - should be empty or not exist
+		if _, err := os.Stat(tmpDir); err == nil {
+			tmpEntries, err := os.ReadDir(tmpDir)
+			require.NoError(t, err)
+			assert.Empty(t, tmpEntries, "Temp directory should be empty, found: %v", tmpEntries)
 		}
 	})
 
@@ -278,14 +294,20 @@ func TestWriteFileWithIntegrityCheckTempFileCleanup(t *testing.T) {
 		content := []byte("Error cleanup test content")
 		wrongETag := "wrongetag"
 
-		err := writeFileWithIntegrityCheck(filePath, content, wrongETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, wrongETag)
 		assert.Error(t, err)
 
-		// Check that no temp files remain in the directory
-		entries, err := os.ReadDir(tempDir)
-		require.NoError(t, err)
+		// Check that final file was not created
+		_, err = os.Stat(filePath)
+		assert.True(t, os.IsNotExist(err), "Final file should not exist after error")
 
-		assert.Empty(t, entries, "Temp files should be cleaned up after error, found: %v", entries)
+		// Check .tmp directory - should be empty if it exists
+		if _, err := os.Stat(tmpDir); err == nil {
+			tmpEntries, err := os.ReadDir(tmpDir)
+			require.NoError(t, err)
+			assert.Empty(t, tmpEntries, "Temp directory should be empty after error, found: %v", tmpEntries)
+		}
 	})
 }
 
@@ -304,7 +326,8 @@ func TestWriteFileWithIntegrityCheckLargeFile(t *testing.T) {
 		hasher.Write(content)
 		expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
-		err := writeFileWithIntegrityCheck(filePath, content, expectedETag)
+		tmpDir := filepath.Join(tempDir, ".tmp")
+		err := writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 		assert.NoError(t, err)
 
 		// Verify file size and content
@@ -364,7 +387,8 @@ func TestWriteFileWithIntegrityCheckSyftTmpFiltering(t *testing.T) {
 	expectedETag := fmt.Sprintf("%x", hasher.Sum(nil))
 
 	// Write file using our atomic write function
-	err = writeFileWithIntegrityCheck(filePath, content, expectedETag)
+	tmpDir := filepath.Join(tempDir, ".tmp")
+	err = writeFileWithIntegrityCheck(tmpDir, filePath, content, expectedETag)
 	require.NoError(t, err)
 
 	// Collect events for a short period

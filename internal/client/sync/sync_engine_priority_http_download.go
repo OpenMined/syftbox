@@ -32,8 +32,12 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	// a priority file was just downloaded, we don't wanna fire an event for THIS write
 	se.watcher.IgnoreOnce(rpcLocalAbsPath)
 
+	// temporary directory for the file
+	tmpDir := filepath.Join(se.workspace.Root, ".syft-tmp")
+
 	// write the RPCMsg to the file
 	err := writeFileWithIntegrityCheck(
+		tmpDir,
 		rpcLocalAbsPath,
 		httpMsg.Body,
 		httpMsg.Etag,

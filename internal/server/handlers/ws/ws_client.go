@@ -83,9 +83,9 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 		c.closeConnection(websocket.StatusNormalClosure, shutdownReason)
 	}()
 
-	var data *syftmsg.Message
-
 	for {
+		var data *syftmsg.Message
+
 		err := wsjson.Read(ctx, c.conn, &data)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
