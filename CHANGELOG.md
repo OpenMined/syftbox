@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### WebSocket Pointer Aliasing Bug Fix & File Write Improvements *(2025-10-17)*
+
+#### Fixed
+- **Critical Pointer Aliasing Bug**: Fixed critical bug in both client and server WebSocket handlers where message pointer was declared outside the read loop, causing multiple messages to reference the same memory location
+  - **Affected Files**: `internal/syftsdk/events_socket.go` (client) and `internal/server/handlers/ws/ws_client.go` (server)
+  - **Symptom**: Multiple messages received in rapid succession would appear as duplicates of the last message
+  - **Impact**: Earlier messages in burst were completely lost, later messages appeared as duplicates
+  - **Root Cause**: Variable declaration outside loop caused all channel buffer slots to reference the same pointer
+  - **Solution**: Moved `var data *syftmsg.Message` declaration inside the loop so each message gets a unique pointer
+- **Message Loss**: Eliminated message loss during rapid websocket message bursts
+- **Duplicate Processing**: Fixed underlying cause of duplicate message processing
+
+#### Enhanced
+- **Temporary File Management**: Improved `writeFileWithIntegrityCheck` to use dedicated `.syft-tmp` directory for temporary files instead of creating them in the target file's directory
+  - Provides better organization and isolation of temporary files
+  - Prevents potential conflicts with sync operations
+  - Updated all callers (`handlePriorityDownload`, `processHttpMessage`) and tests to use the new signature
+- **Test Coverage**: Enhanced test assertions to account for new temporary file directory structure
+
+#### Updated
+- **WebSocket Dependency**: Updated `github.com/coder/websocket` from v1.8.13 to v1.8.14 for latest bug fixes and improvements
+
 ## [0.8.6] - 2025-10-08
 
 ### [PR #81](https://github.com/OpenMined/syftbox/pull/81) - Tweaks to Race Condition Changes *(2025-10-08)*
