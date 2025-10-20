@@ -2,10 +2,12 @@ package sync
 
 import (
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/openmined/syftbox/internal/utils"
 )
@@ -64,6 +66,9 @@ func writeFileWithIntegrityCheck(tmpDirPath string, path string, body []byte, ex
 
 	// Rename the temp file to the final path (atomic operation)
 	if err := os.Rename(tempPath, path); err != nil {
+		if errors.Is(err, syscall.EXDEV) {
+			panic(fmt.Sprintf("cross-device rename detected between %s and %s: %v", tempPath, path, err))
+		}
 		return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
 	}
 
