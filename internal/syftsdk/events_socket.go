@@ -77,8 +77,6 @@ func (c *wsClient) readLoop(ctx context.Context) {
 		c.closeConnection(websocket.StatusNormalClosure, "shutdown")
 	}()
 
-	var data *syftmsg.Message
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -88,6 +86,10 @@ func (c *wsClient) readLoop(ctx context.Context) {
 			// Continue with read attempt
 		}
 
+		// IMPORTANT: Declare data inside the loop so each message gets its own pointer
+		// Previously this was declared outside the loop, causing pointer aliasing where
+		// multiple channel buffer slots would reference the same memory location
+		var data *syftmsg.Message
 		err := wsjson.Read(ctx, c.conn, &data)
 		if err != nil {
 			if !isWSExpectedCloseError(err) {
@@ -95,7 +97,6 @@ func (c *wsClient) readLoop(ctx context.Context) {
 			}
 			return
 		}
-		slog.Debug("socket RECV", "id", data.Id, "type", data.Type)
 
 		select {
 		case <-c.closing:

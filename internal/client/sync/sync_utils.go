@@ -2,29 +2,35 @@ package sync
 
 import (
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/openmined/syftbox/internal/utils"
 )
 
 // writeFileWithIntegrityCheck writes the body to the file at path and verifies the integrity of the file
 // Uses atomic write with temporary file to prevent race conditions
-func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) error {
+func writeFileWithIntegrityCheck(tmpDirPath string, path string, body []byte, expectedETag string) error {
 	if err := utils.EnsureParent(path); err != nil {
 		return fmt.Errorf("Failed to ensure parent: %w", err)
 	}
 
 	// Create temporary file in same directory to ensure atomic operation
 	// Uses pattern *.syft.tmp.* which is part of syftignore list to be ignored by sync engine
-	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".syft.tmp.*")
+	err := utils.EnsureDir(tmpDirPath)
+	if err != nil {
+		return fmt.Errorf("Failed to ensure temp directory: %w", err)
+	}
+	tempFile, err := os.CreateTemp(tmpDirPath, filepath.Base(path)+".syft.tmp.*")
 	if err != nil {
 		return fmt.Errorf("Failed to create temp file: %w", err)
 	}
-
 	tempPath := tempFile.Name()
+
 	success := false
 
 	// Cleanup temp file only on failure
@@ -60,6 +66,9 @@ func writeFileWithIntegrityCheck(path string, body []byte, expectedETag string) 
 
 	// Rename the temp file to the final path (atomic operation)
 	if err := os.Rename(tempPath, path); err != nil {
+		if errors.Is(err, syscall.EXDEV) {
+			panic(fmt.Sprintf("cross-device rename detected between %s and %s: %v", tempPath, path, err))
+		}
 		return fmt.Errorf("Failed to rename temp file to %s: %w", path, err)
 	}
 

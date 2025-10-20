@@ -2,6 +2,7 @@ package sync
 
 import (
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -28,8 +29,12 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	// a priority file was just downloaded, we don't wanna fire an event for THIS write
 	se.watcher.IgnoreOnce(localAbsPath)
 
-	// write the file to the local path
-	err := writeFileWithIntegrityCheck(localAbsPath, createMsg.Content, createMsg.ETag)
+	// temporary directory for the file
+	tmpDir := filepath.Join(se.workspace.Root, ".syft-tmp")
+
+	// write the file to the temporary directory and
+	// then move it to the local path
+	err := writeFileWithIntegrityCheck(tmpDir, localAbsPath, createMsg.Content, createMsg.ETag)
 	if err != nil {
 		se.syncStatus.SetError(syncRelPath, err)
 		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", err)
