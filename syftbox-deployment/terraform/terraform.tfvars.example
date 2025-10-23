@@ -1,0 +1,14 @@
+# GCP Project Configuration
+project_id = "your-gcp-project-id"
+
+# Region and Zone
+region = "us-central1"
+zone   = "us-central1-a"
+
+# Cluster Configuration
+cluster_name = "syftbox-cluster"
+node_count   = 3
+machine_type = "e2-standard-4"
+
+# Database Configuration
+database_tier = "db-f1-micro"
