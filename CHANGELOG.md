@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### WebSocket Pointer Aliasing Bug Fix & File Write Improvements *(2025-10-17)*
+## [0.8.7] - 2025-10-27
+
+### [PR #84] 9https://github.com/OpenMined/syftbox/pull/84) WebSocket Pointer Aliasing Bug Fix & File Write Improvements *(2025-10-17)*
 
 #### Fixed
 - **Critical Pointer Aliasing Bug**: Fixed critical bug in both client and server WebSocket handlers where message pointer was declared outside the read loop, causing multiple messages to reference the same memory location
