@@ -8,6 +8,18 @@ setup_client() {
     local client_dir="/data/clients/${email}"
     local config_file="${client_dir}/config.json"
     local data_dir="${client_dir}/SyftBox"
+    local syftbox_mount_dir="/root/SyftBox"
+    local syftbox_is_mount=0
+
+    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "${syftbox_mount_dir}"; then
+        syftbox_is_mount=1
+    elif [ -d "${syftbox_mount_dir}" ] && [ ! -L "${syftbox_mount_dir}" ]; then
+        syftbox_is_mount=1
+    fi
+
+    if [ "${syftbox_is_mount}" -eq 1 ]; then
+        data_dir="${syftbox_mount_dir}"
+    fi
     
     # Create directories if they don't exist
     mkdir -p "${client_dir}"
@@ -34,7 +46,9 @@ EOF
     
     # Create symlinks for easier access in container
     ln -sf "${config_file}" /root/.syftbox/config.json
-    ln -sf "${data_dir}" /root/SyftBox
+    if [ "${syftbox_is_mount}" -eq 0 ]; then
+        ln -sf "${data_dir}" "${syftbox_mount_dir}"
+    fi
     
     echo "Client setup for ${email}:"
     echo "  Config: ${config_file}"
