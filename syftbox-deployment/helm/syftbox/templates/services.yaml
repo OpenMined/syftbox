@@ -1,0 +1,41 @@
+# Additional services and networking configuration
+
+---
+# NetworkPolicy for pod communication (optional, for security)
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "syftbox.fullname" . }}-network-policy
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+    - namespaceSelector:
+        matchLabels:
+          name: {{ .Values.global.namespace }}
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "syftbox.selectorLabels" . | nindent 10 }}
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 53    # DNS
+    - protocol: UDP
+      port: 53    # DNS
+{{- end }}

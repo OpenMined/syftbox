@@ -1,0 +1,269 @@
+# Global configuration
+global:
+  imageRegistry: docker.io/openmined
+  namespace: syftbox
+  imagePullPolicy: Always
+  environment: PROD  # DEV, PROD
+
+# High Pod (Private) configuration
+highPod:
+  enabled: true  # High pod always enabled by default
+  replicaCount: 1
+  image:
+    repository: syftbox-high
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP  # Internal only
+    port: 8889
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+  persistence:
+    enabled: true
+    dataSize: 10Gi
+    notebooksSize: 10Gi
+    storageClass: standard
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1000
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Low Pod (Public) configuration with SyftBox
+lowPod:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: syftbox-low
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP  # Internal only - access via bastion
+    port: 80
+  # SyftBox client configuration
+  syftbox:
+    email: "lowpod@syftbox.local"  # Default email for Low pod SyftBox client
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1"
+  persistence:
+    enabled: true
+    dataSize: 5Gi
+    notebooksSize: 5Gi
+    storageClass: standard
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    fsGroup: 0
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: false
+    runAsUser: 0
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Data Scientist VM Pod configuration (optional)
+dsVm:
+  enabled: false  # Disabled by default, can be enabled with --with-ds-vm flag
+  replicaCount: 1
+  image:
+    repository: syftbox-ds-vm
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP  # Default to ClusterIP, can be LoadBalancer if public IP enabled
+    port: 8888
+  # SyftBox client configuration for Data Scientist VM
+  syftbox:
+    email: "datascientist@syftbox.local"  # Default email for DS VM SyftBox client
+  # Public IP configuration
+  publicIp:
+    enabled: false  # If true, service becomes LoadBalancer and no bastion needed
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+  persistence:
+    enabled: true
+    dataSize: 10Gi
+    notebooksSize: 10Gi
+    syftboxSize: 5Gi  # Separate volume for SyftBox data
+    storageClass: standard
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    fsGroup: 0
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: false
+    runAsUser: 0
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Database configuration (single private database)
+database:
+  enabled: true
+  external: true  # Use GCP Cloud SQL by default
+  host: ""  # Will be set by deploy script
+  port: 5432
+  name: syftbox_private
+  username: syftbox
+  password: ""  # Will be set by deploy script
+  persistence:
+    size: 20Gi
+    storageClass: standard
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+  # Mock database configuration (for testing/public data)
+  mock:
+    enabled: false  # Disabled by default
+    host: ""  # Will be set by deploy script if enabled
+    port: 5432
+    name: syftbox_mock
+    username: syftbox_mock
+    password: ""  # Will be set by deploy script if enabled
+
+# Network Policies
+networkPolicies:
+  enabled: true
+  # List of allowed IPs/CIDRs that can access Low pod from internet
+  allowedIPs: []
+  # Examples:
+  # - "1.2.3.4/32"  # Single IP
+  # - "10.0.0.0/8"  # IP range
+
+# Ingress configuration
+ingress:
+  enabled: false
+
+# Cache Server configuration (local cluster only)
+cacheServer:
+  enabled: false  # Disabled by default, can be enabled with --with-cache flag
+  replicaCount: 1
+  image:
+    repository: syftbox-server
+    tag: latest
+    pullPolicy: Always
+  domain: syftbox.local  # mirrors SYFTBOX_HTTP_DOMAIN
+  auth:
+    enabled: false  # mirrors SYFTBOX_AUTH_ENABLED=0
+  service:
+    type: ClusterIP  # Local cluster only - no internet access
+    port: 8080
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# Data Owner configuration (legacy)
+dataOwner:
+  enabled: false  # Disabled by default, can be enabled with --with-cache flag
+  replicaCount: 1
+  jupyter:
+    enabled: true
+    token: ""  # Empty token for easy access
+  syftbox:
+    enabled: true  # Enable syftbox client
+    email: "dataowner@syftbox.local"  # Default email, can be overridden
+    workingDir: /home/syftbox
+  service:
+    type: ClusterIP
+    ports:
+      syftbox: 7938
+      jupyter: 8888
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: standard
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000  # syftbox user
+    fsGroup: 1000
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: true
+    runAsUser: 1000
+  env: []
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# MinIO (Object Storage)
+minio:
+  enabled: true  # Enable MinIO for cache server
+  auth:
+    rootUser: syftbox
+    rootPassword: changeMe123!
+  defaultBuckets: syftbox
+  bucketName: syftbox  # Required for cache server
+  region: us-central1  # Required for cache server
+  accessKey: syftbox-access
+  secretKey: syftbox-secret-key
+  persistence:
+    enabled: true
+    size: 10Gi
+  service:
+    type: ClusterIP
+    port: 9000
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+  automountServiceAccountToken: false
+
+# Image pull secrets
+imagePullSecrets: []
+
+# Pod annotations
+podAnnotations: {}
+
+# Additional labels
+labels: {}

@@ -1,0 +1,119 @@
+{{- if .Values.database.enabled }}
+---
+# Secret for database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "syftbox.fullname" . }}-db-secret
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+type: Opaque
+stringData:
+  host: {{ .Values.database.host | quote }}
+  port: {{ .Values.database.port | quote }}
+  database: {{ .Values.database.name | quote }}
+  username: {{ .Values.database.username | quote }}
+  password: {{ .Values.database.password | quote }}
+  {{- if .Values.database.external }}
+  # For external database, construct the URL
+  url: "postgresql://{{ .Values.database.username }}:{{ .Values.database.password }}@{{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}"
+  {{- else }}
+  # For internal database, use the service name
+  url: "postgresql://{{ .Values.database.username }}:{{ .Values.database.password }}@{{ include "syftbox.fullname" . }}-database:5432/{{ .Values.database.name }}"
+  {{- end }}
+{{- if not .Values.database.external }}
+---
+# If using internal database, deploy PostgreSQL
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "syftbox.fullname" . }}-database
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  serviceName: {{ include "syftbox.fullname" . }}-database
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "syftbox.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        {{- include "syftbox.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:15-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+        env:
+        - name: POSTGRES_DB
+          value: {{ .Values.database.name | quote }}
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "syftbox.fullname" . }}-db-secret
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "syftbox.fullname" . }}-db-secret
+              key: password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        livenessProbe:
+          tcpSocket:
+            port: postgresql
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U $POSTGRES_USER -d $POSTGRES_DB
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        resources:
+          {{- toYaml .Values.database.resources | nindent 12 }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: {{ .Values.database.persistence.size }}
+      {{- if .Values.database.persistence.storageClass }}
+      storageClassName: {{ .Values.database.persistence.storageClass }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "syftbox.fullname" . }}-database
+  labels:
+    {{- include "syftbox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgresql
+      protocol: TCP
+      name: postgresql
+  selector:
+    {{- include "syftbox.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+{{- end }}
+{{- end }}

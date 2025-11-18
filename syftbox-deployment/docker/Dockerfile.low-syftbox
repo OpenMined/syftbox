@@ -1,0 +1,275 @@
+# Low (Public) Pod with SyftBox Client
+# This pod handles web services AND runs a SyftBox client that registers to the cache server
+# Multi-stage build: Go binary first, then Python environment
+
+# Build stage for SyftBox client
+FROM golang:1.24.3-alpine AS syftbox-builder
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod and sum files
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download
+
+# Copy the source code
+COPY . .
+
+# Build the client binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o syftbox ./cmd/client
+
+# Final stage - Python environment with web services + SyftBox
+FROM python:3.11-slim
+
+# Install system dependencies and tools
+RUN apt-get update && apt-get install -y \
+    # Web server for serving content
+    nginx \
+    # PostgreSQL client (for any needed DB operations)
+    postgresql-client \
+    # Basic utilities
+    curl \
+    wget \
+    vim \
+    nano \
+    git \
+    jq \
+    htop \
+    net-tools \
+    iputils-ping \
+    dnsutils \
+    telnet \
+    # Build tools for Python packages
+    build-essential \
+    gcc \
+    g++ \
+    # SSL/TLS support
+    ca-certificates \
+    openssl \
+    # Process management
+    supervisor \
+    # Shell
+    bash \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for fast Python package management
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Add uv to PATH
+ENV PATH="/root/.cargo/bin:/root/.local/bin:$PATH"
+
+# Copy SyftBox binary from builder stage
+COPY --from=syftbox-builder /app/syftbox /usr/local/bin/syftbox
+
+# Create working directory
+WORKDIR /app
+
+# Create virtual environment using uv
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python packages for web services and data science
+RUN uv pip install \
+    # Web frameworks
+    fastapi \
+    uvicorn[standard] \
+    # Jupyter ecosystem
+    jupyterlab==4.0.9 \
+    jupyter \
+    ipykernel \
+    # HTTP utilities
+    requests \
+    httpx \
+    aiohttp \
+    # Data handling for SyftBox compatibility
+    pandas \
+    numpy \
+    # API documentation
+    pydantic \
+    # Utilities
+    python-dotenv \
+    pyyaml \
+    python-multipart \
+    # Security
+    python-jose[cryptography] \
+    passlib[bcrypt] \
+    # Development tools
+    pytest \
+    black \
+    pylint
+
+# Create appuser for running services
+RUN useradd -m -s /bin/bash -u 1000 appuser
+
+# Create necessary directories
+RUN mkdir -p /home/appuser/notebooks /home/appuser/data /home/appuser/.jupyter \
+    /home/appuser/api /home/appuser/.syftbox /home/appuser/syftbox-data \
+    /var/log/nginx /etc/nginx/sites-available /etc/nginx/sites-enabled && \
+    chown -R appuser:appuser /home/appuser
+
+# Configure Jupyter Lab (no authentication for internal use)
+USER appuser
+RUN jupyter lab --generate-config && \
+    echo "c.ServerApp.ip = '0.0.0.0'" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.allow_root = False" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.token = ''" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.password = ''" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.open_browser = False" >> /home/appuser/.jupyter/jupyter_lab_config.py && \
+    echo "c.ServerApp.notebook_dir = '/home/appuser/notebooks'" >> /home/appuser/.jupyter/jupyter_lab_config.py
+
+# Switch back to root for system configurations
+USER root
+
+# Configure nginx for reverse proxy
+RUN echo 'server {' > /etc/nginx/sites-available/default && \
+    echo '    listen 80 default_server;' >> /etc/nginx/sites-available/default && \
+    echo '    listen [::]:80 default_server;' >> /etc/nginx/sites-available/default && \
+    echo '    server_name _;' >> /etc/nginx/sites-available/default && \
+    echo '    ' >> /etc/nginx/sites-available/default && \
+    echo '    location / {' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_pass http://localhost:8000;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_http_version 1.1;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header Upgrade $http_upgrade;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header Connection "upgrade";' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header Host $host;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header X-Real-IP $remote_addr;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header X-Forwarded-Proto $scheme;' >> /etc/nginx/sites-available/default && \
+    echo '    }' >> /etc/nginx/sites-available/default && \
+    echo '    ' >> /etc/nginx/sites-available/default && \
+    echo '    location /jupyter/ {' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_pass http://localhost:8888/;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_http_version 1.1;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header Upgrade $http_upgrade;' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header Connection "upgrade";' >> /etc/nginx/sites-available/default && \
+    echo '        proxy_set_header Host $host;' >> /etc/nginx/sites-available/default && \
+    echo '    }' >> /etc/nginx/sites-available/default && \
+    echo '}' >> /etc/nginx/sites-available/default
+
+# Create a simple FastAPI application
+RUN echo 'from fastapi import FastAPI, HTTPException' > /home/appuser/api/main.py && \
+    echo 'from fastapi.middleware.cors import CORSMiddleware' >> /home/appuser/api/main.py && \
+    echo 'import os' >> /home/appuser/api/main.py && \
+    echo '' >> /home/appuser/api/main.py && \
+    echo 'app = FastAPI(title="Low Pod API", version="1.0.0")' >> /home/appuser/api/main.py && \
+    echo '' >> /home/appuser/api/main.py && \
+    echo '# Configure CORS' >> /home/appuser/api/main.py && \
+    echo 'app.add_middleware(' >> /home/appuser/api/main.py && \
+    echo '    CORSMiddleware,' >> /home/appuser/api/main.py && \
+    echo '    allow_origins=["*"],' >> /home/appuser/api/main.py && \
+    echo '    allow_credentials=True,' >> /home/appuser/api/main.py && \
+    echo '    allow_methods=["*"],' >> /home/appuser/api/main.py && \
+    echo '    allow_headers=["*"],' >> /home/appuser/api/main.py && \
+    echo ')' >> /home/appuser/api/main.py && \
+    echo '' >> /home/appuser/api/main.py && \
+    echo '@app.get("/")' >> /home/appuser/api/main.py && \
+    echo 'def read_root():' >> /home/appuser/api/main.py && \
+    echo '    return {"message": "Low Pod with SyftBox API is running", "pod": "low", "status": "healthy"}' >> /home/appuser/api/main.py && \
+    echo '' >> /home/appuser/api/main.py && \
+    echo '@app.get("/health")' >> /home/appuser/api/main.py && \
+    echo 'def health_check():' >> /home/appuser/api/main.py && \
+    echo '    return {"status": "healthy", "pod": "low", "syftbox": "enabled"}' >> /home/appuser/api/main.py && \
+    chown appuser:appuser /home/appuser/api/main.py
+
+# Create SyftBox client setup script
+RUN echo '#!/bin/bash' > /usr/local/bin/setup-syftbox-client && \
+    echo 'set -e' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'echo "Setting up SyftBox client for Low pod..."' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo '# Set default values' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'EMAIL="${SYFTBOX_EMAIL:-lowpod@syftbox.local}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'SERVER_URL="${SYFTBOX_SERVER_URL:-http://syftbox-cache-server:8080}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'DATA_DIR="/home/appuser/syftbox-data"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'CONFIG_DIR="/home/appuser/.syftbox"' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo '# Create config directory' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'mkdir -p "${CONFIG_DIR}" "${DATA_DIR}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'chown -R appuser:appuser "${CONFIG_DIR}" "${DATA_DIR}"' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo '# Create SyftBox config file' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'cat > "${CONFIG_DIR}/config.json" << EOF' >> /usr/local/bin/setup-syftbox-client && \
+    echo '{' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "data_dir": "${DATA_DIR}",' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "email": "${EMAIL}",' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "server_url": "${SERVER_URL}",' >> /usr/local/bin/setup-syftbox-client && \
+    echo '  "client_url": "http://localhost:7938"' >> /usr/local/bin/setup-syftbox-client && \
+    echo '}' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'EOF' >> /usr/local/bin/setup-syftbox-client && \
+    echo '' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'chown appuser:appuser "${CONFIG_DIR}/config.json"' >> /usr/local/bin/setup-syftbox-client && \
+    echo 'echo "SyftBox client configured for email: ${EMAIL}"' >> /usr/local/bin/setup-syftbox-client && \
+    chmod +x /usr/local/bin/setup-syftbox-client
+
+# Create supervisord configuration with SyftBox
+RUN echo '[supervisord]' > /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'nodaemon=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'logfile=/tmp/supervisord.log' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'pidfile=/tmp/supervisord.pid' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=root' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:nginx]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/usr/sbin/nginx -g "daemon off;"' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=root' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:fastapi]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/opt/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'directory=/home/appuser/api' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:jupyter]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/opt/venv/bin/jupyter lab --ip=0.0.0.0 --port=8888' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'directory=/home/appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'environment=HOME="/home/appuser"' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:syftbox-setup]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/usr/local/bin/setup-syftbox-client' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=false' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'startsecs=0' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=root' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo '[program:syftbox-client]' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'command=/usr/local/bin/syftbox client --config-path=/home/appuser/.syftbox/config.json' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'directory=/home/appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'user=appuser' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'autorestart=true' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'depends_on=syftbox-setup' >> /etc/supervisor/conf.d/supervisord.conf && \
+    echo 'environment=HOME="/home/appuser"' >> /etc/supervisor/conf.d/supervisord.conf
+
+# Create health check script
+RUN echo '#!/bin/bash' > /usr/local/bin/health-check && \
+    echo 'curl -f http://localhost/health || exit 1' >> /usr/local/bin/health-check && \
+    chmod +x /usr/local/bin/health-check
+
+# Create entrypoint script
+RUN echo '#!/bin/bash' > /entrypoint.sh && \
+    echo 'echo "Starting Low Pod with SyftBox..."' >> /entrypoint.sh && \
+    echo 'echo "Web API will be available on port 80"' >> /entrypoint.sh && \
+    echo 'echo "Jupyter Lab will be available on port 80 at /jupyter/"' >> /entrypoint.sh && \
+    echo 'echo "SyftBox client will connect to: ${SYFTBOX_SERVER_URL:-http://syftbox-cache-server:8080}"' >> /entrypoint.sh && \
+    echo 'echo "SyftBox email: ${SYFTBOX_EMAIL:-lowpod@syftbox.local}"' >> /entrypoint.sh && \
+    echo 'exec "$@"' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+# Expose ports - Web (80), API (8000), Jupyter (8888), SyftBox daemon (7938)
+EXPOSE 80 8000 8888 7938
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command runs supervisord to manage all services
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

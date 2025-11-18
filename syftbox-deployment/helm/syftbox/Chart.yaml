@@ -1,0 +1,13 @@
+apiVersion: v2
+name: syftbox
+description: A simplified Helm chart for SyftBox deployment on GCP
+type: application
+version: 1.0.0
+appVersion: "1.0"
+keywords:
+  - syftbox
+  - data
+  - kubernetes
+maintainers:
+  - name: SyftBox Team
+    email: support@syftbox.io
