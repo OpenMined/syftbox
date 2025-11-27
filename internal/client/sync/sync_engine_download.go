@@ -22,6 +22,12 @@ const (
 	downloadBatchSize = 100
 )
 
+// These indirections allow tests to simulate platform-specific rename behavior.
+var (
+	renameFile  = os.Rename
+	runtimeGOOS = runtime.GOOS
+)
+
 // downloadResult represents the outcome of a single file download operation.
 type downloadResult struct {
 	Path     string
@@ -300,14 +306,14 @@ func copyLocal(src, dst string) error {
 	}
 
 	// Atomic rename - file appears complete or not at all
-	if err := os.Rename(tmpDst, dst); err != nil {
+	if err := renameFile(tmpDst, dst); err != nil {
 		// On Windows, Rename does not overwrite existing files. Retry after explicit remove.
-		if runtime.GOOS == "windows" && errors.Is(err, fs.ErrExist) {
+		if runtimeGOOS == "windows" && errors.Is(err, fs.ErrExist) {
 			if rmErr := os.Remove(dst); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 				return rmErr
 			}
 
-			if err := os.Rename(tmpDst, dst); err != nil {
+			if err := renameFile(tmpDst, dst); err != nil {
 				return err
 			}
 		} else {
