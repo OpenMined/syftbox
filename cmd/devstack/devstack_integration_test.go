@@ -146,7 +146,7 @@ func TestDevstackIntegration(t *testing.T) {
 			port = clientPortStart + i
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		cState, err := startClient(clientBin, opts.root, email, serverURL, port, opts.extraEnv)
 		if err != nil {
 			t.Fatalf("start client %s: %v", email, err)
 		}
@@ -188,7 +188,7 @@ func TestDevstackIntegration(t *testing.T) {
 	src := emails[0]
 	for _, email := range emails[1:] {
 		// Check that bob has alice's public files
-		targetDir := filepath.Join(opts.root, email, "datasites", "datasites", src, "public")
+		targetDir := filepath.Join(opts.root, email, "datasites", src, "public")
 		entries, err := os.ReadDir(targetDir)
 		if err != nil {
 			t.Fatalf("read target dir %s: %v", targetDir, err)
