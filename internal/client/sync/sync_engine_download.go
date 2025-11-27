@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/dustin/go-humanize"
@@ -18,6 +20,12 @@ import (
 
 const (
 	downloadBatchSize = 100
+)
+
+// These indirections allow tests to simulate platform-specific rename behavior.
+var (
+	renameFile  = os.Rename
+	runtimeGOOS = runtime.GOOS
 )
 
 // downloadResult represents the outcome of a single file download operation.
@@ -242,25 +250,77 @@ func copyLocal(src, dst string) error {
 		return err
 	}
 
-	// Open the source file
+	// Write to unique temp file in same directory, then atomic rename
+	// This ensures the destination file appears complete or not at all
+	tmpDir := filepath.Dir(dst)
+	tmpPattern := filepath.Base(dst) + ".tmp.*"
+
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sourceFile.Close()
 
-	// Create the destination file
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	// Copy the contents
-	_, err = io.Copy(destFile, sourceFile)
+	// Get source file info to preserve permissions and mod time
+	sourceInfo, err := sourceFile.Stat()
 	if err != nil {
 		return err
 	}
 
+	// Ensure temp file is cleaned up on any failure path
+	success := false
+
+	destFile, err := os.CreateTemp(tmpDir, tmpPattern)
+	if err != nil {
+		return err
+	}
+	tmpDst := destFile.Name()
+	defer func() {
+		if !success {
+			if destFile != nil {
+				destFile.Close()
+			}
+			os.Remove(tmpDst)
+		}
+	}()
+
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		return err
+	}
+
+	if err := destFile.Sync(); err != nil {
+		return err
+	}
+
+	if err := destFile.Close(); err != nil {
+		return err
+	}
+	destFile = nil // avoid double close in deferred cleanup
+
+	// Preserve source file permissions and modification time
+	if err := os.Chmod(tmpDst, sourceInfo.Mode()); err != nil {
+		return err
+	}
+	if err := os.Chtimes(tmpDst, sourceInfo.ModTime(), sourceInfo.ModTime()); err != nil {
+		return err
+	}
+
+	// Atomic rename - file appears complete or not at all
+	if err := renameFile(tmpDst, dst); err != nil {
+		// On Windows, Rename does not overwrite existing files. Retry after explicit remove.
+		if runtimeGOOS == "windows" && errors.Is(err, fs.ErrExist) {
+			if rmErr := os.Remove(dst); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				return rmErr
+			}
+
+			if err := renameFile(tmpDst, dst); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	success = true
 	return nil
 }
