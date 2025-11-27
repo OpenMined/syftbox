@@ -184,8 +184,8 @@ func runStart(args []string) error {
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
+	serverBin := addExe(filepath.Join(binDir, "server"))
+	clientBin := addExe(filepath.Join(binDir, "syftbox"))
 
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
@@ -345,6 +345,13 @@ func buildBinary(outPath, pkg, tags string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func addExe(path string) string {
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(path), ".exe") {
+		return path + ".exe"
+	}
+	return path
 }
 
 func ensureMinioBinary(binDir string) (string, error) {

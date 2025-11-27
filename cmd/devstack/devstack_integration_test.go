@@ -57,8 +57,8 @@ func TestDevstackIntegration(t *testing.T) {
 	}
 
 	// Build binaries
-	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
+	serverBin := addExe(filepath.Join(binDir, "server"))
+	clientBin := addExe(filepath.Join(binDir, "syftbox"))
 
 	// Find repository root (go up two levels from cmd/devstack)
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
