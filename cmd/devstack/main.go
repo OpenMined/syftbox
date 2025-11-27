@@ -44,7 +44,6 @@ const (
 	serverBuildTags            = "sonic avx nomsgpack"
 	clientBuildTags            = "go_json nomsgpack"
 	stateFileName              = "state.json"
-	minioBinaryName            = "minio"
 	minioDownloadBase          = "https://dl.min.io/server/minio/release"
 	processShutdownGracePeriod = 8 * time.Second
 )
@@ -349,22 +348,24 @@ func buildBinary(outPath, pkg, tags string) error {
 }
 
 func ensureMinioBinary(binDir string) (string, error) {
-	if path, err := exec.LookPath(minioBinaryName); err == nil {
+	binName := minioBinaryName()
+
+	if path, err := exec.LookPath(binName); err == nil {
 		return path, nil
 	}
 
 	// check global cache
-	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", minioBinaryName)
+	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", binName)
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	}
 
-	target := filepath.Join(binDir, minioBinaryName)
+	target := filepath.Join(binDir, binName)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
 
-	if err := downloadMinio(target); err != nil {
+	if err := downloadMinio(target, binName); err != nil {
 		return "", err
 	}
 	// also copy to cache for future runs
@@ -380,7 +381,14 @@ func dockerAvailable() bool {
 	return err == nil
 }
 
-func downloadMinio(dest string) error {
+func minioBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "minio.exe"
+	}
+	return "minio"
+}
+
+func downloadMinio(dest, binName string) error {
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
 	var platform string
@@ -397,11 +405,13 @@ func downloadMinio(dest string) error {
 		} else {
 			platform = "linux-amd64"
 		}
+	case "windows":
+		platform = "windows-amd64"
 	default:
 		return fmt.Errorf("unsupported platform for minio download: %s/%s", osName, arch)
 	}
 
-	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, minioBinaryName)
+	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, binName)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(url) //nolint:gosec
 	if err != nil {
