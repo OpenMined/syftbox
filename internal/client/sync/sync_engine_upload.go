@@ -51,13 +51,13 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		}
 
 		if !se.workspace.IsValidPath(op.RelPath.String()) {
-			slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", "invalid datasite path")
+			slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", "invalid datasite path", "DEBUG_REJECTION_REASON", "IsValidPath_check_failed")
 			markedPath, markErr := SetMarker(localAbsPath, Rejected)
 			if markErr != nil {
 				slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr)
 				se.syncStatus.SetError(op.RelPath, markErr)
 			} else {
-				slog.Warn("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "movedTo", markedPath)
+				slog.Warn("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "movedTo", markedPath, "DEBUG_REJECTION_REASON", "IsValidPath_check_failed")
 				se.syncStatus.SetRejected(op.RelPath)
 			}
 			se.journal.Delete(op.RelPath)
@@ -86,10 +86,10 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 					if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
 						// Failed to mark as rejected, set error state
 						se.syncStatus.SetError(op.RelPath, markErr)
-						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr)
+						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
 					} else {
 						// Successfully marked as rejected
-						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath)
+						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
 						se.syncStatus.SetRejected(op.RelPath)
 					}
 					se.journal.Delete(op.RelPath)

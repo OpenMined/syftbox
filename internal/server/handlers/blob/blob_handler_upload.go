@@ -2,6 +2,7 @@ package blob
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -45,6 +46,7 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		if logger := accesslog.GetAccessLogger(ctx); logger != nil {
 			logger.LogAccess(ctx, req.Key, accesslog.AccessTypeWrite, acl.AccessWrite, false, err.Error())
 		}
+		slog.Warn("blob_upload_rejected", "path", req.Key, "user", user, "required_access", "write", "error", err.Error(), "DEBUG_REJECTION_FROM", "server_checkPermissions_upload")
 		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
 		return
 	}
