@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/dustin/go-humanize"
@@ -280,6 +282,10 @@ func copyLocal(src, dst string) error {
 		return err
 	}
 
+	if err := destFile.Sync(); err != nil {
+		return err
+	}
+
 	if err := destFile.Close(); err != nil {
 		return err
 	}
@@ -294,12 +300,19 @@ func copyLocal(src, dst string) error {
 	}
 
 	// Atomic rename - file appears complete or not at all
-	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-
 	if err := os.Rename(tmpDst, dst); err != nil {
-		return err
+		// On Windows, Rename does not overwrite existing files. Retry after explicit remove.
+		if runtime.GOOS == "windows" && errors.Is(err, fs.ErrExist) {
+			if rmErr := os.Remove(dst); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				return rmErr
+			}
+
+			if err := os.Rename(tmpDst, dst); err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 
 	success = true
