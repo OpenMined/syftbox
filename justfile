@@ -181,6 +181,39 @@ destroy-docker-server:
     docker rmi syftbox-server syftbox-client 2>/dev/null || true
     echo "Docker environment cleaned up"
 
+[group('devstack')]
+sbdev-start *ARGS:
+    GOCACHE=$(pwd)/.gocache go run ./cmd/devstack start {{ ARGS }}
+
+[group('devstack')]
+sbdev-stop *ARGS:
+    GOCACHE=$(pwd)/.gocache go run ./cmd/devstack stop {{ ARGS }}
+
+[group('devstack')]
+sbdev-status *ARGS:
+    GOCACHE=$(pwd)/.gocache go run ./cmd/devstack status {{ ARGS }}
+
+[group('devstack')]
+sbdev-logs *ARGS:
+    GOCACHE=$(pwd)/.gocache go run ./cmd/devstack logs {{ ARGS }}
+
+[group('devstack')]
+sbdev-nuke:
+    #!/bin/bash
+    set -euo pipefail
+    echo "Killing all syftbox clients/servers/minio processes..."
+    # match patterns but avoid killing current shell
+    pids=$(ps -eo pid,comm,args | grep -E 'syftbox|/minio|/server' | grep -v 'grep' | awk '{print $1}')
+    if [ -z "$pids" ]; then
+        echo "No matching processes found."
+    else
+        echo "$pids" | xargs -r kill -9
+        echo "Killed PIDs: $pids"
+    fi
+    echo "Removing sandbox directory if it exists..."
+    rm -rf sandbox
+    echo "Nuke complete."
+
 [group('dev')]
 test:
     env -i \
