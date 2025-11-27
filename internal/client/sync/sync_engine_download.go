@@ -242,25 +242,29 @@ func copyLocal(src, dst string) error {
 		return err
 	}
 
-	// Open the source file
+	// Write to temp file in same directory, then atomic rename
+	// This ensures the destination file appears complete or not at all
+	tmpDst := dst + ".tmp"
+
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer sourceFile.Close()
 
-	// Create the destination file
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	// Copy the contents
-	_, err = io.Copy(destFile, sourceFile)
+	destFile, err := os.Create(tmpDst)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	_, copyErr := io.Copy(destFile, sourceFile)
+	destFile.Close() // Close before rename
+
+	if copyErr != nil {
+		os.Remove(tmpDst)
+		return copyErr
+	}
+
+	// Atomic rename - file appears complete or not at all
+	return os.Rename(tmpDst, dst)
 }
