@@ -214,6 +214,87 @@ sbdev-nuke:
     rm -rf sandbox
     echo "Nuke complete."
 
+[group('devstack')]
+sbdev-test-perf *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running devstack performance tests..."
+    cd cmd/devstack
+    go test -v -timeout 30m {{ ARGS }}
+
+[group('devstack')]
+sbdev-test-perf-profile *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running performance tests with profiling enabled..."
+    cd cmd/devstack
+    PERF_PROFILE=1 go test -v -timeout 30m {{ ARGS }}
+    echo ""
+    echo "Profiles saved to: cmd/devstack/profiles/"
+    echo "View flame graphs: go tool pprof -http=:8080 cmd/devstack/profiles/{test}/cpu.prof"
+
+[group('devstack')]
+sbdev-test-perf-sandbox *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    sandbox_path="$(pwd)/sandbox"
+    echo "Running performance tests with persistent sandbox: $sandbox_path"
+    mkdir -p "$sandbox_path"
+    cd cmd/devstack
+    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m {{ ARGS }}
+    echo ""
+    echo "Test files preserved in: $sandbox_path"
+    echo "Files from alice: $sandbox_path/alice@example.com/datasites/datasites/alice@example.com/public/"
+    echo "Files synced to bob: $sandbox_path/bob@example.com/datasites/datasites/alice@example.com/public/"
+
+[group('devstack')]
+sbdev-list:
+    GOCACHE=$(pwd)/.gocache go run ./cmd/devstack list
+
+[group('devstack')]
+sbdev-prune:
+    GOCACHE=$(pwd)/.gocache go run ./cmd/devstack prune
+
+[group('devstack')]
+sbdev-test-cleanup:
+    #!/bin/bash
+    set -euo pipefail
+    echo "Cleaning up test sandbox..."
+    cd cmd/devstack
+    go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
+
+[group('devstack')]
+sbdev-test-ws:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running WebSocket latency test..."
+    cd cmd/devstack
+    go test -v -timeout 10m -run TestWebSocketLatency
+
+[group('devstack')]
+sbdev-test-large:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large file transfer test..."
+    cd cmd/devstack
+    go test -v -timeout 30m -run TestLargeFileTransfer
+
+[group('devstack')]
+sbdev-test-concurrent:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running concurrent upload test..."
+    cd cmd/devstack
+    go test -v -timeout 15m -run TestConcurrentUploads
+
+[group('devstack')]
+sbdev-test-many:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running many small files test..."
+    cd cmd/devstack
+    go test -v -timeout 15m -run TestManySmallFiles
+
 [group('dev')]
 test:
     env -i \

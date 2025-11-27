@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +57,8 @@ const (
 	cmdStop   command = "stop"
 	cmdStatus command = "status"
 	cmdLogs   command = "logs"
+	cmdList   command = "list"
+	cmdPrune  command = "prune"
 )
 
 type stackState struct {
@@ -116,12 +119,16 @@ type startOptions struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("usage: sbdev <start|stop|status|logs> [options]")
+		fmt.Println("usage: sbdev <start|stop|status|logs|list|prune> [options]")
 		os.Exit(1)
 	}
 
 	switch command(os.Args[1]) {
 	case cmdStart:
+		// Auto-prune before starting
+		if err := pruneDeadStacks(); err != nil {
+			log.Printf("Warning: failed to prune dead stacks: %v", err)
+		}
 		if err := runStart(os.Args[2:]); err != nil {
 			log.Fatalf("start: %v", err)
 		}
@@ -137,8 +144,17 @@ func main() {
 		if err := runLogs(os.Args[2:]); err != nil {
 			log.Fatalf("logs: %v", err)
 		}
+	case cmdList:
+		if err := listActiveStacks(); err != nil {
+			log.Fatalf("list: %v", err)
+		}
+	case cmdPrune:
+		if err := pruneDeadStacks(); err != nil {
+			log.Fatalf("prune: %v", err)
+		}
+		fmt.Println("Dead stacks pruned")
 	default:
-		fmt.Println("usage: sbdev <start|stop|status|logs> [options]")
+		fmt.Println("usage: sbdev <start|stop|status|logs|list|prune> [options]")
 		os.Exit(1)
 	}
 }
@@ -273,8 +289,14 @@ func runStart(args []string) error {
 		Created: time.Now().UTC(),
 	}
 
+	// Save to global state directory
+	if err := saveGlobalState(opts.root, &state); err != nil {
+		return fmt.Errorf("save global state: %w", err)
+	}
+
+	// Also save locally for backward compatibility
 	if err := writeState(statePath, &state); err != nil {
-		return fmt.Errorf("write state: %w", err)
+		log.Printf("Warning: failed to write local state: %v", err)
 	}
 
 	fmt.Printf("Devstack started in %s\n", opts.root)
@@ -959,6 +981,15 @@ func readState(root string) (*stackState, string, error) {
 }
 
 func statePathForRoot(root string) string {
+	// Try global state directory first
+	globalPath, err := getGlobalStatePath(root)
+	if err == nil {
+		if _, err := os.Stat(globalPath); err == nil {
+			return globalPath
+		}
+	}
+
+	// Fall back to local state
 	relayRoot := filepath.Join(root, relayDir)
 	newPath := filepath.Join(relayRoot, stateFileName)
 	if _, err := os.Stat(newPath); err == nil {
@@ -966,6 +997,206 @@ func statePathForRoot(root string) string {
 	}
 	// backward compatibility
 	return filepath.Join(root, stateFileName)
+}
+
+// getGlobalStateDir returns ~/.sbdev directory
+func getGlobalStateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home dir: %w", err)
+	}
+	return filepath.Join(home, ".sbdev"), nil
+}
+
+// getStackID creates a unique ID for a stack root path
+func getStackID(root string) string {
+	absRoot, _ := filepath.Abs(root)
+	hash := sha256.Sum256([]byte(absRoot))
+	return fmt.Sprintf("%x", hash[:8]) // Use first 8 bytes
+}
+
+// getGlobalStatePath returns the global state file path for a stack
+func getGlobalStatePath(root string) (string, error) {
+	globalDir, err := getGlobalStateDir()
+	if err != nil {
+		return "", err
+	}
+	stackID := getStackID(root)
+	return filepath.Join(globalDir, "stacks", stackID, stateFileName), nil
+}
+
+// saveGlobalState saves state to global directory
+func saveGlobalState(root string, state *stackState) error {
+	globalPath, err := getGlobalStatePath(root)
+	if err != nil {
+		return err
+	}
+
+	// Create stack directory
+	stackDir := filepath.Dir(globalPath)
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		return fmt.Errorf("create stack dir: %w", err)
+	}
+
+	// Save absolute path for reference
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	pathFile := filepath.Join(stackDir, "path.txt")
+	if err := os.WriteFile(pathFile, []byte(absRoot), 0o644); err != nil {
+		return fmt.Errorf("write path file: %w", err)
+	}
+
+	// Write state
+	return writeState(globalPath, state)
+}
+
+// pruneDeadStacks removes stacks with dead processes
+func pruneDeadStacks() error {
+	globalDir, err := getGlobalStateDir()
+	if err != nil {
+		return err
+	}
+
+	stacksDir := filepath.Join(globalDir, "stacks")
+	entries, err := os.ReadDir(stacksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		stackDir := filepath.Join(stacksDir, entry.Name())
+		statePath := filepath.Join(stackDir, stateFileName)
+
+		// Read state
+		data, err := os.ReadFile(statePath)
+		if err != nil {
+			continue
+		}
+
+		var state stackState
+		if err := json.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// Check if any processes are alive
+		allDead := true
+		if processExists(state.Server.PID) {
+			allDead = false
+		}
+		if state.Minio.PID > 0 && processExists(state.Minio.PID) {
+			allDead = false
+		}
+		for _, client := range state.Clients {
+			if processExists(client.PID) {
+				allDead = false
+				break
+			}
+		}
+
+		// Remove if all processes are dead
+		if allDead {
+			log.Printf("Pruning dead stack: %s (from %s)", entry.Name(), state.Root)
+			if err := os.RemoveAll(stackDir); err != nil {
+				log.Printf("Failed to remove %s: %v", stackDir, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// listActiveStacks shows all tracked stacks
+func listActiveStacks() error {
+	globalDir, err := getGlobalStateDir()
+	if err != nil {
+		return err
+	}
+
+	stacksDir := filepath.Join(globalDir, "stacks")
+	entries, err := os.ReadDir(stacksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("No active stacks")
+			return nil
+		}
+		return err
+	}
+
+	fmt.Printf("Active devstacks in %s:\n\n", stacksDir)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		stackDir := filepath.Join(stacksDir, entry.Name())
+		statePath := filepath.Join(stackDir, stateFileName)
+		pathFile := filepath.Join(stackDir, "path.txt")
+
+		// Read path
+		pathData, err := os.ReadFile(pathFile)
+		if err != nil {
+			continue
+		}
+		stackPath := strings.TrimSpace(string(pathData))
+
+		// Read state
+		data, err := os.ReadFile(statePath)
+		if err != nil {
+			continue
+		}
+
+		var state stackState
+		if err := json.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// Check process status
+		serverAlive := processExists(state.Server.PID)
+		minioAlive := state.Minio.PID > 0 && processExists(state.Minio.PID)
+		clientsAlive := 0
+		for _, client := range state.Clients {
+			if processExists(client.PID) {
+				clientsAlive++
+			}
+		}
+
+		status := "🟢"
+		if !serverAlive || !minioAlive || clientsAlive != len(state.Clients) {
+			status = "🔴"
+		}
+
+		fmt.Printf("%s %s\n", status, stackPath)
+		fmt.Printf("   ID: %s\n", entry.Name())
+		fmt.Printf("   Server: %d (port %d) - alive: %v\n", state.Server.PID, state.Server.Port, serverAlive)
+		fmt.Printf("   MinIO: %d (port %d) - alive: %v\n", state.Minio.PID, state.Minio.APIPort, minioAlive)
+		fmt.Printf("   Clients: %d alive / %d total\n", clientsAlive, len(state.Clients))
+		fmt.Println()
+	}
+
+	return nil
+}
+
+// processExists checks if a process is running
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
 }
 
 func killProcess(pid int) error {
