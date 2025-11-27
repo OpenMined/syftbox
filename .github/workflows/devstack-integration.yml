@@ -26,4 +26,4 @@ jobs:
       uses: extractions/setup-just@v2
 
     - name: Run devstack integration test
-      run: go test -v -timeout 5m -run TestDevstackIntegration ./cmd/devstack/
+      run: go test -v -timeout 5m -tags integration -run TestDevstackIntegration ./cmd/devstack/
