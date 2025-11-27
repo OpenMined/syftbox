@@ -116,6 +116,31 @@ SSH into the running MinIO container:
 just ssh-minio
 ```
 
+### Devstack sandbox (no-docker by default)
+
+Spin up an isolated stack (MinIO + server + multiple client daemons) with random ports and per-email sandboxes under `sandbox/`:
+```sh
+just devstack-start --path sandbox --random-ports --client alice@example.com --client bob@example.com
+```
+What you get:
+- Non-client assets live under `sandbox/relay/`:
+  - `relay/server/{config.yaml,data,logs}`
+  - `relay/minio/{data,logs}` (MinIO binary cached in `relay/bin/` if needed)
+  - `relay/state.json`
+- Each client at `sandbox/<email>/.syftbox/config.json`, `sandbox/<email>/datasites`, logs in `sandbox/<email>/.syftbox/logs`
+- Binaries built from this repo into `sandbox/relay/bin/server` and `sandbox/relay/bin/syftbox`
+- A readiness check writes a probe file into the first client’s `public/` and waits for it to appear in all other clients; use `--skip-sync-check` to bypass.
+`sbdev` is the underlying helper binary (built via `go run ./cmd/devstack` through the just recipes).
+
+Other helpers:
+- `just devstack-status --path sandbox`
+- `just devstack-logs --path sandbox`
+- `just devstack-stop --path sandbox` (stops processes and removes state.json; data stays unless you delete it)
+
+Flags:
+- `--docker-minio` to force MinIO via Docker; otherwise the local `minio` binary is used or downloaded into the sandbox cache.
+- `--server-port/--client-port-start/--minio-api-port/--minio-console-port` to pin ports; `--random-ports` to let the helper pick free ones.
+
 ### Building Binaries
 
 Build client binaries using GoReleaser (for configured targets):

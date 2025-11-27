@@ -1,0 +1,29 @@
+name: Devstack Integration Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  devstack-integration:
+    name: devstack sync test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+        cache: true
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run devstack integration test
+      run: go test -v -timeout 5m -run TestDevstackIntegration ./cmd/devstack/
