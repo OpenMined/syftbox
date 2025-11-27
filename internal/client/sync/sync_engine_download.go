@@ -242,9 +242,10 @@ func copyLocal(src, dst string) error {
 		return err
 	}
 
-	// Write to temp file in same directory, then atomic rename
+	// Write to unique temp file in same directory, then atomic rename
 	// This ensures the destination file appears complete or not at all
-	tmpDst := dst + ".tmp"
+	tmpDir := filepath.Dir(dst)
+	tmpPattern := filepath.Base(dst) + ".tmp.*"
 
 	sourceFile, err := os.Open(src)
 	if err != nil {
@@ -252,19 +253,55 @@ func copyLocal(src, dst string) error {
 	}
 	defer sourceFile.Close()
 
-	destFile, err := os.Create(tmpDst)
+	// Get source file info to preserve permissions and mod time
+	sourceInfo, err := sourceFile.Stat()
 	if err != nil {
 		return err
 	}
 
-	_, copyErr := io.Copy(destFile, sourceFile)
-	destFile.Close() // Close before rename
+	// Ensure temp file is cleaned up on any failure path
+	success := false
 
-	if copyErr != nil {
-		os.Remove(tmpDst)
-		return copyErr
+	destFile, err := os.CreateTemp(tmpDir, tmpPattern)
+	if err != nil {
+		return err
+	}
+	tmpDst := destFile.Name()
+	defer func() {
+		if !success {
+			if destFile != nil {
+				destFile.Close()
+			}
+			os.Remove(tmpDst)
+		}
+	}()
+
+	if _, err := io.Copy(destFile, sourceFile); err != nil {
+		return err
+	}
+
+	if err := destFile.Close(); err != nil {
+		return err
+	}
+	destFile = nil // avoid double close in deferred cleanup
+
+	// Preserve source file permissions and modification time
+	if err := os.Chmod(tmpDst, sourceInfo.Mode()); err != nil {
+		return err
+	}
+	if err := os.Chtimes(tmpDst, sourceInfo.ModTime(), sourceInfo.ModTime()); err != nil {
+		return err
 	}
 
 	// Atomic rename - file appears complete or not at all
-	return os.Rename(tmpDst, dst)
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if err := os.Rename(tmpDst, dst); err != nil {
+		return err
+	}
+
+	success = true
+	return nil
 }
