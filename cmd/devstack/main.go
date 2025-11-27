@@ -111,6 +111,7 @@ type startOptions struct {
 	keepData        bool
 	skipSyncCheck   bool
 	reset           bool
+	extraEnv        []string
 }
 
 func main() {
@@ -257,7 +258,7 @@ func runStart(args []string) error {
 			}
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		cState, err := startClient(clientBin, opts.root, email, serverURL, port, opts.extraEnv)
 		if err != nil {
 			return fmt.Errorf("start client %s: %w", email, err)
 		}
@@ -331,6 +332,9 @@ func parseStartFlags(args []string) (startOptions, error) {
 			opts.skipSyncCheck = true
 		case "--reset":
 			opts.reset = true
+		case "--env":
+			i++
+			opts.extraEnv = append(opts.extraEnv, args[i])
 		default:
 			return opts, fmt.Errorf("unknown flag %s", args[i])
 		}
@@ -709,14 +713,14 @@ func writeServerConfig(path string, port, minioPort int, dataDir, logDir string)
 	return os.WriteFile(path, data, 0o644)
 }
 
-func startClient(binPath, root, email, serverURL string, port int) (clientState, error) {
+func startClient(binPath, root, email, serverURL string, port int, extraEnv []string) (clientState, error) {
 	emailDir := filepath.Join(root, email)
 	homeDir := emailDir
 	configDir := filepath.Join(homeDir, ".syftbox")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return clientState{}, err
 	}
-	dataDir := filepath.Join(emailDir, "datasites")
+	dataDir := emailDir
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return clientState{}, err
 	}
@@ -751,12 +755,13 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	cmd := exec.Command(binPath, "-c", configPath, "daemon", "--http-addr", fmt.Sprintf("127.0.0.1:%d", port))
 	cmd.Stdout = lf
 	cmd.Stderr = lf
-	cmd.Env = append(os.Environ(),
+	baseEnv := append(os.Environ(),
 		"HOME="+homeDir,
 		"SYFTBOX_CONFIG_PATH="+configPath,
 		"SYFTBOX_DATA_DIR="+dataDir,
 		"SYFTBOX_SERVER_URL="+serverURL,
 	)
+	cmd.Env = append(baseEnv, extraEnv...)
 
 	if err := cmd.Start(); err != nil {
 		return clientState{}, err
@@ -810,7 +815,7 @@ func runSyncCheck(root string, emails []string) error {
 
 	for _, email := range emails[1:] {
 		// Each client syncs alice's public dir to their local datasites/alice@example.com/public/
-		targetDir := filepath.Join(root, email, "datasites", "datasites", src, "public")
+		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
 		if err := waitForFile(target, content, 45*time.Second); err != nil {
@@ -824,8 +829,8 @@ func runSyncCheck(root string, emails []string) error {
 }
 
 func publicPath(root, email string) string {
-	// Workspace root is <root>/<email>/datasites; actual public dir lives under datasites/<user>/public
-	return filepath.Join(root, email, "datasites", "datasites", email, "public")
+	// Workspace root is <root>/<email>; actual public dir lives under datasites/<user>/public
+	return filepath.Join(root, email, "datasites", email, "public")
 }
 
 // triggerDownloadForAll asks the server to serve the probe for each user to ensure their daemon pulls it.
