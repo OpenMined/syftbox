@@ -25,7 +25,17 @@ func TestACLRaceCondition(t *testing.T) {
 
 	t.Log("=== TESTING ACL PRIORITY SYNC FIX ===")
 	t.Log("")
-	t.Log("Step 1: Create fresh RPC endpoint with ACL")
+	t.Log("Step 1: Create default root ACLs (bootstrap)")
+
+	// Create default root and public ACLs (like real client bootstrap)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+
+	t.Log("Step 2: Create fresh RPC endpoint with ACL")
 
 	// Create RPC endpoints
 	if err := h.alice.SetupRPCEndpoint(appName, endpoint); err != nil {

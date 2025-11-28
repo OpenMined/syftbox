@@ -84,6 +84,14 @@ func TestWebSocketLatency(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default root and public ACLs (like real client bootstrap)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+
 	// Setup RPC endpoint for both clients
 	appName := "perftest"
 	endpoint := "latency"
@@ -276,6 +284,14 @@ func TestManySmallFiles(t *testing.T) {
 	h := NewDevstackHarness(t)
 	if err := h.StartProfiling("TestManySmallFiles"); err != nil {
 		t.Fatalf("start profiling: %v", err)
+	}
+
+	// Create default root and public ACLs (like real client bootstrap)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
 	}
 
 	// Setup RPC endpoint

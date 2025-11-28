@@ -16,7 +16,6 @@ import (
 const (
 	appsDir            = "apps"
 	logsDir            = "logs"
-	datasitesDir       = "datasites"
 	publicDir          = "public"
 	metadataDir        = ".data"
 	pathSep            = string(filepath.Separator)
@@ -55,10 +54,10 @@ func NewWorkspace(rootDir string, user string) (*Workspace, error) {
 		Root:          root,
 		AppsDir:       filepath.Join(root, appsDir),
 		LogsDir:       filepath.Join(root, logsDir),
-		DatasitesDir:  filepath.Join(root, datasitesDir),
+		DatasitesDir:  root,
 		MetadataDir:   filepath.Join(root, metadataDir),
-		UserDir:       filepath.Join(root, datasitesDir, user),
-		UserPublicDir: filepath.Join(root, datasitesDir, user, publicDir),
+		UserDir:       filepath.Join(root, user),
+		UserPublicDir: filepath.Join(root, user, publicDir),
 		flock:         flock,
 	}, nil
 }

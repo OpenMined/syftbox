@@ -586,6 +586,7 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				slog.Debug("handleSocketEvents channel closed")
 				return
 			}
+			slog.Info("client received websocket message", "msgType", msg.Type, "msgId", msg.Id)
 			switch msg.Type {
 			case syftmsg.MsgSystem:
 				go se.handleSystem(msg)
@@ -615,6 +616,8 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 			path := event.Path()
 
 			// this is already filtered
+			relPath, _ := se.workspace.DatasiteRelPath(path)
+			slog.Info("watcher detected priority file", "path", relPath, "event", event.Event())
 			go se.handlePriorityUpload(path)
 		}
 	}

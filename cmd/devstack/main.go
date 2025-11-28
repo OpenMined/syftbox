@@ -370,7 +370,8 @@ func parseStartFlags(args []string) (startOptions, error) {
 }
 
 func buildBinary(outPath, pkg, tags string) error {
-	args := []string{"build", "-tags", tags, "-o", outPath, pkg}
+	// Force rebuild all packages to ensure latest code changes are included
+	args := []string{"build", "-a", "-tags", tags, "-o", outPath, pkg}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

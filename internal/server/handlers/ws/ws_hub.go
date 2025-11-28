@@ -135,7 +135,7 @@ func (h *WebsocketHub) SendMessageUser(user string, msg *syftmsg.Message) bool {
 
 	for _, client := range h.clients {
 		if client.Info.User == user {
-			slog.Debug("sending message to client", "connId", client.ConnID, "user", user)
+			slog.Info("wshub sending to user", "connId", client.ConnID, "user", user, "msgType", msg.Type, "msgId", msg.Id)
 			select {
 			case client.MsgTx <- msg:
 				sent = true
@@ -143,6 +143,10 @@ func (h *WebsocketHub) SendMessageUser(user string, msg *syftmsg.Message) bool {
 				slog.Warn("wshub send buffer full", "connId", client.ConnID, "user", user)
 			}
 		}
+	}
+
+	if !sent {
+		slog.Warn("wshub no client found for user", "user", user, "msgType", msg.Type, "msgId", msg.Id)
 	}
 
 	return sent

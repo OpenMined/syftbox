@@ -1,6 +1,7 @@
 package acl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -152,6 +153,12 @@ func (s *ACLService) CanAccess(req *ACLRequest) error {
 	return nil
 }
 
+// InvalidateCache invalidates all cached ACL decisions for paths under the given prefix.
+// Returns the number of cache entries deleted.
+func (s *ACLService) InvalidateCache(pathPrefix string) int {
+	return s.cache.DeletePrefix(pathPrefix)
+}
+
 // String returns a string representation of the ACL service's rule tree.
 func (s *ACLService) String() string {
 	return s.tree.String()
@@ -209,7 +216,56 @@ func (s *ACLService) fetchAcls(ctx context.Context, aclBlobs []*blob.BlobInfo) (
 	return results, nil
 }
 
+// fetchAcl fetches a single ACL ruleset from blob storage
+func (s *ACLService) fetchAcl(ctx context.Context, key string) (*aclspec.RuleSet, error) {
+	// Pull the ACL file
+	obj, err := s.blob.Backend().GetObject(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("get object: %w", err)
+	}
+	defer obj.Body.Close()
+
+	// Parse the ACL file
+	ruleset, err := aclspec.LoadFromReader(key, obj.Body)
+	if err != nil {
+		return nil, fmt.Errorf("parse ACL: %w", err)
+	}
+
+	return ruleset, nil
+}
+
+// LoadACLFromContent loads an ACL ruleset from raw content bytes
+func (s *ACLService) LoadACLFromContent(path string, content []byte) (*aclspec.RuleSet, error) {
+	// Parse the ACL from content
+	ruleset, err := aclspec.LoadFromReader(path, bytes.NewReader(content))
+	if err != nil {
+		return nil, fmt.Errorf("parse ACL: %w", err)
+	}
+
+	return ruleset, nil
+}
+
 func (s *ACLService) onBlobChange(key string, eventType blob.BlobEventType) {
+	// Handle ACL file creation/updates
+	if eventType == blob.BlobEventPut && aclspec.IsACLFile(key) {
+		// Fetch and load the new/updated ACL file
+		ruleSet, err := s.fetchAcl(context.Background(), key)
+		if err != nil {
+			slog.Error("acl fetch failed on blob change", "key", key, "error", err)
+			return
+		}
+
+		if ruleSet != nil {
+			if _, err := s.AddRuleSet(ruleSet); err != nil {
+				slog.Error("acl add ruleset failed on blob change", "key", key, "error", err)
+			} else {
+				slog.Info("acl loaded from blob change", "key", key)
+			}
+		}
+		return
+	}
+
+	// Handle file deletion
 	if eventType == blob.BlobEventDelete && !aclspec.IsACLFile(key) {
 		// Clean up cache entry for the deleted file
 		keys := s.cache.Delete(key)

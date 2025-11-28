@@ -220,7 +220,7 @@ sbdev-test-perf *ARGS:
     set -eou pipefail
     echo "Running devstack performance tests..."
     cd cmd/devstack
-    go test -v -timeout 30m {{ ARGS }}
+    go test -v -timeout 30m -tags integration {{ ARGS }}
 
 [group('devstack')]
 sbdev-test-perf-profile *ARGS:
@@ -228,7 +228,7 @@ sbdev-test-perf-profile *ARGS:
     set -eou pipefail
     echo "Running performance tests with profiling enabled..."
     cd cmd/devstack
-    PERF_PROFILE=1 go test -v -timeout 30m {{ ARGS }}
+    PERF_PROFILE=1 go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Profiles saved to: cmd/devstack/profiles/"
     echo "View flame graphs: go tool pprof -http=:8080 cmd/devstack/profiles/{test}/cpu.prof"
@@ -241,7 +241,7 @@ sbdev-test-perf-sandbox *ARGS:
     echo "Running performance tests with persistent sandbox: $sandbox_path"
     mkdir -p "$sandbox_path"
     cd cmd/devstack
-    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m {{ ARGS }}
+    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Test files preserved in: $sandbox_path"
     echo "Files from alice: $sandbox_path/alice@example.com/datasites/datasites/alice@example.com/public/"
@@ -264,12 +264,23 @@ sbdev-test-cleanup:
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
 [group('devstack')]
+sbdev-test-acl:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running ACL race condition test..."
+    cd cmd/devstack
+    # Use local sandbox instead of temp dir for consistency
+    SANDBOX_DIR="$(pwd)/../../.test-sandbox/acl-test"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLRaceCondition
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+[group('devstack')]
 sbdev-test-ws:
     #!/bin/bash
     set -eou pipefail
     echo "Running WebSocket latency test..."
     cd cmd/devstack
-    go test -v -timeout 10m -run TestWebSocketLatency
+    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 10m -tags integration -run TestWebSocketLatency
 
 [group('devstack')]
 sbdev-test-large:
@@ -277,7 +288,7 @@ sbdev-test-large:
     set -eou pipefail
     echo "Running large file transfer test..."
     cd cmd/devstack
-    go test -v -timeout 30m -run TestLargeFileTransfer
+    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
 
 [group('devstack')]
 sbdev-test-concurrent:
@@ -285,7 +296,7 @@ sbdev-test-concurrent:
     set -eou pipefail
     echo "Running concurrent upload test..."
     cd cmd/devstack
-    go test -v -timeout 15m -run TestConcurrentUploads
+    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestConcurrentUploads
 
 [group('devstack')]
 sbdev-test-many:
@@ -293,7 +304,7 @@ sbdev-test-many:
     set -eou pipefail
     echo "Running many small files test..."
     cd cmd/devstack
-    go test -v -timeout 15m -run TestManySmallFiles
+    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestManySmallFiles
 
 [group('dev')]
 test:
