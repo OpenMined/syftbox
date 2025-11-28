@@ -244,8 +244,8 @@ sbdev-test-perf-sandbox *ARGS:
     PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m {{ ARGS }}
     echo ""
     echo "Test files preserved in: $sandbox_path"
-    echo "Files from alice: $sandbox_path/alice@example.com/datasites/datasites/alice@example.com/public/"
-    echo "Files synced to bob: $sandbox_path/bob@example.com/datasites/datasites/alice@example.com/public/"
+    echo "Files from alice: $sandbox_path/alice@example.com/datasites/alice@example.com/public/"
+    echo "Files synced to bob: $sandbox_path/bob@example.com/datasites/alice@example.com/public/"
 
 [group('devstack')]
 sbdev-list:
