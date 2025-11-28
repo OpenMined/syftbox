@@ -728,8 +728,12 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return clientState{}, err
 	}
-	dataDir := filepath.Join(emailDir, "datasites")
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	dataDir := emailDir
+	// Ensure encrypted and shadow roots exist under the workspace root.
+	if err := os.MkdirAll(filepath.Join(dataDir, "datasites"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "unencrypted"), 0o755); err != nil {
 		return clientState{}, err
 	}
 	logDir := filepath.Join(homeDir, ".syftbox", "logs")
@@ -822,7 +826,7 @@ func runSyncCheck(root string, emails []string) error {
 
 	for _, email := range emails[1:] {
 		// Each client syncs alice's public dir to their local datasites/alice@example.com/public/
-		targetDir := filepath.Join(root, email, "datasites", "datasites", src, "public")
+		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
 		if err := waitForFile(target, content, 45*time.Second); err != nil {
@@ -836,8 +840,8 @@ func runSyncCheck(root string, emails []string) error {
 }
 
 func publicPath(root, email string) string {
-	// Workspace root is <root>/<email>/datasites; actual public dir lives under datasites/<user>/public
-	return filepath.Join(root, email, "datasites", "datasites", email, "public")
+	// Workspace root is <root>/<email>; actual public dir lives under datasites/<user>/public
+	return filepath.Join(root, email, "datasites", email, "public")
 }
 
 // triggerDownloadForAll asks the server to serve the probe for each user to ensure their daemon pulls it.

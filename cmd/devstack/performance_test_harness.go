@@ -66,19 +66,19 @@ type MetricsCollector struct {
 
 // TestReport contains test results
 type TestReport struct {
-	Duration      time.Duration
-	TotalOps      int
-	SuccessOps    int
-	ErrorOps      int
-	P50Latency    time.Duration
-	P90Latency    time.Duration
-	P95Latency    time.Duration
-	P99Latency    time.Duration
-	AvgThroughput float64
+	Duration       time.Duration
+	TotalOps       int
+	SuccessOps     int
+	ErrorOps       int
+	P50Latency     time.Duration
+	P90Latency     time.Duration
+	P95Latency     time.Duration
+	P99Latency     time.Duration
+	AvgThroughput  float64
 	PeakThroughput float64
-	ErrorRate     float64
-	PeakMemoryMB  uint64
-	AvgCPUPercent float64
+	ErrorRate      float64
+	PeakMemoryMB   uint64
+	AvgCPUPercent  float64
 }
 
 // NewDevstackHarness creates a test harness with full devstack
@@ -209,7 +209,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[0],
 		state:     clients[0],
 		dataDir:   clients[0].DataPath,
-		publicDir: filepath.Join(opts.root, emails[0], "datasites", "datasites", emails[0], "public"),
+		publicDir: filepath.Join(opts.root, emails[0], "datasites", emails[0], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -218,7 +218,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[1],
 		state:     clients[1],
 		dataDir:   clients[1].DataPath,
-		publicDir: filepath.Join(opts.root, emails[1], "datasites", "datasites", emails[1], "public"),
+		publicDir: filepath.Join(opts.root, emails[1], "datasites", emails[1], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -307,7 +307,7 @@ func (c *ClientHelper) UploadFile(relPath string, content []byte) error {
 func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 string, timeout time.Duration) error {
 	c.t.Helper()
 
-	// File syncs to datasites/datasites/{sender}/public/{relPath}
+	// File syncs to datasites/{sender}/public/{relPath}
 	fullPath := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
 
 	deadline := time.Now().Add(timeout)
