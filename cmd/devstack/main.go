@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,7 @@ const (
 	serverBuildTags            = "sonic avx nomsgpack"
 	clientBuildTags            = "go_json nomsgpack"
 	stateFileName              = "state.json"
+	minioBinaryName            = "minio"
 	minioDownloadBase          = "https://dl.min.io/server/minio/release"
 	processShutdownGracePeriod = 8 * time.Second
 )
@@ -55,6 +57,8 @@ const (
 	cmdStop   command = "stop"
 	cmdStatus command = "status"
 	cmdLogs   command = "logs"
+	cmdList   command = "list"
+	cmdPrune  command = "prune"
 )
 
 type stackState struct {
@@ -111,17 +115,27 @@ type startOptions struct {
 	keepData        bool
 	skipSyncCheck   bool
 	reset           bool
-	extraEnv        []string
+}
+
+func addExe(path string) string {
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(path), ".exe") {
+		return path + ".exe"
+	}
+	return path
 }
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("usage: sbdev <start|stop|status|logs> [options]")
+		fmt.Println("usage: sbdev <start|stop|status|logs|list|prune> [options]")
 		os.Exit(1)
 	}
 
 	switch command(os.Args[1]) {
 	case cmdStart:
+		// Auto-prune before starting
+		if err := pruneDeadStacks(); err != nil {
+			log.Printf("Warning: failed to prune dead stacks: %v", err)
+		}
 		if err := runStart(os.Args[2:]); err != nil {
 			log.Fatalf("start: %v", err)
 		}
@@ -137,8 +151,17 @@ func main() {
 		if err := runLogs(os.Args[2:]); err != nil {
 			log.Fatalf("logs: %v", err)
 		}
+	case cmdList:
+		if err := listActiveStacks(); err != nil {
+			log.Fatalf("list: %v", err)
+		}
+	case cmdPrune:
+		if err := pruneDeadStacks(); err != nil {
+			log.Fatalf("prune: %v", err)
+		}
+		fmt.Println("Dead stacks pruned")
 	default:
-		fmt.Println("usage: sbdev <start|stop|status|logs> [options]")
+		fmt.Println("usage: sbdev <start|stop|status|logs|list|prune> [options]")
 		os.Exit(1)
 	}
 }
@@ -185,8 +208,8 @@ func runStart(args []string) error {
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	serverBin := addExe(filepath.Join(binDir, "server"))
-	clientBin := addExe(filepath.Join(binDir, "syftbox"))
+	serverBin := filepath.Join(binDir, "server")
+	clientBin := filepath.Join(binDir, "syftbox")
 
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
@@ -258,7 +281,7 @@ func runStart(args []string) error {
 			}
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port, opts.extraEnv)
+		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
 		if err != nil {
 			return fmt.Errorf("start client %s: %w", email, err)
 		}
@@ -273,8 +296,14 @@ func runStart(args []string) error {
 		Created: time.Now().UTC(),
 	}
 
+	// Save to global state directory
+	if err := saveGlobalState(opts.root, &state); err != nil {
+		return fmt.Errorf("save global state: %w", err)
+	}
+
+	// Also save locally for backward compatibility
 	if err := writeState(statePath, &state); err != nil {
-		return fmt.Errorf("write state: %w", err)
+		log.Printf("Warning: failed to write local state: %v", err)
 	}
 
 	fmt.Printf("Devstack started in %s\n", opts.root)
@@ -332,9 +361,6 @@ func parseStartFlags(args []string) (startOptions, error) {
 			opts.skipSyncCheck = true
 		case "--reset":
 			opts.reset = true
-		case "--env":
-			i++
-			opts.extraEnv = append(opts.extraEnv, args[i])
 		default:
 			return opts, fmt.Errorf("unknown flag %s", args[i])
 		}
@@ -351,32 +377,23 @@ func buildBinary(outPath, pkg, tags string) error {
 	return cmd.Run()
 }
 
-func addExe(path string) string {
-	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(path), ".exe") {
-		return path + ".exe"
-	}
-	return path
-}
-
 func ensureMinioBinary(binDir string) (string, error) {
-	binName := minioBinaryName()
-
-	if path, err := exec.LookPath(binName); err == nil {
+	if path, err := exec.LookPath(minioBinaryName); err == nil {
 		return path, nil
 	}
 
 	// check global cache
-	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", binName)
+	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", minioBinaryName)
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	}
 
-	target := filepath.Join(binDir, binName)
+	target := filepath.Join(binDir, minioBinaryName)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
 
-	if err := downloadMinio(target, binName); err != nil {
+	if err := downloadMinio(target); err != nil {
 		return "", err
 	}
 	// also copy to cache for future runs
@@ -392,14 +409,7 @@ func dockerAvailable() bool {
 	return err == nil
 }
 
-func minioBinaryName() string {
-	if runtime.GOOS == "windows" {
-		return "minio.exe"
-	}
-	return "minio"
-}
-
-func downloadMinio(dest, binName string) error {
+func downloadMinio(dest string) error {
 	osName := runtime.GOOS
 	arch := runtime.GOARCH
 	var platform string
@@ -416,13 +426,11 @@ func downloadMinio(dest, binName string) error {
 		} else {
 			platform = "linux-amd64"
 		}
-	case "windows":
-		platform = "windows-amd64"
 	default:
 		return fmt.Errorf("unsupported platform for minio download: %s/%s", osName, arch)
 	}
 
-	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, binName)
+	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, minioBinaryName)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(url) //nolint:gosec
 	if err != nil {
@@ -713,14 +721,14 @@ func writeServerConfig(path string, port, minioPort int, dataDir, logDir string)
 	return os.WriteFile(path, data, 0o644)
 }
 
-func startClient(binPath, root, email, serverURL string, port int, extraEnv []string) (clientState, error) {
+func startClient(binPath, root, email, serverURL string, port int) (clientState, error) {
 	emailDir := filepath.Join(root, email)
 	homeDir := emailDir
 	configDir := filepath.Join(homeDir, ".syftbox")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return clientState{}, err
 	}
-	dataDir := emailDir
+	dataDir := filepath.Join(emailDir, "datasites")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return clientState{}, err
 	}
@@ -755,13 +763,12 @@ func startClient(binPath, root, email, serverURL string, port int, extraEnv []st
 	cmd := exec.Command(binPath, "-c", configPath, "daemon", "--http-addr", fmt.Sprintf("127.0.0.1:%d", port))
 	cmd.Stdout = lf
 	cmd.Stderr = lf
-	baseEnv := append(os.Environ(),
+	cmd.Env = append(os.Environ(),
 		"HOME="+homeDir,
 		"SYFTBOX_CONFIG_PATH="+configPath,
 		"SYFTBOX_DATA_DIR="+dataDir,
 		"SYFTBOX_SERVER_URL="+serverURL,
 	)
-	cmd.Env = append(baseEnv, extraEnv...)
 
 	if err := cmd.Start(); err != nil {
 		return clientState{}, err
@@ -815,7 +822,7 @@ func runSyncCheck(root string, emails []string) error {
 
 	for _, email := range emails[1:] {
 		// Each client syncs alice's public dir to their local datasites/alice@example.com/public/
-		targetDir := filepath.Join(root, email, "datasites", src, "public")
+		targetDir := filepath.Join(root, email, "datasites", "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
 		if err := waitForFile(target, content, 45*time.Second); err != nil {
@@ -829,8 +836,8 @@ func runSyncCheck(root string, emails []string) error {
 }
 
 func publicPath(root, email string) string {
-	// Workspace root is <root>/<email>; actual public dir lives under datasites/<user>/public
-	return filepath.Join(root, email, "datasites", email, "public")
+	// Workspace root is <root>/<email>/datasites; actual public dir lives under datasites/<user>/public
+	return filepath.Join(root, email, "datasites", "datasites", email, "public")
 }
 
 // triggerDownloadForAll asks the server to serve the probe for each user to ensure their daemon pulls it.
@@ -981,6 +988,15 @@ func readState(root string) (*stackState, string, error) {
 }
 
 func statePathForRoot(root string) string {
+	// Try global state directory first
+	globalPath, err := getGlobalStatePath(root)
+	if err == nil {
+		if _, err := os.Stat(globalPath); err == nil {
+			return globalPath
+		}
+	}
+
+	// Fall back to local state
 	relayRoot := filepath.Join(root, relayDir)
 	newPath := filepath.Join(relayRoot, stateFileName)
 	if _, err := os.Stat(newPath); err == nil {
@@ -988,6 +1004,206 @@ func statePathForRoot(root string) string {
 	}
 	// backward compatibility
 	return filepath.Join(root, stateFileName)
+}
+
+// getGlobalStateDir returns ~/.sbdev directory
+func getGlobalStateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home dir: %w", err)
+	}
+	return filepath.Join(home, ".sbdev"), nil
+}
+
+// getStackID creates a unique ID for a stack root path
+func getStackID(root string) string {
+	absRoot, _ := filepath.Abs(root)
+	hash := sha256.Sum256([]byte(absRoot))
+	return fmt.Sprintf("%x", hash[:8]) // Use first 8 bytes
+}
+
+// getGlobalStatePath returns the global state file path for a stack
+func getGlobalStatePath(root string) (string, error) {
+	globalDir, err := getGlobalStateDir()
+	if err != nil {
+		return "", err
+	}
+	stackID := getStackID(root)
+	return filepath.Join(globalDir, "stacks", stackID, stateFileName), nil
+}
+
+// saveGlobalState saves state to global directory
+func saveGlobalState(root string, state *stackState) error {
+	globalPath, err := getGlobalStatePath(root)
+	if err != nil {
+		return err
+	}
+
+	// Create stack directory
+	stackDir := filepath.Dir(globalPath)
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		return fmt.Errorf("create stack dir: %w", err)
+	}
+
+	// Save absolute path for reference
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	pathFile := filepath.Join(stackDir, "path.txt")
+	if err := os.WriteFile(pathFile, []byte(absRoot), 0o644); err != nil {
+		return fmt.Errorf("write path file: %w", err)
+	}
+
+	// Write state
+	return writeState(globalPath, state)
+}
+
+// pruneDeadStacks removes stacks with dead processes
+func pruneDeadStacks() error {
+	globalDir, err := getGlobalStateDir()
+	if err != nil {
+		return err
+	}
+
+	stacksDir := filepath.Join(globalDir, "stacks")
+	entries, err := os.ReadDir(stacksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		stackDir := filepath.Join(stacksDir, entry.Name())
+		statePath := filepath.Join(stackDir, stateFileName)
+
+		// Read state
+		data, err := os.ReadFile(statePath)
+		if err != nil {
+			continue
+		}
+
+		var state stackState
+		if err := json.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// Check if any processes are alive
+		allDead := true
+		if processExists(state.Server.PID) {
+			allDead = false
+		}
+		if state.Minio.PID > 0 && processExists(state.Minio.PID) {
+			allDead = false
+		}
+		for _, client := range state.Clients {
+			if processExists(client.PID) {
+				allDead = false
+				break
+			}
+		}
+
+		// Remove if all processes are dead
+		if allDead {
+			log.Printf("Pruning dead stack: %s (from %s)", entry.Name(), state.Root)
+			if err := os.RemoveAll(stackDir); err != nil {
+				log.Printf("Failed to remove %s: %v", stackDir, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// listActiveStacks shows all tracked stacks
+func listActiveStacks() error {
+	globalDir, err := getGlobalStateDir()
+	if err != nil {
+		return err
+	}
+
+	stacksDir := filepath.Join(globalDir, "stacks")
+	entries, err := os.ReadDir(stacksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("No active stacks")
+			return nil
+		}
+		return err
+	}
+
+	fmt.Printf("Active devstacks in %s:\n\n", stacksDir)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		stackDir := filepath.Join(stacksDir, entry.Name())
+		statePath := filepath.Join(stackDir, stateFileName)
+		pathFile := filepath.Join(stackDir, "path.txt")
+
+		// Read path
+		pathData, err := os.ReadFile(pathFile)
+		if err != nil {
+			continue
+		}
+		stackPath := strings.TrimSpace(string(pathData))
+
+		// Read state
+		data, err := os.ReadFile(statePath)
+		if err != nil {
+			continue
+		}
+
+		var state stackState
+		if err := json.Unmarshal(data, &state); err != nil {
+			continue
+		}
+
+		// Check process status
+		serverAlive := processExists(state.Server.PID)
+		minioAlive := state.Minio.PID > 0 && processExists(state.Minio.PID)
+		clientsAlive := 0
+		for _, client := range state.Clients {
+			if processExists(client.PID) {
+				clientsAlive++
+			}
+		}
+
+		status := "🟢"
+		if !serverAlive || !minioAlive || clientsAlive != len(state.Clients) {
+			status = "🔴"
+		}
+
+		fmt.Printf("%s %s\n", status, stackPath)
+		fmt.Printf("   ID: %s\n", entry.Name())
+		fmt.Printf("   Server: %d (port %d) - alive: %v\n", state.Server.PID, state.Server.Port, serverAlive)
+		fmt.Printf("   MinIO: %d (port %d) - alive: %v\n", state.Minio.PID, state.Minio.APIPort, minioAlive)
+		fmt.Printf("   Clients: %d alive / %d total\n", clientsAlive, len(state.Clients))
+		fmt.Println()
+	}
+
+	return nil
+}
+
+// processExists checks if a process is running
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
 }
 
 func killProcess(pid int) error {

@@ -53,3 +53,5 @@ releases
 server.dev.yaml
 .gocache/*
 sandbox/*
+cmd/devstack/profiles/*
+cmd/sandbox/*

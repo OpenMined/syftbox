@@ -141,6 +141,48 @@ Flags:
 - `--docker-minio` to force MinIO via Docker; otherwise the local `minio` binary is used or downloaded into the sandbox cache.
 - `--server-port/--client-port-start/--minio-api-port/--minio-console-port` to pin ports; `--random-ports` to let the helper pick free ones.
 
+#### Global State Management (`~/.sbdev/`)
+
+Devstack uses global state in `~/.sbdev/` to track all active stacks across different directories and branches:
+
+**Key Features:**
+- **Port reuse**: Same directory = same ports (no random ports each restart)
+- **Multi-branch**: Run different stacks on different branches using different sandbox paths
+- **Auto-cleanup**: Automatically prunes dead processes before starting new stacks
+- **Cross-directory tracking**: List all active devstacks from anywhere
+
+**Commands:**
+```sh
+just sbdev-list    # List all active devstacks
+just sbdev-prune   # Clean up dead stacks
+just sbdev-status  # Show current stack status
+```
+
+**Example - Multiple Branches:**
+```sh
+# Branch 1 (main)
+git checkout main
+just sbdev-start --path sandbox-main --client alice@example.com
+
+# Branch 2 (feature) - different sandbox path = different stack
+git checkout feature/xyz
+just sbdev-start --path sandbox-feature --client alice@example.com
+
+# Both run simultaneously with separate ports
+just sbdev-list  # Shows both stacks
+```
+
+**Storage:**
+```
+~/.sbdev/
+├── bin/          # Cached binaries (minio)
+└── stacks/       # Active stack tracking
+    └── {hash}/   # One per unique sandbox path
+        ├── state.json
+        └── path.txt
+```
+
+
 ### Building Binaries
 
 Build client binaries using GoReleaser (for configured targets):
