@@ -5,7 +5,6 @@ import gitignore "github.com/sabhiram/go-gitignore"
 var defaultPriorityFiles = []string{
 	"**/*.request",
 	"**/*.response",
-	"**/syft.pub.yaml", // ACL files need priority to avoid race condition
 }
 
 type SyncPriorityList struct {
