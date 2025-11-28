@@ -2,6 +2,7 @@ package blob
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -39,6 +40,7 @@ func (h *BlobHandler) DownloadObjectsPresigned(ctx *gin.Context) {
 			if logger := accesslog.GetAccessLogger(ctx); logger != nil {
 				logger.LogAccess(ctx, key, accesslog.AccessTypeRead, acl.AccessRead, false, err.Error())
 			}
+			slog.Warn("blob_download_rejected", "path", key, "user", user, "required_access", "read", "error", err.Error(), "DEBUG_REJECTION_FROM", "server_checkPermissions_download")
 			errors = append(errors, &BlobAPIError{
 				SyftAPIError: api.SyftAPIError{
 					Code:    api.CodeAccessDenied,

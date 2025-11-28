@@ -22,10 +22,10 @@ func (se *SyncEngine) handlePriorityError(msg *syftmsg.Message) {
 		localPath := se.workspace.DatasiteAbsPath(errMsg.Path)
 		if markedPath, err := SetMarker(localPath, Rejected); err != nil {
 			se.syncStatus.SetError(syncRelPath, err)
-			slog.Warn("sync", "type", SyncPriority, "op", OpError, "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "error", err)
+			slog.Warn("sync", "type", SyncPriority, "op", OpError, "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "error", err, "DEBUG_REJECTION_REASON", "priority_error_403_SetMarker_failed", "DEBUG_ERROR_MESSAGE", errMsg.Message)
 		} else {
 			// Successfully marked as rejected
-			slog.Warn("sync", "type", SyncPriority, "op", OpError, "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "movedTo", markedPath)
+			slog.Warn("sync", "type", SyncPriority, "op", OpError, "msgType", msg.Type, "msgId", msg.Id, "code", errMsg.Code, "path", errMsg.Path, "movedTo", markedPath, "DEBUG_REJECTION_REASON", "priority_error_403_from_server", "DEBUG_ERROR_MESSAGE", errMsg.Message)
 			se.syncStatus.SetRejected(syncRelPath)
 		}
 	default:

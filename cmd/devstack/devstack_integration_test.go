@@ -1,9 +1,13 @@
+//go:build integration
+// +build integration
+
 package main
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -15,6 +19,9 @@ import (
 func TestDevstackIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping devstack integration on Windows runner")
 	}
 
 	// Setup test directory
@@ -57,8 +64,8 @@ func TestDevstackIntegration(t *testing.T) {
 	}
 
 	// Build binaries
-	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
+	serverBin := addExe(filepath.Join(binDir, "server"))
+	clientBin := addExe(filepath.Join(binDir, "syftbox"))
 
 	// Find repository root (go up two levels from cmd/devstack)
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))

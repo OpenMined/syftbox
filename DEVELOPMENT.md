@@ -182,6 +182,7 @@ just sbdev-list  # Shows both stacks
         └── path.txt
 ```
 
+
 ### Building Binaries
 
 Build client binaries using GoReleaser (for configured targets):

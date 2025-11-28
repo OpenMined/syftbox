@@ -117,6 +117,13 @@ type startOptions struct {
 	reset           bool
 }
 
+func addExe(path string) string {
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(path), ".exe") {
+		return path + ".exe"
+	}
+	return path
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("usage: sbdev <start|stop|status|logs|list|prune> [options]")
