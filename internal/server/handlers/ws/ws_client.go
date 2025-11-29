@@ -38,8 +38,8 @@ func NewWebsocketClient(conn *websocket.Conn, info *ClientInfo) *WebsocketClient
 	return &WebsocketClient{
 		ConnID: utils.TokenHex(4),
 		Info:   info,
-		MsgRx:  make(chan *syftmsg.Message, 8),
-		MsgTx:  make(chan *syftmsg.Message, 8),
+		MsgRx:  make(chan *syftmsg.Message, 256), // Increased from 8 to handle burst traffic
+		MsgTx:  make(chan *syftmsg.Message, 256), // Increased from 8 to handle burst traffic
 		Closed: make(chan struct{}),
 		wsDone: make(chan struct{}),
 		conn:   conn,

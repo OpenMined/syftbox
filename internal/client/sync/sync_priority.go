@@ -1,6 +1,10 @@
 package sync
 
-import gitignore "github.com/sabhiram/go-gitignore"
+import (
+	"path/filepath"
+
+	gitignore "github.com/sabhiram/go-gitignore"
+)
 
 var defaultPriorityFiles = []string{
 	"**/*.request",
@@ -19,5 +23,11 @@ func NewSyncPriorityList(baseDir string) *SyncPriorityList {
 }
 
 func (s *SyncPriorityList) ShouldPrioritize(path string) bool {
-	return s.priority.MatchesPath(path)
+	// Convert absolute path to relative path before matching gitignore patterns
+	relPath, err := filepath.Rel(s.baseDir, path)
+	if err != nil {
+		// If we can't get relative path, the file is outside baseDir - don't prioritize
+		return false
+	}
+	return s.priority.MatchesPath(relPath)
 }

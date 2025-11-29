@@ -248,6 +248,9 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	if isACLFile {
 		// Synchronous upload for ACL files - wait for upload + ACL loading before broadcasting
 		if err := uploadFunc(); err != nil {
+			// Send NACK to sender
+			nackMsg := syftmsg.NewNack(msg.Message.Id, err.Error())
+			s.hub.SendMessage(msg.ConnID, nackMsg)
 			return
 		}
 
@@ -263,9 +266,23 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 				slog.Info("ws file write ACL loaded synchronously", msgGroup, "path", ruleSet.Path)
 			}
 		}
+
+		// Send ACK to sender after successful ACL file write
+		ackMsg := syftmsg.NewAck(msg.Message.Id)
+		s.hub.SendMessage(msg.ConnID, ackMsg)
 	} else {
-		// Asynchronous upload for regular files
-		go uploadFunc()
+		// Asynchronous upload for regular files - send ACK/NACK when done
+		go func() {
+			if err := uploadFunc(); err != nil {
+				// Send NACK to sender
+				nackMsg := syftmsg.NewNack(msg.Message.Id, err.Error())
+				s.hub.SendMessage(msg.ConnID, nackMsg)
+			} else {
+				// Send ACK to sender after successful file write
+				ackMsg := syftmsg.NewAck(msg.Message.Id)
+				s.hub.SendMessage(msg.ConnID, ackMsg)
+			}
+		}()
 	}
 
 	// broadcast the message to all clients except the sender

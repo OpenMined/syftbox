@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxMessageSize = 4 * 1024 * 1024 // 4MB
+	maxMessageSize = 8 * 1024 * 1024 // 8MB (to handle 4MB files + JSON overhead)
 )
 
 type WebsocketHub struct {
@@ -31,7 +31,7 @@ func NewHub() *WebsocketHub {
 	return &WebsocketHub{
 		clients:  make(map[string]*WebsocketClient),
 		register: make(chan *WebsocketClient),
-		msgs:     make(chan *ClientMessage, 128),
+		msgs:     make(chan *ClientMessage, 256), // Increased from 128 to handle burst traffic
 	}
 }
 

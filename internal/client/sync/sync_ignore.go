@@ -70,7 +70,13 @@ func (s *SyncIgnoreList) Load() {
 }
 
 func (s *SyncIgnoreList) ShouldIgnore(path string) bool {
-	return s.ignore.MatchesPath(path)
+	// Convert absolute path to relative path before matching gitignore patterns
+	relPath, err := filepath.Rel(s.baseDir, path)
+	if err != nil {
+		// If we can't get relative path, the file is outside baseDir - don't ignore
+		return false
+	}
+	return s.ignore.MatchesPath(relPath)
 }
 
 func readIgnoreFile(path string) ([]string, error) {

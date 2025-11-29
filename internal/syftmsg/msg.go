@@ -59,6 +59,18 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = fileDelete
+	case MsgAck:
+		var ack Ack
+		if err := json.Unmarshal(temp.Data, &ack); err != nil {
+			return err
+		}
+		m.Data = ack
+	case MsgNack:
+		var nack Nack
+		if err := json.Unmarshal(temp.Data, &nack); err != nil {
+			return err
+		}
+		m.Data = nack
 	case MsgHttp:
 		var httpMsg HttpMsg
 		if err := json.Unmarshal(temp.Data, &httpMsg); err != nil {

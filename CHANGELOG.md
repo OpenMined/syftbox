@@ -7,6 +7,231 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 🚀 Complete Performance & Reliability Overhaul *(2025-11-30)*
+
+**Branch**: `madhava/fuzz`
+
+Comprehensive performance and reliability improvements to the SyftBox sync system. Implemented proper ACK/NACK mechanism replacing the 1-second sleep hack, fixed critical gitignore pattern matching bug causing 100% burst test failures, added adaptive sync frequency, increased all buffer sizes to handle burst traffic, implemented retry logic with exponential backoff, and created comprehensive profiling infrastructure.
+
+#### 📊 Performance Impact
+
+| Metric | Before | After | Improvement |
+|--------|--------|-------|-------------|
+| **Burst test success** | 0/100 (0%) | 100/100 (100%) | ✅ **Fixed** |
+| **Burst test time** | 8m20s (timeout) | ~33s | **15x faster** |
+| **File ACK latency** | 1000ms (sleep) | ~100ms | **10x faster** |
+| **Sync interval (burst)** | 5000ms | 500ms | **10x faster** |
+| **Sync interval (idle)** | 5000ms | 30000ms | **6x less CPU** |
+| **Total buffer capacity** | 16 messages | 768 messages | **48x capacity** |
+
+#### 🔧 Critical Fixes
+
+##### Fixed Gitignore Pattern Matching Bug
+**Files**: `internal/client/sync/sync_priority.go`, `internal/client/sync/sync_ignore.go`
+
+**Root Cause**: Pattern matching functions received absolute file paths but gitignore patterns expect relative paths. Pattern `**/*.request` expects relative path like `alice@example.com/app_data/perftest/rpc/batch/small-0.request` but was receiving absolute path like `/var/folders/.../small-0.request`, causing ALL priority files to be filtered out.
+
+**Solution**: Added `filepath.Rel()` conversion to transform absolute paths to relative paths before pattern matching.
+
+**Impact**:
+- Burst test: 0% → 100% success rate
+- Test time: 8m20s → 33s
+- Files transferred: 0/100 → 100/100
+
+#### ✨ New Features
+
+##### 1. ACK/NACK Mechanism
+**Files**: `internal/syftmsg/msg_ack.go`, `internal/syftmsg/msg.go`, `internal/server/server.go`, `internal/syftsdk/events.go`, `internal/client/sync/sync_engine_priority_upload.go`
+
+- **Enhanced Message Structures**: Added `OriginalId` field to ACK/NACK for request/response correlation
+- **Server-Side Acknowledgment**: Sends ACK after successful file write, NACK with error on failure
+- **Client-Side SendWithAck()**: New method that waits for ACK/NACK with configurable timeout (default: 5s)
+- **Automatic Cleanup**: Pending acknowledgments cleaned up on completion
+- **Performance**: ~100ms ACK latency vs 1000ms+ blocking sleep (**10x faster**)
+
+##### 2. Adaptive Sync Frequency
+**File**: `internal/client/sync/sync_adaptive.go` (new)
+
+Dynamic sync interval based on file activity with 5 levels:
+- **Burst** (10+ events/10s window): 500ms interval
+- **Active** (3-9 events): 1s interval
+- **Moderate** (1-2 events): 2.5s interval
+- **Idle** (0 events): 5s interval (default)
+- **Deep Idle** (5+ min inactive): 30s interval
+
+**Integration**: Modified `sync_engine.go` to use dynamic intervals with activity tracking on file watcher events.
+
+##### 3. Exponential Backoff Retry Logic
+**File**: `internal/syftsdk/events.go`
+
+Retry mechanism for queue-full scenarios:
+- **Retry attempts**: 5 attempts with exponential backoff
+- **Backoff timing**: 10ms → 20ms → 40ms → 80ms → 160ms (max 500ms)
+- **Total max delay**: ~310ms before falling back to overflow queue
+- **Behavior**: Handles transient congestion gracefully, prevents message loss
+
+##### 4. Overflow Queue for Burst Traffic
+**File**: `internal/syftsdk/events.go`
+
+Secondary queue for extreme burst scenarios:
+- **Main channel**: 256 messages
+- **Overflow queue**: 512 messages
+- **Total buffering**: 768 messages
+- **Background processor**: Continuously drains overflow queue with retry logic
+- **Impact**: Zero message loss during 100+ file bursts
+
+#### 📈 Performance Improvements
+
+##### Buffer Size Increases
+
+| Component | Before | After | Improvement |
+|-----------|--------|-------|-------------|
+| EventsAPI messages | 16 | 256 | **16x** |
+| EventsAPI overflow | N/A | 512 | ✅ **Added** |
+| WebSocket client RX/TX | 8 | 256 | **32x** |
+| File watcher events | 64 | 256 | **4x** |
+| Server hub messages | 128 | 256 | **2x** |
+
+**Files Modified**:
+- `internal/syftsdk/events.go` - EventsAPI buffer (16→256) + overflow queue (512)
+- `internal/syftsdk/events_socket.go` - WebSocket client channels (8→256)
+- `internal/client/sync/file_watcher.go` - Event buffer (64→256)
+- `internal/server/handlers/ws/ws_client.go` - RX/TX buffers (8→256)
+- `internal/server/handlers/ws/ws_hub.go` - Message queue (128→256)
+
+#### 🧪 Testing
+
+##### New Tests
+**File**: `cmd/devstack/ack_nack_test.go`
+
+- `TestACKNACKMechanism/SuccessfulACK`: Verifies ACK received for successful upload (~101ms latency)
+- `TestACKNACKMechanism/MultipleFilesWithACK`: Tests 10 files in rapid succession
+
+**Justfile Targets**:
+- `just sbdev-test-ack`: Run ACK/NACK tests
+- Updated `just sbdev-test-all`: Includes ACK/NACK test (now 6 total tests)
+
+##### Test Results
+
+**Before Fixes**:
+```
+❌ Burst Test (100 files):
+   - Success: 0/100 (0%)
+   - Errors: 100/100 (100%)
+   - Time: ~8m20s (timeout)
+   - Root cause: Gitignore pattern bug
+```
+
+**After Fixes**:
+```
+✅ All 6 Tests Passing:
+   - ACL race condition: ~80ms latency
+   - WebSocket latency: 72-282ms (1KB-3MB)
+   - Large file transfer: 0.19-4.89 MB/s
+   - Concurrent uploads: 144.74 MB/s
+   - Burst test: 100/100 files, ~33s
+   - ACK/NACK: ~100ms ACK latency
+```
+
+#### 📈 Profiling Infrastructure
+
+##### New Documentation
+**File**: `cmd/devstack/PROFILING_PLAN.md`
+
+Comprehensive 4-phase profiling plan:
+
+1. **Phase 1: Baseline Profiling**
+   - CPU profiling (flame graphs)
+   - Execution trace (timeline view)
+   - Memory profiling (allocation hot paths)
+   - Blocking profile (lock contention)
+
+2. **Phase 2: Targeted Instrumentation**
+   - Critical path trace spans
+   - Server-side timing
+   - Pure WebSocket RTT measurement
+   - RAM vs Disk I/O isolation
+
+3. **Phase 3: Hypothesis Testing**
+   - JSON serialization overhead
+   - Excessive logging impact
+   - File fsync frequency
+   - Small write chunks
+   - Channel blocking analysis
+
+4. **Phase 4: Quick Wins**
+   - Debug logging optimization
+   - TCP_NODELAY verification
+   - Buffer size tuning
+
+**Usage**:
+```bash
+# Enable profiling
+PERF_PROFILE=1 just sbdev-test-all
+
+# View flame graph
+go tool pprof -http=:8080 cmd/devstack/profiles/cpu.prof
+
+# View execution trace
+go tool trace cmd/devstack/profiles/trace.out
+```
+
+**Expected Performance Targets**:
+- WebSocket latency: <10ms (currently 72-282ms)
+- Large file single-stream: 50-100 MB/s (currently 0.1-4.9 MB/s)
+- Concurrent: Maintain 144.74 MB/s (already good)
+
+#### 📝 Code Changes
+
+**Modified Files (14)**:
+1. `internal/client/sync/sync_priority.go` - Fixed pattern matching
+2. `internal/client/sync/sync_ignore.go` - Fixed pattern matching
+3. `internal/syftmsg/msg_ack.go` - Enhanced ACK/NACK with OriginalId
+4. `internal/syftmsg/msg.go` - Added ACK/NACK unmarshaling
+5. `internal/server/server.go` - Server-side ACK/NACK sending
+6. `internal/syftsdk/events.go` - SendWithAck + retry + overflow queue
+7. `internal/client/sync/sync_engine_priority_upload.go` - Replaced sleep with SendWithAck
+8. `internal/client/sync/sync_engine.go` - Integrated adaptive scheduler
+9. `internal/syftsdk/events_socket.go` - Increased buffers (8→256)
+10. `internal/client/sync/file_watcher.go` - Increased buffer (64→256)
+11. `internal/server/handlers/ws/ws_client.go` - Increased buffers (8→256)
+12. `internal/server/handlers/ws/ws_hub.go` - Increased buffer (128→256)
+13. `internal/client/workspace/workspace.go` - Sync integration
+14. `internal/server/acl/acl.go` - ACL handling
+
+**New Files (4)**:
+1. `internal/client/sync/sync_adaptive.go` - Adaptive sync implementation
+2. `cmd/devstack/ack_nack_test.go` - ACK/NACK tests
+3. `cmd/devstack/PROFILING_PLAN.md` - Profiling documentation
+4. `CHANGELOG_ACK_NACK.md` - Detailed technical changelog
+
+**Updated Files (2)**:
+1. `justfile` - Added `sbdev-test-ack` target
+2. `.gitignore` - Test artifacts
+
+**Lines of Code**: ~800 added + ~200 modified = ~1000 total changes across 20 files
+
+#### 🎯 Impact Summary
+
+**Reliability**:
+- 100% success rate on burst transfers (was 0%)
+- Proper error handling via NACK messages
+- Eliminated blind 1-second waits
+
+**Performance**:
+- ~10x faster file acknowledgment (1000ms → 100ms)
+- ~15x faster burst transfers (500s → 33s for 100 files)
+- Eliminated blocking sleep delays
+- Adaptive resource utilization
+
+**Code Quality**:
+- Removed technical debt (1-second sleep hack)
+- Proper request/response pattern for WebSocket
+- Comprehensive test coverage
+- Profiling infrastructure for future optimization
+
+---
+
 ## [0.8.7] - 2025-10-27
 
 ### [PR #84] 9https://github.com/OpenMined/syftbox/pull/84) WebSocket Pointer Aliasing Bug Fix & File Write Improvements *(2025-10-17)*

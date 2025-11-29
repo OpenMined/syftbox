@@ -264,6 +264,26 @@ sbdev-test-cleanup:
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
 [group('devstack')]
+sbdev-test-all:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running all performance tests..."
+    echo ""
+    just sbdev-test-acl
+    echo ""
+    just sbdev-test-ws
+    echo ""
+    just sbdev-test-large
+    echo ""
+    just sbdev-test-concurrent
+    echo ""
+    just sbdev-test-many
+    echo ""
+    just sbdev-test-ack
+    echo ""
+    echo "✅ All performance tests completed!"
+
+[group('devstack')]
 sbdev-test-acl:
     #!/bin/bash
     set -eou pipefail
@@ -271,6 +291,8 @@ sbdev-test-acl:
     cd cmd/devstack
     # Use local sandbox instead of temp dir for consistency
     SANDBOX_DIR="$(pwd)/../../.test-sandbox/acl-test"
+    # Clean sandbox before test to avoid stale files
+    rm -rf "$SANDBOX_DIR"
     PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLRaceCondition
     echo "Test artifacts preserved at: $SANDBOX_DIR"
 
@@ -280,7 +302,10 @@ sbdev-test-ws:
     set -eou pipefail
     echo "Running WebSocket latency test..."
     cd cmd/devstack
-    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 10m -tags integration -run TestWebSocketLatency
+    SANDBOX_DIR="$(pwd)/../../.test-sandbox/ws-test"
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestWebSocketLatency
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
 
 [group('devstack')]
 sbdev-test-large:
@@ -305,6 +330,13 @@ sbdev-test-many:
     echo "Running many small files test..."
     cd cmd/devstack
     GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestManySmallFiles
+
+sbdev-test-ack:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running ACK/NACK mechanism test..."
+    cd cmd/devstack
+    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 5m -tags integration -run TestACKNACKMechanism
 
 [group('dev')]
 test:

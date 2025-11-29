@@ -68,16 +68,15 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		file.Content,
 	)
 
-	// send the message
-	if err := se.sdk.Events.Send(message); err != nil {
+	// send the message and wait for ACK/NACK (replaces 1-second sleep hack)
+	ackTimeout := 5 * time.Second
+	if err := se.sdk.Events.SendWithAck(message, ackTimeout); err != nil {
 		se.syncStatus.SetError(syncRelPath, err)
 		slog.Error("sync", "type", SyncPriority, "op", OpWriteRemote, "path", relPath, "error", err)
 		return
 	}
 
-	// this is a hack to ensure the file is written on the server side
-	// this requires a proper ACK/NACK mechanism
-	time.Sleep(1 * time.Second)
+	slog.Debug("sync", "type", SyncPriority, "op", OpWriteRemote, "path", relPath, "ack", "received")
 
 	// update the journal
 	se.journal.Set(&FileMetadata{

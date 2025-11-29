@@ -30,17 +30,18 @@ var (
 )
 
 type SyncEngine struct {
-	workspace    *workspace.Workspace
-	sdk          *syftsdk.SyftSDK
-	journal      *SyncJournal
-	localState   *SyncLocalState
-	syncStatus   *SyncStatus
-	watcher      *FileWatcher
-	ignoreList   *SyncIgnoreList
-	priorityList *SyncPriorityList
-	lastSyncTime time.Time
-	wg           sync.WaitGroup
-	muSync       sync.Mutex
+	workspace         *workspace.Workspace
+	sdk               *syftsdk.SyftSDK
+	journal           *SyncJournal
+	localState        *SyncLocalState
+	syncStatus        *SyncStatus
+	watcher           *FileWatcher
+	ignoreList        *SyncIgnoreList
+	priorityList      *SyncPriorityList
+	lastSyncTime      time.Time
+	adaptiveScheduler *AdaptiveSyncScheduler
+	wg                sync.WaitGroup
+	muSync            sync.Mutex
 }
 
 func NewSyncEngine(
@@ -59,16 +60,18 @@ func NewSyncEngine(
 
 	localState := NewSyncLocalState(workspace.DatasitesDir)
 	syncStatus := NewSyncStatus()
+	adaptiveScheduler := NewAdaptiveSyncScheduler()
 
 	return &SyncEngine{
-		sdk:          sdk,
-		workspace:    workspace,
-		watcher:      watcher,
-		ignoreList:   ignore,
-		priorityList: priority,
-		journal:      journal,
-		localState:   localState,
-		syncStatus:   syncStatus,
+		sdk:               sdk,
+		workspace:         workspace,
+		watcher:           watcher,
+		ignoreList:        ignore,
+		priorityList:      priority,
+		journal:           journal,
+		localState:        localState,
+		syncStatus:        syncStatus,
+		adaptiveScheduler: adaptiveScheduler,
 	}, nil
 }
 
@@ -110,8 +113,12 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 
 		// using a timer and not a ticker to avoid queued ticks when
 		// runFullSync takes more than fullSyncInterval to complete
-		timer := time.NewTimer(fullSyncInterval)
+		// Adaptive: start with default interval, adjust based on activity
+		interval := se.adaptiveScheduler.GetSyncInterval()
+		timer := time.NewTimer(interval)
 		defer timer.Stop()
+
+		lastLevel := se.adaptiveScheduler.GetActivityLevel()
 
 		for {
 			select {
@@ -123,7 +130,18 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 				if err != nil && !errors.Is(err, context.Canceled) {
 					slog.Error("full sync", "error", err)
 				}
-				timer.Reset(fullSyncInterval)
+
+				// Adaptive: adjust interval based on current activity level
+				newInterval := se.adaptiveScheduler.GetSyncInterval()
+				currentLevel := se.adaptiveScheduler.GetActivityLevel()
+
+				// Log activity level changes
+				if currentLevel != lastLevel {
+					slog.Info("sync adaptive interval", "level", currentLevel.String(), "interval", newInterval)
+					lastLevel = currentLevel
+				}
+
+				timer.Reset(newInterval)
 			}
 		}
 	}()
@@ -587,6 +605,12 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				return
 			}
 			slog.Info("client received websocket message", "msgType", msg.Type, "msgId", msg.Id)
+
+			// Record activity for adaptive sync (except system messages)
+			if msg.Type != syftmsg.MsgSystem {
+				se.adaptiveScheduler.RecordActivity()
+			}
+
 			switch msg.Type {
 			case syftmsg.MsgSystem:
 				go se.handleSystem(msg)
@@ -618,6 +642,10 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 			// this is already filtered
 			relPath, _ := se.workspace.DatasiteRelPath(path)
 			slog.Info("watcher detected priority file", "path", relPath, "event", event.Event())
+
+			// Record activity for adaptive sync
+			se.adaptiveScheduler.RecordActivity()
+
 			go se.handlePriorityUpload(path)
 		}
 	}
