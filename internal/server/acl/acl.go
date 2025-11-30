@@ -134,6 +134,27 @@ func (s *ACLService) CanAccess(req *ACLRequest) error {
 		req.Level = AccessAdmin
 	}
 
+	// Allow datasite owners to upload ACL files to their own datasite without parent ACL permission
+	// This prevents the chicken-and-egg problem where you can't create subdirectory ACLs
+	// Path format: {email}/{rest of path}
+	if aclspec.IsACLFile(req.Path) && req.Level >= AccessCreate {
+		// Extract datasite owner from path (first segment)
+		datasiteOwner := ""
+		for i, ch := range req.Path {
+			if ch == '/' {
+				datasiteOwner = req.Path[:i]
+				break
+			}
+		}
+
+		// If user owns the datasite, allow ACL upload
+		if datasiteOwner == req.User.ID {
+			s.cache.Set(req, true)
+			slog.Debug("acl", "op", "CheckPermission", "user", req.User.ID, "path", req.Path, "result", "allowed", "reason", "datasite_owner_acl_upload")
+			return nil
+		}
+	}
+
 	// Check file limits for write operations
 	if req.Level >= AccessCreate && req.File != nil {
 		if err := rule.CheckLimits(req); err != nil {

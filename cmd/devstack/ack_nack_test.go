@@ -25,13 +25,19 @@ func TestACKNACKMechanism(t *testing.T) {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
 
-	// Setup RPC endpoint for alice
+	// Setup RPC endpoint for both Alice and Bob (like WebSocket latency test)
 	appName := "acktest"
 	endpoint := "msg"
 
 	if err := h.alice.SetupRPCEndpoint(appName, endpoint); err != nil {
 		t.Fatalf("setup alice RPC: %v", err)
 	}
+	if err := h.bob.SetupRPCEndpoint(appName, endpoint); err != nil {
+		t.Fatalf("setup bob RPC: %v", err)
+	}
+
+	// Wait for ACL files to sync via WebSocket priority sync (~70-200ms typical)
+	time.Sleep(100 * time.Millisecond)
 
 	t.Run("SuccessfulACK", func(t *testing.T) {
 		// Test that ACK is received for successful file write
@@ -41,8 +47,8 @@ func TestACKNACKMechanism(t *testing.T) {
 
 		start := time.Now()
 
-		// Alice uploads - this should wait for ACK before returning
-		if err := h.alice.UploadFile(filename, content); err != nil {
+		// Alice uploads RPC request - this should wait for ACK before returning
+		if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
 			t.Fatalf("alice upload failed: %v", err)
 		}
 
@@ -50,8 +56,8 @@ func TestACKNACKMechanism(t *testing.T) {
 		t.Logf("✅ Upload with ACK completed in %v", uploadTime)
 
 		// Verify file was written (Bob should receive it via WebSocket sync)
-		timeout := 10 * time.Second
-		if err := h.bob.WaitForFile(h.alice.email, filename, md5Hash, timeout); err != nil {
+		timeout := 3 * time.Second
+		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, timeout); err != nil {
 			t.Fatalf("bob didn't receive file: %v", err)
 		}
 
@@ -71,13 +77,13 @@ func TestACKNACKMechanism(t *testing.T) {
 			md5Hash := CalculateMD5(content)
 			filename := fmt.Sprintf("multi-ack-%d.request", i)
 
-			if err := h.alice.UploadFile(filename, content); err != nil {
+			if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
 				t.Fatalf("alice upload %d failed: %v", i, err)
 			}
 
 			// Verify Bob receives it
-			timeout := 5 * time.Second
-			if err := h.bob.WaitForFile(h.alice.email, filename, md5Hash, timeout); err != nil {
+			timeout := 3 * time.Second
+			if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, timeout); err != nil {
 				t.Fatalf("bob didn't receive file %d: %v", i, err)
 			}
 		}

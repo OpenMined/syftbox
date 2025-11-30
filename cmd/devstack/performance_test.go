@@ -103,8 +103,8 @@ func TestWebSocketLatency(t *testing.T) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Wait for ACL files to sync via periodic cycle (5s + buffer)
-	time.Sleep(6 * time.Second)
+	// Wait for ACL files to sync via WebSocket priority sync (~70-200ms typical)
+	time.Sleep(100 * time.Millisecond)
 
 	testCases := []struct {
 		name          string
@@ -305,8 +305,8 @@ func TestManySmallFiles(t *testing.T) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Wait for ACL files to sync via periodic cycle (5s + buffer)
-	time.Sleep(6 * time.Second)
+	// Wait for ACL files to sync via WebSocket priority sync (~70-200ms typical)
+	time.Sleep(100 * time.Millisecond)
 
 	numFiles := 100
 	fileSize := 1 * 1024 // 1KB each
