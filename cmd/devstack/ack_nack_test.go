@@ -36,8 +36,13 @@ func TestACKNACKMechanism(t *testing.T) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Wait for ACL files to sync via WebSocket priority sync (~70-200ms typical)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for initialization in fresh environment:
+	// 1. WebSocket connection (~100ms)
+	// 2. Peer discovery via adaptive periodic sync (startup phase: 100ms * ~3-5 cycles = 300-500ms)
+	// 3. Datasite subscription (~50-100ms)
+	// 4. ACL file sync via WebSocket (~70-200ms)
+	// Total: ~520-900ms for fresh environment with adaptive sync
+	time.Sleep(1 * time.Second)
 
 	t.Run("SuccessfulACK", func(t *testing.T) {
 		// Test that ACK is received for successful file write

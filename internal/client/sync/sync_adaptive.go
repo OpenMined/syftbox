@@ -7,33 +7,49 @@ import (
 
 const (
 	// Adaptive sync intervals
-	syncIntervalBurst    = 500 * time.Millisecond // During burst activity
-	syncIntervalActive   = 1 * time.Second        // Regular activity
-	syncIntervalModerate = 2500 * time.Millisecond // Occasional activity
-	syncIntervalIdle     = 5 * time.Second        // Default (current)
-	syncIntervalDeepIdle = 30 * time.Second       // Extended idle period
+	syncIntervalStartup  = 100 * time.Millisecond // Fast peer discovery on startup
+	syncIntervalBurst    = 100 * time.Millisecond // During burst activity
+	syncIntervalActive   = 100 * time.Millisecond // Regular activity (keep responsive)
+	syncIntervalModerate = 500 * time.Millisecond // Occasional activity
+	syncIntervalIdle     = 1 * time.Second        // Light idle - first backoff step
+	syncIntervalIdle2    = 2 * time.Second        // Medium idle - second backoff step
+	syncIntervalIdle3    = 5 * time.Second        // Heavy idle - third backoff step
+	syncIntervalDeepIdle = 10 * time.Second       // Deep idle - final backoff (was 30s)
 
 	// Activity detection thresholds
 	activityBurstThreshold    = 10               // events in window for burst
 	activityActiveThreshold   = 3                // events in window for active
 	activityModerateThreshold = 1                // events in window for moderate
 	activityWindow            = 10 * time.Second // sliding window for activity detection
-	deepIdleTimeout           = 5 * time.Minute  // time before deep idle
+
+	// Idle progression timeouts (exponential backoff)
+	idleTimeout1    = 5 * time.Second  // startup → idle (1s)
+	idleTimeout2    = 15 * time.Second // idle (1s) → idle2 (2s)
+	idleTimeout3    = 30 * time.Second // idle2 (2s) → idle3 (5s)
+	deepIdleTimeout = 60 * time.Second // idle3 (5s) → deep idle (10s)
+
+	// Startup detection
+	startupDuration = 3 * time.Second // stay in startup mode for initial peer discovery
 )
 
 // ActivityLevel represents the current sync activity state
 type ActivityLevel int
 
 const (
-	ActivityDeepIdle ActivityLevel = iota
-	ActivityIdle
-	ActivityModerate
-	ActivityActive
-	ActivityBurst
+	ActivityStartup ActivityLevel = iota // Initial fast peer discovery
+	ActivityBurst                        // High activity (10+ events in window)
+	ActivityActive                       // Regular activity (3+ events)
+	ActivityModerate                     // Light activity (1+ events)
+	ActivityIdle                         // First idle tier (1s interval)
+	ActivityIdle2                        // Second idle tier (2s interval)
+	ActivityIdle3                        // Third idle tier (5s interval)
+	ActivityDeepIdle                     // Final idle tier (10s interval)
 )
 
 func (a ActivityLevel) String() string {
 	switch a {
+	case ActivityStartup:
+		return "startup"
 	case ActivityBurst:
 		return "burst"
 	case ActivityActive:
@@ -42,6 +58,10 @@ func (a ActivityLevel) String() string {
 		return "moderate"
 	case ActivityIdle:
 		return "idle"
+	case ActivityIdle2:
+		return "idle2"
+	case ActivityIdle3:
+		return "idle3"
 	case ActivityDeepIdle:
 		return "deep_idle"
 	default:
@@ -52,16 +72,19 @@ func (a ActivityLevel) String() string {
 // AdaptiveSyncScheduler manages dynamic sync interval based on activity
 type AdaptiveSyncScheduler struct {
 	mu              sync.RWMutex
-	lastActivity    time.Time
-	eventTimestamps []time.Time
-	currentLevel    ActivityLevel
+	createdAt       time.Time     // When scheduler was created (for startup detection)
+	lastActivity    time.Time     // Last activity event timestamp
+	eventTimestamps []time.Time   // Recent activity events (sliding window)
+	currentLevel    ActivityLevel // Current activity level
 }
 
 func NewAdaptiveSyncScheduler() *AdaptiveSyncScheduler {
+	now := time.Now()
 	return &AdaptiveSyncScheduler{
-		lastActivity:    time.Now(),
+		createdAt:       now,
+		lastActivity:    now,
 		eventTimestamps: make([]time.Time, 0, activityBurstThreshold*2),
-		currentLevel:    ActivityIdle,
+		currentLevel:    ActivityStartup, // Start in startup mode for fast peer discovery
 	}
 }
 
@@ -95,25 +118,39 @@ func (a *AdaptiveSyncScheduler) RecordActivity() {
 func (a *AdaptiveSyncScheduler) updateActivityLevel(now time.Time) {
 	eventCount := len(a.eventTimestamps)
 	timeSinceActivity := now.Sub(a.lastActivity)
+	timeSinceCreation := now.Sub(a.createdAt)
 
 	var newLevel ActivityLevel
-	switch {
-	case eventCount >= activityBurstThreshold:
-		newLevel = ActivityBurst
-	case eventCount >= activityActiveThreshold:
-		newLevel = ActivityActive
-	case eventCount >= activityModerateThreshold:
-		newLevel = ActivityModerate
-	case timeSinceActivity < deepIdleTimeout:
-		newLevel = ActivityIdle
-	default:
-		newLevel = ActivityDeepIdle
+
+	// Startup phase: stay in fast discovery mode for initial period
+	if timeSinceCreation < startupDuration {
+		newLevel = ActivityStartup
+	} else {
+		// Normal activity-based detection
+		switch {
+		case eventCount >= activityBurstThreshold:
+			newLevel = ActivityBurst
+		case eventCount >= activityActiveThreshold:
+			newLevel = ActivityActive
+		case eventCount >= activityModerateThreshold:
+			newLevel = ActivityModerate
+		default:
+			// Exponential backoff through idle tiers
+			switch {
+			case timeSinceActivity < idleTimeout1:
+				newLevel = ActivityIdle // 1s interval
+			case timeSinceActivity < idleTimeout2:
+				newLevel = ActivityIdle2 // 2s interval
+			case timeSinceActivity < idleTimeout3:
+				newLevel = ActivityIdle3 // 5s interval
+			default:
+				newLevel = ActivityDeepIdle // 10s interval
+			}
+		}
 	}
 
-	// Log level changes
-	if newLevel != a.currentLevel {
-		a.currentLevel = newLevel
-	}
+	// Update level (sync_engine.go logs changes)
+	a.currentLevel = newLevel
 }
 
 // GetSyncInterval returns the appropriate sync interval for current activity level
@@ -130,16 +167,24 @@ func (a *AdaptiveSyncScheduler) GetSyncInterval() time.Duration {
 	a.mu.RLock()
 
 	switch a.currentLevel {
+	case ActivityStartup:
+		return syncIntervalStartup // 100ms for fast peer discovery
 	case ActivityBurst:
-		return syncIntervalBurst
+		return syncIntervalBurst // 100ms for high activity
 	case ActivityActive:
-		return syncIntervalActive
+		return syncIntervalActive // 100ms for regular activity
 	case ActivityModerate:
-		return syncIntervalModerate
+		return syncIntervalModerate // 500ms for light activity
+	case ActivityIdle:
+		return syncIntervalIdle // 1s (first backoff)
+	case ActivityIdle2:
+		return syncIntervalIdle2 // 2s (second backoff)
+	case ActivityIdle3:
+		return syncIntervalIdle3 // 5s (third backoff)
 	case ActivityDeepIdle:
-		return syncIntervalDeepIdle
+		return syncIntervalDeepIdle // 10s (final backoff)
 	default:
-		return syncIntervalIdle
+		return syncIntervalIdle // Fallback to 1s
 	}
 }
 
