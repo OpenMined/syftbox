@@ -77,6 +77,12 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = &httpMsg
+	case MsgFileNotify:
+		var fileNotify FileWrite
+		if err := json.Unmarshal(temp.Data, &fileNotify); err != nil {
+			return err
+		}
+		m.Data = fileNotify
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}

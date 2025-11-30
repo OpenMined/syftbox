@@ -2,6 +2,7 @@ package blob
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -10,15 +11,41 @@ import (
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
+	"github.com/openmined/syftbox/internal/server/handlers/ws"
+	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
 type BlobHandler struct {
 	blob *blob.BlobService
 	acl  *acl.ACLService
+	hub  *ws.WebsocketHub
 }
 
-func New(blob *blob.BlobService, acl *acl.ACLService) *BlobHandler {
-	return &BlobHandler{blob: blob, acl: acl}
+func New(blob *blob.BlobService, acl *acl.ACLService, hub *ws.WebsocketHub) *BlobHandler {
+	return &BlobHandler{blob: blob, acl: acl, hub: hub}
+}
+
+func (h *BlobHandler) notifyFileUploaded(path string, etag string, size int64) {
+	if h.hub == nil {
+		return
+	}
+
+	fileNotify := syftmsg.FileWrite{
+		Path:   path,
+		ETag:   etag,
+		Length: size,
+	}
+
+	msg := &syftmsg.Message{
+		Id:   "srv",
+		Type: syftmsg.MsgFileNotify,
+		Data: fileNotify,
+	}
+
+	h.hub.BroadcastFiltered(msg, func(info *ws.ClientInfo) bool {
+		return info.Version != ""
+	})
+	slog.Debug("broadcasted file notify to new clients", "path", path, "etag", etag, "size", size)
 }
 
 func (h *BlobHandler) UploadMultipart(ctx *gin.Context) {

@@ -85,6 +85,8 @@ func (h *BlobHandler) Upload(ctx *gin.Context) {
 		return
 	}
 
+	h.notifyFileUploaded(result.Key, result.ETag, result.Size)
+
 	// response with UploadAccept
 	ctx.PureJSON(http.StatusOK, &UploadResponse{
 		Key:          result.Key,

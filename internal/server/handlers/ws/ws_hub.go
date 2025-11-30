@@ -110,6 +110,7 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 		User:    user,
 		IPAddr:  ctx.ClientIP(),
 		Headers: ctx.Request.Header.Clone(),
+		Version: ctx.GetHeader("X-Syft-Version"),
 	})
 
 	client.MsgTx <- syftmsg.NewSystemMessage(version.Version, "ok")

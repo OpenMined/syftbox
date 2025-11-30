@@ -10,6 +10,7 @@ type ClientInfo struct {
 	User    string
 	IPAddr  string
 	Headers http.Header
+	Version string
 }
 
 type ClientMessage struct {

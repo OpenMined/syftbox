@@ -618,6 +618,8 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				go se.handlePriorityError(msg)
 			case syftmsg.MsgFileWrite:
 				go se.handlePriorityDownload(msg)
+			case syftmsg.MsgFileNotify:
+				go se.handlePriorityDownload(msg)
 			case syftmsg.MsgHttp:
 				go se.processHttpMessage(msg)
 			default:

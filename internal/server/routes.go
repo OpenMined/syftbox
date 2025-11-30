@@ -62,7 +62,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 
 	// --------------------------- handlers ---------------------------
 
-	blobH := blob.New(svc.Blob, svc.ACL)
+	blobH := blob.New(svc.Blob, svc.ACL, hub)
 	dsH := datasite.New(svc.Datasite)
 	explorerH := explorer.New(svc.Blob, svc.ACL)
 	authH := auth.New(svc.Auth)
