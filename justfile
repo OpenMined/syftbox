@@ -329,14 +329,54 @@ sbdev-test-many:
     set -eou pipefail
     echo "Running many small files test..."
     cd cmd/devstack
-    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestManySmallFiles
+    SANDBOX_DIR="$(pwd)/../../.test-sandbox/batch-test"
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run TestManySmallFiles
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
 
 sbdev-test-ack:
     #!/bin/bash
     set -eou pipefail
     echo "Running ACK/NACK mechanism test..."
     cd cmd/devstack
-    GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 5m -tags integration -run TestACKNACKMechanism
+    SANDBOX_DIR="$(pwd)/../../.test-sandbox/ack-test"
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 5m -tags integration -run TestACKNACKMechanism
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+sbdev-test-profile:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running performance profiling test with CPU/memory tracking..."
+    cd cmd/devstack
+    SANDBOX_DIR="$(pwd)/../../.test-sandbox/profile-test"
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestProfilePerformance
+    echo ""
+    echo "✅ Profile data saved to: cmd/devstack/profiles/performance_profile/"
+    echo "   - cpu.prof (CPU profile)"
+    echo "   - trace.out (execution trace)"
+    echo "   - mem.prof (memory profile)"
+    echo ""
+    echo "Generate flame graphs with: just sbdev-flamegraph"
+
+sbdev-flamegraph:
+    #!/bin/bash
+    set -eou pipefail
+    cd cmd/devstack/profiles/performance_profile
+    echo "Generating flame graphs from profiling data..."
+    echo ""
+    echo "🔥 CPU Flame Graph:"
+    echo "   go tool pprof -http=:8080 cpu.prof"
+    echo ""
+    echo "🔥 Memory Flame Graph:"
+    echo "   go tool pprof -http=:8081 mem.prof"
+    echo ""
+    echo "🔥 Execution Trace (detailed timeline):"
+    echo "   go tool trace trace.out"
+    echo ""
+    echo "Interactive CPU profile analysis starting..."
+    go tool pprof -http=:8080 cpu.prof
 
 [group('dev')]
 test:

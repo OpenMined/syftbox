@@ -318,65 +318,81 @@ func TestManySmallFiles(t *testing.T) {
 	// Total: ~520-900ms for fresh environment with adaptive sync
 	time.Sleep(1 * time.Second)
 
-	numFiles := 100
+	// Test batch sizes: progressive scaling to find limits
+	batchSizes := []int{1, 5, 10, 20, 50, 100}
 	fileSize := 1 * 1024 // 1KB each
 
-	t.Logf("Creating %d small files...", numFiles)
+	for _, numFiles := range batchSizes {
+		t.Logf("\n=== Testing with %d files ===", numFiles)
 
-	start := time.Now()
+		start := time.Now()
 
-	// Alice creates many small files
-	filenames := make([]string, numFiles)
-	md5Hashes := make([]string, numFiles)
+		// Alice creates many small files
+		filenames := make([]string, numFiles)
+		md5Hashes := make([]string, numFiles)
 
-	for i := 0; i < numFiles; i++ {
-		content := GenerateRandomFile(fileSize)
-		filename := fmt.Sprintf("small-%d.request", i)
-		filenames[i] = filename
-		md5Hashes[i] = CalculateMD5(content)
+		for i := 0; i < numFiles; i++ {
+			content := GenerateRandomFile(fileSize)
+			filename := fmt.Sprintf("batch%d-file%d.request", numFiles, i)
+			filenames[i] = filename
+			md5Hashes[i] = CalculateMD5(content)
 
-		if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
-			t.Fatalf("upload %d failed: %v", i, err)
+			if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
+				t.Fatalf("upload %d failed: %v", i, err)
+			}
 		}
+
+		uploadTime := time.Since(start)
+		h.metrics.RecordCustomMetric("upload_time", uploadTime.Seconds())
+
+		t.Logf("✅ Uploads complete: %v", uploadTime)
+
+		// Give Alice's periodic sync time to upload all files to server, and Bob's
+		// periodic sync time to discover them. With 100ms adaptive sync intervals
+		// during burst activity, files need ~10-20 sync cycles = 1-2 seconds
+		sleepTime := time.Duration(numFiles*100) * time.Millisecond
+		if sleepTime < 1*time.Second {
+			sleepTime = 1 * time.Second
+		}
+		if sleepTime > 5*time.Second {
+			sleepTime = 5 * time.Second
+		}
+		t.Logf("Waiting %v for batch upload/download to complete...", sleepTime)
+		time.Sleep(sleepTime)
+
+		// Wait for Bob to sync all files
+		syncStart := time.Now()
+		syncErrors := 0
+
+		for i, filename := range filenames {
+			timeout := 5 * time.Second
+			if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], timeout); err != nil {
+				t.Logf("Sync error for %s: %v", filename, err)
+				syncErrors++
+				h.metrics.RecordError(err)
+			}
+		}
+
+		syncTime := time.Since(syncStart)
+		totalTime := time.Since(start)
+
+		h.metrics.RecordLatency(totalTime)
+		h.metrics.RecordCustomMetric("sync_time", syncTime.Seconds())
+
+		t.Logf("✅ Batch %d files: upload=%v, sleep=%v, verify=%v, total=%v, errors=%d/%d",
+			numFiles, uploadTime, sleepTime, syncTime, totalTime, syncErrors, numFiles)
+
+		if syncErrors > 0 {
+			t.Errorf("❌ Batch %d files: %d/%d files failed to sync", numFiles, syncErrors, numFiles)
+			break // Stop testing larger batches if this one failed
+		}
+
+		// Validate reasonable performance
+		avgTimePerFile := totalTime / time.Duration(numFiles)
+		t.Logf("📊 Average time per file: %v", avgTimePerFile)
 	}
 
-	uploadTime := time.Since(start)
-	h.metrics.RecordCustomMetric("upload_time", uploadTime.Seconds())
-
-	t.Logf("✅ Uploads complete: %v", uploadTime)
-
-	// Wait for Bob to sync all files
-	syncStart := time.Now()
-	syncErrors := 0
-
-	for i, filename := range filenames {
-		timeout := 5 * time.Second
-		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], timeout); err != nil {
-			t.Logf("Sync error for %s: %v", filename, err)
-			syncErrors++
-			h.metrics.RecordError(err)
-		}
-	}
-
-	syncTime := time.Since(syncStart)
-	totalTime := time.Since(start)
-
-	h.metrics.RecordLatency(totalTime)
-	h.metrics.RecordCustomMetric("sync_time", syncTime.Seconds())
-
-	t.Logf("✅ Sync complete: upload=%v, sync=%v, total=%v, errors=%d/%d",
-		uploadTime, syncTime, totalTime, syncErrors, numFiles)
-
+	// Final report
 	report := h.metrics.GenerateReport()
 	report.Log(t)
-
-	if syncErrors > numFiles/10 {
-		t.Errorf("Too many sync errors: %d/%d", syncErrors, numFiles)
-	}
-
-	// Validate reasonable performance
-	avgTimePerFile := totalTime / time.Duration(numFiles)
-	if avgTimePerFile > 500*time.Millisecond {
-		t.Logf("⚠️  Average time per file seems high: %v", avgTimePerFile)
-	}
 }
