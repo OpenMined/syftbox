@@ -542,7 +542,24 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 
 func (se *SyncEngine) isSyncing(path SyncPath) bool {
 	status, exists := se.syncStatus.GetStatus(path)
-	return exists && status.SyncState == SyncStateSyncing
+	if !exists {
+		return false
+	}
+
+	// File is syncing
+	if status.SyncState == SyncStateSyncing {
+		return true
+	}
+
+	// RACE CONDITION FIX: Also treat recently completed files (within 5s) as "syncing"
+	// to prevent concurrent reconciliations from re-processing them
+	if status.SyncState == SyncStateCompleted && !status.CompletedAt.IsZero() {
+		if time.Since(status.CompletedAt) < 5*time.Second {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (se *SyncEngine) isPriorityFile(path string) bool {

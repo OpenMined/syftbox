@@ -54,10 +54,10 @@ func NewWorkspace(rootDir string, user string) (*Workspace, error) {
 		Root:          root,
 		AppsDir:       filepath.Join(root, appsDir),
 		LogsDir:       filepath.Join(root, logsDir),
-		DatasitesDir:  root,
+		DatasitesDir:  filepath.Join(root, "datasites"),
 		MetadataDir:   filepath.Join(root, metadataDir),
-		UserDir:       filepath.Join(root, user),
-		UserPublicDir: filepath.Join(root, user, publicDir),
+		UserDir:       filepath.Join(root, "datasites", user),
+		UserPublicDir: filepath.Join(root, "datasites", user, publicDir),
 		flock:         flock,
 	}, nil
 }
@@ -109,7 +109,7 @@ func (w *Workspace) Setup() error {
 	slog.Info("workspace", "root", w.Root)
 
 	// Create required directories
-	dirs := []string{w.AppsDir, w.MetadataDir, w.UserPublicDir}
+	dirs := []string{w.AppsDir, w.MetadataDir, w.DatasitesDir, w.UserPublicDir}
 	for _, dir := range dirs {
 		if err := utils.EnsureDir(dir); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)

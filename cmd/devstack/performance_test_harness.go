@@ -66,19 +66,19 @@ type MetricsCollector struct {
 
 // TestReport contains test results
 type TestReport struct {
-	Duration      time.Duration
-	TotalOps      int
-	SuccessOps    int
-	ErrorOps      int
-	P50Latency    time.Duration
-	P90Latency    time.Duration
-	P95Latency    time.Duration
-	P99Latency    time.Duration
-	AvgThroughput float64
+	Duration       time.Duration
+	TotalOps       int
+	SuccessOps     int
+	ErrorOps       int
+	P50Latency     time.Duration
+	P90Latency     time.Duration
+	P95Latency     time.Duration
+	P99Latency     time.Duration
+	AvgThroughput  float64
 	PeakThroughput float64
-	ErrorRate     float64
-	PeakMemoryMB  uint64
-	AvgCPUPercent float64
+	ErrorRate      float64
+	PeakMemoryMB   uint64
+	AvgCPUPercent  float64
 }
 
 // NewDevstackHarness creates a test harness with full devstack
@@ -212,7 +212,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[0],
 		state:     clients[0],
 		dataDir:   clients[0].DataPath,
-		publicDir: filepath.Join(clients[0].DataPath, emails[0], "public"),
+		publicDir: filepath.Join(clients[0].DataPath, "datasites", emails[0], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -221,7 +221,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[1],
 		state:     clients[1],
 		dataDir:   clients[1].DataPath,
-		publicDir: filepath.Join(clients[1].DataPath, emails[1], "public"),
+		publicDir: filepath.Join(clients[1].DataPath, "datasites", emails[1], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -317,7 +317,8 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	c.t.Helper()
 
 	// File syncs to datasites/{sender}/public/{relPath}
-	fullPath := filepath.Join(c.dataDir, senderEmail, "public", relPath)
+	fullPath := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
+	var lastMD5 string
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -326,27 +327,34 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	for time.Now().Before(deadline) {
 		select {
 		case <-ticker.C:
-			if _, err := os.Stat(fullPath); err == nil {
-				// File exists, verify content if MD5 provided
-				if expectedMD5 != "" {
-					content, err := os.ReadFile(fullPath)
-					if err != nil {
-						return fmt.Errorf("read file: %w", err)
-					}
-
-					actualMD5 := fmt.Sprintf("%x", md5.Sum(content))
-					if actualMD5 != expectedMD5 {
-						return fmt.Errorf("MD5 mismatch: expected %s, got %s", expectedMD5, actualMD5)
-					}
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
 				}
+				return fmt.Errorf("read file: %w", err)
+			}
 
+			if expectedMD5 == "" {
 				c.t.Logf("%s received %s from %s", c.email, relPath, senderEmail)
 				return nil
+			}
+
+			actualMD5 := fmt.Sprintf("%x", md5.Sum(content))
+			if actualMD5 == expectedMD5 {
+				c.t.Logf("%s received %s from %s", c.email, relPath, senderEmail)
+				return nil
+			}
+
+			if actualMD5 != lastMD5 {
+				// File arrived but is stale; keep waiting for the updated version.
+				c.t.Logf("waiting for %s from %s: have md5 %s, want %s", relPath, senderEmail, actualMD5, expectedMD5)
+				lastMD5 = actualMD5
 			}
 		}
 	}
 
-	return fmt.Errorf("timeout waiting for file %s", fullPath)
+	return fmt.Errorf("timeout waiting for file %s (last seen MD5=%s)", fullPath, lastMD5)
 }
 
 // CreateDefaultACLs creates the default root and public ACL files like the real client
@@ -354,7 +362,7 @@ func (c *ClientHelper) CreateDefaultACLs() error {
 	c.t.Helper()
 
 	// Root directory is datasites/{email}/
-	userDir := filepath.Join(c.dataDir, c.email)
+	userDir := filepath.Join(c.dataDir, "datasites", c.email)
 	publicDir := filepath.Join(userDir, "public")
 
 	// Create root ACL with private access (owner only via implicit isOwner check)
@@ -409,7 +417,7 @@ func (c *ClientHelper) GetRPCPath(appName, endpoint string) (string, error) {
 		return "", fmt.Errorf("create SyftBoxURL: %w", err)
 	}
 
-	return filepath.Join(c.dataDir, syftURL.ToLocalPath()), nil
+	return filepath.Join(c.dataDir, "datasites", syftURL.ToLocalPath()), nil
 }
 
 // SetupRPCEndpoint creates the RPC directory structure and ACL file
@@ -497,9 +505,9 @@ func (c *ClientHelper) WaitForRPCRequest(senderEmail, appName, endpoint, filenam
 	c.t.Helper()
 
 	// Bob receives at: {bob's datasites dir}/{alice's datasite}/app_data/{appname}/rpc/{endpoint}/{filename}
-	// Note: c.dataDir already ends with /datasites
 	fullPath := filepath.Join(
 		c.dataDir,
+		"datasites",
 		senderEmail,
 		"app_data",
 		appName,

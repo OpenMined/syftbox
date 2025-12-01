@@ -5,6 +5,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -390,9 +393,56 @@ func TestManySmallFiles(t *testing.T) {
 		// Validate reasonable performance
 		avgTimePerFile := totalTime / time.Duration(numFiles)
 		t.Logf("📊 Average time per file: %v", avgTimePerFile)
+
+		// CRITICAL: Verify no conflicts or rejected files were created
+		aliceConflicts := findFilesRecursive(h.alice.dataDir, "conflict")
+		aliceRejects := findFilesRecursive(h.alice.dataDir, "rejected")
+		bobConflicts := findFilesRecursive(h.bob.dataDir, "conflict")
+		bobRejects := findFilesRecursive(h.bob.dataDir, "rejected")
+
+		conflictCount := len(aliceConflicts) + len(bobConflicts)
+		rejectedCount := len(aliceRejects) + len(bobRejects)
+
+		if conflictCount > 0 {
+			t.Errorf("❌ Found %d conflict files after batch %d - conflicts should be ZERO", conflictCount, numFiles)
+			if len(aliceConflicts) > 0 {
+				t.Logf("Alice conflicts: %v", aliceConflicts)
+			}
+			if len(bobConflicts) > 0 {
+				t.Logf("Bob conflicts: %v", bobConflicts)
+			}
+			break
+		}
+		if rejectedCount > 0 {
+			t.Errorf("❌ Found %d rejected files after batch %d - rejections should be ZERO", rejectedCount, numFiles)
+			if len(aliceRejects) > 0 {
+				t.Logf("Alice rejected: %v", aliceRejects)
+			}
+			if len(bobRejects) > 0 {
+				t.Logf("Bob rejected: %v", bobRejects)
+			}
+			break
+		}
+
+		t.Logf("✅ Zero conflicts/rejections verified for batch %d", numFiles)
 	}
 
 	// Final report
 	report := h.metrics.GenerateReport()
 	report.Log(t)
+}
+
+// findFilesRecursive recursively searches for files containing pattern in their name
+func findFilesRecursive(rootDir, pattern string) []string {
+	var matches []string
+	filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.Contains(path, pattern) {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches
 }

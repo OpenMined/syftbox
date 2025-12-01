@@ -40,6 +40,7 @@ type PathStatus struct {
 	Error         error
 	ErrorCount    int
 	LastUpdated   time.Time
+	CompletedAt   time.Time // Track when file was marked completed
 }
 
 func (s *PathStatus) String() string {
@@ -162,11 +163,22 @@ func (s *SyncStatus) SetCompleted(path SyncPath) {
 	status.SyncState = SyncStateCompleted
 	status.Progress = progressMax
 	status.Error = nil
+	status.CompletedAt = time.Now()
 	status.LastUpdated = time.Now()
 
-	// Only remove clean files from tracking - keep rejected/conflicted files in tracking
+	// RACE CONDITION FIX: Keep completed entries for 5s grace period to prevent
+	// concurrent reconciliations from re-processing recently synced files.
+	// Schedule delayed removal for clean files.
 	if status.ConflictState == ConflictStateNone {
-		delete(s.files, path)
+		go func() {
+			time.Sleep(5 * time.Second)
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			// Double-check the file is still completed and clean before removing
+			if st, exists := s.files[path]; exists && st.SyncState == SyncStateCompleted && st.ConflictState == ConflictStateNone {
+				delete(s.files, path)
+			}
+		}()
 	}
 	s.broadcastEvent(path, status)
 }
