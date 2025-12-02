@@ -439,19 +439,38 @@ sbdev-test-concurrent:
 sbdev-test-conflict:
     #!/bin/bash
     set -eou pipefail
-    echo "Running file modification conflict test..."
+    echo "Running conflict resolution tests (simultaneous writes, divergent edits, etc.)..."
+    RUNS=${1:-1}
+    shift || true
     cd cmd/devstack
     REPO_ROOT="$(pwd)/../.."
     if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
         case "$PERF_TEST_SANDBOX" in
-            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
-            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
         esac
     else
-        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/conflict-test"
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/conflict-test"
     fi
-    rm -rf "$SANDBOX_DIR"
-    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestFileModificationDuringSync
+
+    # Run each test separately to prevent state pollution
+    TESTS=("TestSimultaneousWrite" "TestDivergentEdits" "TestThreeWayConflict" "TestConflictDuringACLChange" "TestNestedPathConflict")
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        for TEST in "${TESTS[@]}"; do
+            echo "Running $TEST..."
+            rm -rf "$SANDBOX_DIR"
+            PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
+        done
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
 
 [group('devstack')]
 sbdev-test-many:
