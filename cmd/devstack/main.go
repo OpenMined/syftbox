@@ -736,7 +736,11 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 		return clientState{}, err
 	}
 	dataDir := emailDir
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	// Ensure encrypted and shadow roots exist under the workspace root.
+	if err := os.MkdirAll(filepath.Join(dataDir, "datasites"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "unencrypted"), 0o755); err != nil {
 		return clientState{}, err
 	}
 	logDir := filepath.Join(homeDir, ".syftbox", "logs")
