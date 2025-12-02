@@ -514,6 +514,42 @@ sbdev-test-profile:
     echo ""
     echo "Generate flame graphs with: just sbdev-flamegraph"
 
+sbdev-test-race:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running race condition tests (delete during download, ACL during upload, etc.)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/race-test"
+    fi
+
+    # Run each test separately to prevent state pollution
+    TESTS=("TestDeleteDuringDownload" "TestACLChangeDuringUpload" "TestOverwriteDuringDownload" "TestDeleteDuringTempRename")
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        for TEST in "${TESTS[@]}"; do
+            echo "Running $TEST..."
+            rm -rf "$SANDBOX_DIR"
+            PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
+        done
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
 sbdev-test-chaos:
     #!/bin/bash
     set -eou pipefail

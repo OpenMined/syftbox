@@ -182,7 +182,7 @@ func TestChaosSync(t *testing.T) {
 			t.Logf("Chaos duration reached after %d iterations", i)
 			break
 		}
-		action := rng.Intn(11) // 0 new public, 1 overwrite, 2 nested, 3 rpc, 4 grant read, 5 revoke, 6 grant public, 7 delete, 8 rapid ACL flip, 9 burst upload, 10 weird names
+		action := rng.Intn(14) // 0 new public, 1 overwrite, 2 nested, 3 rpc, 4 grant read, 5 revoke, 6 grant public, 7 delete, 8 rapid ACL flip, 9 burst upload, 10 weird names, 11 delete during download, 12 ACL change during upload, 13 overwrite during download
 
 		switch action {
 		case 0: // new public file
@@ -670,6 +670,194 @@ rules:
 						}
 					}
 				}
+			}
+
+		case 11: // delete during download (race condition test)
+			// Upload a large file, start download on peer, delete during download
+			sender := clients[rng.Intn(len(clients))]
+			receiver := clients[rng.Intn(len(clients))]
+			for receiver.email == sender.email || !contains(aclState[sender.email], receiver.email) {
+				receiver = clients[rng.Intn(len(clients))]
+			}
+
+			name := fmt.Sprintf("delete-race-%d.bin", i)
+			size := (2 + rng.Intn(4)) * 1024 * 1024 // 2-6MB
+			content := GenerateRandomFile(size)
+			md5 := CalculateMD5(content)
+
+			if err := sender.UploadFile(name, content); err != nil {
+				t.Fatalf("delete-race upload %s by %s: %v", name, sender.email, err)
+			}
+			addFileToExpected(sender.email, name, md5, false)
+
+			// Start download in background
+			downloadDone := make(chan error, 1)
+			go func() {
+				downloadDone <- receiver.WaitForFile(sender.email, name, md5, 15*time.Second)
+			}()
+
+			// Delete after short delay (while download may be in progress)
+			time.Sleep(time.Duration(100+rng.Intn(300)) * time.Millisecond)
+			filePath := filepath.Join(sender.publicDir, name)
+			if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+				t.Logf("delete-race: delete %s failed: %v", name, err)
+			} else {
+				t.Logf("delete-race: %s deleted %s during download", sender.email, name)
+			}
+
+			// Remove from expected files
+			fileKey := fmt.Sprintf("%s/%s", sender.email, name)
+			for peerEmail := range expectedFiles {
+				delete(expectedFiles[peerEmail], fileKey)
+			}
+
+			// Wait for download to complete or fail
+			err := <-downloadDone
+			if err == nil {
+				t.Logf("delete-race: %s completed download before deletion (valid)", receiver.email)
+			} else {
+				t.Logf("delete-race: %s download failed (expected): %v", receiver.email, err)
+			}
+
+		case 12: // ACL change during upload (TOCTOU race condition test)
+			sender := clients[rng.Intn(len(clients))]
+			receiver := clients[rng.Intn(len(clients))]
+			for receiver.email == sender.email {
+				receiver = clients[rng.Intn(len(clients))]
+			}
+
+			// Ensure receiver has public ACL initially
+			publicDir := filepath.Join(receiver.dataDir, "datasites", receiver.email, "public")
+			aclPath := filepath.Join(publicDir, "syft.pub.yaml")
+			aclContent := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: ['%s']
+      read: ['*']
+`
+			aclContent = fmt.Sprintf(aclContent, receiver.email)
+			if err := os.WriteFile(aclPath, []byte(aclContent), 0o644); err != nil {
+				t.Fatalf("acl-race: write public ACL for %s: %v", receiver.email, err)
+			}
+
+			var allPeers []string
+			for _, c := range clients {
+				if c.email != receiver.email {
+					allPeers = append(allPeers, c.email)
+				}
+			}
+			updateACLState(receiver.email, allPeers)
+			time.Sleep(500 * time.Millisecond) // Wait for ACL to propagate
+
+			name := fmt.Sprintf("acl-race-%d.bin", i)
+			size := (2 + rng.Intn(3)) * 1024 * 1024 // 2-5MB
+			content := GenerateRandomFile(size)
+
+			// Start upload in background
+			uploadDone := make(chan error, 1)
+			go func() {
+				targetPath := filepath.Join(sender.dataDir, "datasites", receiver.email, "public", name)
+				if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+					uploadDone <- err
+					return
+				}
+				uploadDone <- os.WriteFile(targetPath, content, 0o644)
+			}()
+
+			// Change ACL to owner-only during upload
+			time.Sleep(time.Duration(100+rng.Intn(200)) * time.Millisecond)
+			aclContent = fmt.Sprintf(`terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: ['%s']
+      read: ['%s']
+`, receiver.email, receiver.email)
+			if err := os.WriteFile(aclPath, []byte(aclContent), 0o644); err != nil {
+				t.Logf("acl-race: ACL change failed: %v", err)
+			} else {
+				t.Logf("acl-race: %s revoked permissions during upload", receiver.email)
+			}
+			updateACLState(receiver.email, []string{})
+
+			// Wait for upload to complete
+			err := <-uploadDone
+			if err == nil {
+				t.Logf("acl-race: upload completed (TOCTOU - permission checked at start)")
+			} else {
+				t.Logf("acl-race: upload failed (ideal): %v", err)
+			}
+
+		case 13: // overwrite during download (race condition test)
+			sender := clients[rng.Intn(len(clients))]
+			receiver := clients[rng.Intn(len(clients))]
+			for receiver.email == sender.email || !contains(aclState[sender.email], receiver.email) {
+				receiver = clients[rng.Intn(len(clients))]
+			}
+
+			name := fmt.Sprintf("overwrite-race-%d.bin", i)
+			size := (2 + rng.Intn(3)) * 1024 * 1024 // 2-5MB
+			v1Content := GenerateRandomFile(size)
+			v1MD5 := CalculateMD5(v1Content)
+
+			// Upload version 1
+			if err := sender.UploadFile(name, v1Content); err != nil {
+				t.Fatalf("overwrite-race v1 upload %s by %s: %v", name, sender.email, err)
+			}
+			addFileToExpected(sender.email, name, v1MD5, false)
+
+			// Start download of v1 in background
+			downloadDone := make(chan error, 1)
+			var downloadedMD5 string
+			go func() {
+				err := receiver.WaitForFile(sender.email, name, v1MD5, 15*time.Second)
+				if err == nil {
+					// Read what receiver got
+					path := filepath.Join(receiver.dataDir, "datasites", sender.email, "public", name)
+					if data, readErr := os.ReadFile(path); readErr == nil {
+						downloadedMD5 = CalculateMD5(data)
+					}
+				}
+				downloadDone <- err
+			}()
+
+			// Upload version 2 after short delay (while download may be in progress)
+			time.Sleep(time.Duration(100+rng.Intn(300)) * time.Millisecond)
+			v2Content := GenerateRandomFile(size)
+			v2MD5 := CalculateMD5(v2Content)
+			if err := sender.UploadFile(name, v2Content); err != nil {
+				t.Logf("overwrite-race v2 upload failed: %v", err)
+			} else {
+				t.Logf("overwrite-race: %s uploaded v2 during download", sender.email)
+				// Update expected MD5 to v2
+				fileKey := fmt.Sprintf("%s/%s", sender.email, name)
+				for peerEmail := range expectedFiles {
+					if _, exists := expectedFiles[peerEmail][fileKey]; exists {
+						expectedFiles[peerEmail][fileKey] = fileInfo{
+							owner: sender.email,
+							path:  name,
+							md5:   v2MD5,
+							isRPC: false,
+						}
+					}
+				}
+			}
+
+			// Wait for download to complete
+			err := <-downloadDone
+			if err == nil {
+				if downloadedMD5 == v1MD5 {
+					t.Logf("overwrite-race: %s got complete v1 (download before overwrite)", receiver.email)
+				} else if downloadedMD5 == v2MD5 {
+					t.Logf("overwrite-race: %s got complete v2 (download after overwrite)", receiver.email)
+				} else if downloadedMD5 != "" {
+					t.Errorf("overwrite-race: %s got corrupted file (mixed v1/v2)!", receiver.email)
+				}
+			} else {
+				t.Logf("overwrite-race: %s download failed: %v", receiver.email, err)
 			}
 		}
 	}
