@@ -23,6 +23,7 @@ dist/
 
 # Go-specific Files
 *.test
+.gomodcache/
 
 # Go coverage tool output
 *.out

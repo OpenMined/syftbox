@@ -434,6 +434,31 @@ func (c *ClientHelper) SetupRPCEndpoint(appName, endpoint string) error {
 		return fmt.Errorf("create rpc dir: %w", err)
 	}
 
+	// Ensure an app-level RPC ACL exists so peers can discover endpoints before any requests.
+	rpcRootACL := `rules:
+  - pattern: '**.request'
+    access:
+      admin: []
+      read:
+        - '*'
+      write:
+        - '*'
+  - pattern: '**.response'
+    access:
+      admin: []
+      read:
+        - '*'
+      write:
+        - '*'
+`
+	rpcRootPath := filepath.Join(filepath.Dir(rpcPath), "syft.pub.yaml")
+	if err := os.MkdirAll(filepath.Dir(rpcRootPath), 0o755); err != nil {
+		return fmt.Errorf("create rpc root dir: %w", err)
+	}
+	if err := os.WriteFile(rpcRootPath, []byte(rpcRootACL), 0o644); err != nil {
+		return fmt.Errorf("write rpc root acl: %w", err)
+	}
+
 	// Create ACL file for RPC endpoint
 	// Server will broadcast ACL files without permission checks (they're metadata)
 	// Use '**.request' to match files at any depth including same directory

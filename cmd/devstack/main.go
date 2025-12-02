@@ -383,6 +383,12 @@ func ensureMinioBinary(binDir string) (string, error) {
 		return path, nil
 	}
 
+	// check sbdev cache (~/.sbdev/bin/minio) if present
+	sbdevPath := filepath.Join(os.Getenv("HOME"), ".sbdev", "bin", minioBinaryName)
+	if _, err := os.Stat(sbdevPath); err == nil {
+		return sbdevPath, nil
+	}
+
 	// check global cache
 	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", minioBinaryName)
 	if _, err := os.Stat(cachePath); err == nil {

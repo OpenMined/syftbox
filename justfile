@@ -349,6 +349,38 @@ sbdev-test-acl:
     done
 
 [group('devstack')]
+sbdev-test-acl-prop:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS=${1:-1}
+    shift || true
+    echo "Running ACL propagation regression test ($RUNS time(s))..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    # Resolve sandbox base path
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *)  BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/acl-prop"
+    fi
+
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLPropagationUpdates "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
 sbdev-test-ws:
     #!/bin/bash
     set -eou pipefail
@@ -481,6 +513,35 @@ sbdev-test-profile:
     echo "   - mem.prof (memory profile)"
     echo ""
     echo "Generate flame graphs with: just sbdev-flamegraph"
+
+sbdev-test-chaos:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running chaos sync test (3 clients, random ops)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/chaos-test"
+    fi
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestChaosSync "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
 
 sbdev-flamegraph:
     #!/bin/bash

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
@@ -47,13 +48,17 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		return
 	}
 
-	// check if the file has changed
-	if changed, err := se.journal.ContentsChanged(syncRelPath, file.ETag); err != nil {
-		slog.Warn("sync priority journal check", "error", err)
-	} else if !changed {
-		slog.Debug("sync", "type", SyncPriority, "op", OpSkipped, "reason", "contents unchanged", "path", path)
-		se.syncStatus.SetCompleted(syncRelPath)
-		return
+	// check if the file has changed (except for ACL files, which must always broadcast)
+	// ACL files bypass journal check because ACL state can cycle (owner→public→owner),
+	// and when state reverts to a previous hash, journal skips upload leaving peers out of sync
+	if !aclspec.IsACLFile(relPath) {
+		if changed, err := se.journal.ContentsChanged(syncRelPath, file.ETag); err != nil {
+			slog.Warn("sync priority journal check", "error", err)
+		} else if !changed {
+			slog.Debug("sync", "type", SyncPriority, "op", OpSkipped, "reason", "contents unchanged", "path", path)
+			se.syncStatus.SetCompleted(syncRelPath)
+			return
+		}
 	}
 
 	// log the time taken to upload the file
