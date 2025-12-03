@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -188,6 +189,7 @@ func (s *Server) handleSocketMessages(ctx context.Context) {
 	for {
 		select {
 		case msg := <-s.hub.Messages():
+			slog.Debug("server received websocket message", "msgType", msg.Message.Type, "msgId", msg.Message.Id, "connId", msg.ConnID, "from", msg.ClientInfo.User)
 			s.onMessage(msg)
 
 		case <-ctx.Done():
@@ -225,7 +227,12 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 
 	slog.Info("wsmsg handler recieved", msgGroup)
 
-	go func() {
+	// Check if this is an ACL file
+	isACLFile := strings.HasSuffix(data.Path, "/syft.pub.yaml") || data.Path == "syft.pub.yaml"
+
+	// For ACL files, upload synchronously to ensure they're loaded before broadcasting
+	// For other files, upload asynchronously for better performance
+	uploadFunc := func() error {
 		if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 			Key:  data.Path,
 			ETag: msg.Message.Id,
@@ -233,8 +240,50 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			Size: data.Length,
 		}); err != nil {
 			slog.Error("ws file write put object", "error", err)
+			return err
 		}
-	}()
+		return nil
+	}
+
+	if isACLFile {
+		// Synchronous upload for ACL files - wait for upload + ACL loading before broadcasting
+		if err := uploadFunc(); err != nil {
+			// Send NACK to sender
+			nackMsg := syftmsg.NewNack(msg.Message.Id, err.Error())
+			s.hub.SendMessage(msg.ConnID, nackMsg)
+			return
+		}
+
+		// Load the ACL immediately after upload to ensure it's available for permission checks
+		// This is more reliable than waiting for the async blob change callback
+		ruleSet, err := s.svc.ACL.LoadACLFromContent(data.Path, data.Content)
+		if err != nil {
+			slog.Error("ws file write ACL parse error", msgGroup, "error", err)
+		} else if ruleSet != nil {
+			if _, err := s.svc.ACL.AddRuleSet(ruleSet); err != nil {
+				slog.Error("ws file write ACL add ruleset error", msgGroup, "error", err)
+			} else {
+				slog.Info("ws file write ACL loaded synchronously", msgGroup, "path", ruleSet.Path)
+			}
+		}
+
+		// Send ACK to sender after successful ACL file write
+		ackMsg := syftmsg.NewAck(msg.Message.Id)
+		s.hub.SendMessage(msg.ConnID, ackMsg)
+	} else {
+		// Asynchronous upload for regular files - send ACK/NACK when done
+		go func() {
+			if err := uploadFunc(); err != nil {
+				// Send NACK to sender
+				nackMsg := syftmsg.NewNack(msg.Message.Id, err.Error())
+				s.hub.SendMessage(msg.ConnID, nackMsg)
+			} else {
+				// Send ACK to sender after successful file write
+				ackMsg := syftmsg.NewAck(msg.Message.Id)
+				s.hub.SendMessage(msg.ConnID, ackMsg)
+			}
+		}()
+	}
 
 	// broadcast the message to all clients except the sender
 	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
@@ -245,15 +294,23 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			return false
 		}
 
-		// check if the RECIPIENT has permission to read the file
-		if err := s.svc.ACL.CanAccess(
-			acl.NewRequest(data.Path, &acl.User{ID: to}, acl.AccessRead),
-		); err != nil {
-			slog.Warn("wsmsg handler permission denied", msgGroup, "to", to, "error", err)
-			return false
+		// ACL files (syft.pub.yaml) are metadata - always broadcast them
+		// This prevents chicken-and-egg problem where ACL can't be read because it hasn't synced yet
+		isACLFile := strings.HasSuffix(data.Path, "/syft.pub.yaml") || data.Path == "syft.pub.yaml"
+
+		if isACLFile {
+			slog.Info("wsmsg handler ACL bypass", msgGroup, "to", to, "reason", "ACL metadata file")
 		} else {
-			slog.Info("wsmsg handler broadcast", msgGroup, "to", to)
+			// check if the RECIPIENT has permission to read the file
+			if err := s.svc.ACL.CanAccess(
+				acl.NewRequest(data.Path, &acl.User{ID: to}, acl.AccessRead),
+			); err != nil {
+				slog.Warn("wsmsg handler permission denied", msgGroup, "to", to, "error", err)
+				return false
+			}
 		}
+
+		slog.Info("wsmsg handler broadcast", msgGroup, "to", to)
 
 		return true
 	})

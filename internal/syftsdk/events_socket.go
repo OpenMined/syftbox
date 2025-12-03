@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	wsClientChannelSize  = 8
+	wsClientChannelSize  = 256 // Increased from 8 to handle burst traffic
 	wsClientPingPeriod   = 15 * time.Second
 	wsClientPingTimeout  = 5 * time.Second
 	wsClientWriteTimeout = 5 * time.Second

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
+	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
@@ -47,13 +48,17 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		return
 	}
 
-	// check if the file has changed
-	if changed, err := se.journal.ContentsChanged(syncRelPath, file.ETag); err != nil {
-		slog.Warn("sync priority journal check", "error", err)
-	} else if !changed {
-		slog.Debug("sync", "type", SyncPriority, "op", OpSkipped, "reason", "contents unchanged", "path", path)
-		se.syncStatus.SetCompleted(syncRelPath)
-		return
+	// check if the file has changed (except for ACL files, which must always broadcast)
+	// ACL files bypass journal check because ACL state can cycle (owner→public→owner),
+	// and when state reverts to a previous hash, journal skips upload leaving peers out of sync
+	if !aclspec.IsACLFile(relPath) {
+		if changed, err := se.journal.ContentsChanged(syncRelPath, file.ETag); err != nil {
+			slog.Warn("sync priority journal check", "error", err)
+		} else if !changed {
+			slog.Debug("sync", "type", SyncPriority, "op", OpSkipped, "reason", "contents unchanged", "path", path)
+			se.syncStatus.SetCompleted(syncRelPath)
+			return
+		}
 	}
 
 	// log the time taken to upload the file
@@ -68,16 +73,15 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		file.Content,
 	)
 
-	// send the message
-	if err := se.sdk.Events.Send(message); err != nil {
+	// send the message and wait for ACK/NACK (replaces 1-second sleep hack)
+	ackTimeout := 5 * time.Second
+	if err := se.sdk.Events.SendWithAck(message, ackTimeout); err != nil {
 		se.syncStatus.SetError(syncRelPath, err)
 		slog.Error("sync", "type", SyncPriority, "op", OpWriteRemote, "path", relPath, "error", err)
 		return
 	}
 
-	// this is a hack to ensure the file is written on the server side
-	// this requires a proper ACK/NACK mechanism
-	time.Sleep(1 * time.Second)
+	slog.Debug("sync", "type", SyncPriority, "op", OpWriteRemote, "path", relPath, "ack", "received")
 
 	// update the journal
 	se.journal.Set(&FileMetadata{

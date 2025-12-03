@@ -213,7 +213,7 @@ func (se *SyncEngine) downloadBatchUnique(ctx context.Context, batch BatchLocalW
 						se.watcher.IgnoreOnce(targetPath)
 					}
 
-					err := copyLocal(res.DownloadPath, targetPath)
+					err := copyLocalWithTmp(res.DownloadPath, targetPath, se.workspace.Root)
 
 					if err != nil {
 						resultsChan <- downloadResult{Path: path, Metadata: pathToMeta[path], Error: err}
@@ -245,14 +245,17 @@ func (se *SyncEngine) getDownloadPriority(meta *FileMetadata) int {
 	return priority
 }
 
-func copyLocal(src, dst string) error {
+func copyLocalWithTmp(src, dst, workspaceRoot string) error {
 	if err := utils.EnsureParent(dst); err != nil {
 		return err
 	}
 
-	// Write to unique temp file in same directory, then atomic rename
-	// This ensures the destination file appears complete or not at all
-	tmpDir := filepath.Dir(dst)
+	// Write to unique temp file in a dedicated temp area (outside watcher),
+	// then atomic rename. Keeps half-written temp files out of datasites.
+	tmpDir := filepath.Join(workspaceRoot, ".syft-tmp")
+	if err := utils.EnsureDir(tmpDir); err != nil {
+		return err
+	}
 	tmpPattern := filepath.Base(dst) + ".tmp.*"
 
 	sourceFile, err := os.Open(src)

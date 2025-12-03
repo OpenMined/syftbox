@@ -143,10 +143,13 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		t.Fatalf("build client: %v", err)
 	}
 
-	// Allocate ports
+	// Allocate ports (ensure MinIO API and console ports differ)
 	serverPort, _ := getFreePort()
 	minioAPIPort, _ := getFreePort()
 	minioConsolePort, _ := getFreePort()
+	for minioConsolePort == minioAPIPort {
+		minioConsolePort, _ = getFreePort()
+	}
 
 	// Start MinIO
 	t.Logf("Starting MinIO...")
@@ -209,7 +212,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[0],
 		state:     clients[0],
 		dataDir:   clients[0].DataPath,
-		publicDir: filepath.Join(opts.root, emails[0], "datasites", emails[0], "public"),
+		publicDir: filepath.Join(clients[0].DataPath, "datasites", emails[0], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -218,7 +221,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[1],
 		state:     clients[1],
 		dataDir:   clients[1].DataPath,
-		publicDir: filepath.Join(opts.root, emails[1], "datasites", emails[1], "public"),
+		publicDir: filepath.Join(clients[1].DataPath, "datasites", emails[1], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -239,6 +242,12 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 			func() { stopMinio(mState) },
 			func() { _ = killProcess(clients[0].PID) },
 			func() { _ = killProcess(clients[1].PID) },
+			func() {
+				// Remove sandbox files when not preserving for debugging
+				if os.Getenv("PERF_TEST_SANDBOX") == "" {
+					_ = os.RemoveAll(opts.root)
+				}
+			},
 		},
 	}
 
@@ -309,6 +318,7 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 
 	// File syncs to datasites/{sender}/public/{relPath}
 	fullPath := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
+	var lastMD5 string
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -317,27 +327,85 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	for time.Now().Before(deadline) {
 		select {
 		case <-ticker.C:
-			if _, err := os.Stat(fullPath); err == nil {
-				// File exists, verify content if MD5 provided
-				if expectedMD5 != "" {
-					content, err := os.ReadFile(fullPath)
-					if err != nil {
-						return fmt.Errorf("read file: %w", err)
-					}
-
-					actualMD5 := fmt.Sprintf("%x", md5.Sum(content))
-					if actualMD5 != expectedMD5 {
-						return fmt.Errorf("MD5 mismatch: expected %s, got %s", expectedMD5, actualMD5)
-					}
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
 				}
+				return fmt.Errorf("read file: %w", err)
+			}
 
+			if expectedMD5 == "" {
 				c.t.Logf("%s received %s from %s", c.email, relPath, senderEmail)
 				return nil
+			}
+
+			actualMD5 := fmt.Sprintf("%x", md5.Sum(content))
+			if actualMD5 == expectedMD5 {
+				c.t.Logf("%s received %s from %s", c.email, relPath, senderEmail)
+				return nil
+			}
+
+			if actualMD5 != lastMD5 {
+				// File arrived but is stale; keep waiting for the updated version.
+				c.t.Logf("waiting for %s from %s: have md5 %s, want %s", relPath, senderEmail, actualMD5, expectedMD5)
+				lastMD5 = actualMD5
 			}
 		}
 	}
 
-	return fmt.Errorf("timeout waiting for file %s", fullPath)
+	return fmt.Errorf("timeout waiting for file %s (last seen MD5=%s)", fullPath, lastMD5)
+}
+
+// CreateDefaultACLs creates the default root and public ACL files like the real client
+func (c *ClientHelper) CreateDefaultACLs() error {
+	c.t.Helper()
+
+	// Root directory is datasites/{email}/
+	userDir := filepath.Join(c.dataDir, "datasites", c.email)
+	publicDir := filepath.Join(userDir, "public")
+
+	// Create root ACL with private access (owner only via implicit isOwner check)
+	rootACLPath := filepath.Join(userDir, "syft.pub.yaml")
+	if _, err := os.Stat(rootACLPath); os.IsNotExist(err) {
+		rootACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: []
+`
+		if err := os.MkdirAll(userDir, 0o755); err != nil {
+			return fmt.Errorf("create user dir: %w", err)
+		}
+		if err := os.WriteFile(rootACLPath, []byte(rootACL), 0o644); err != nil {
+			return fmt.Errorf("create root ACL: %w", err)
+		}
+		c.t.Logf("%s created root ACL", c.email)
+	}
+
+	// Create public ACL with public read access
+	publicACLPath := filepath.Join(publicDir, "syft.pub.yaml")
+	if _, err := os.Stat(publicACLPath); os.IsNotExist(err) {
+		publicACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: ['*']
+`
+		if err := os.MkdirAll(publicDir, 0o755); err != nil {
+			return fmt.Errorf("create public dir: %w", err)
+		}
+		if err := os.WriteFile(publicACLPath, []byte(publicACL), 0o644); err != nil {
+			return fmt.Errorf("create public ACL: %w", err)
+		}
+		c.t.Logf("%s created public ACL", c.email)
+	}
+
+	return nil
 }
 
 // GetRPCPath returns the RPC directory path for a given app and endpoint
@@ -366,16 +434,43 @@ func (c *ClientHelper) SetupRPCEndpoint(appName, endpoint string) error {
 		return fmt.Errorf("create rpc dir: %w", err)
 	}
 
-	// Create ACL file
-	aclContent := `rules:
-  - pattern: '**/*.request'
+	// Ensure an app-level RPC ACL exists so peers can discover endpoints before any requests.
+	rpcRootACL := `rules:
+  - pattern: '**.request'
     access:
       admin: []
       read:
         - '*'
       write:
         - '*'
-  - pattern: '**/*.response'
+  - pattern: '**.response'
+    access:
+      admin: []
+      read:
+        - '*'
+      write:
+        - '*'
+`
+	rpcRootPath := filepath.Join(filepath.Dir(rpcPath), "syft.pub.yaml")
+	if err := os.MkdirAll(filepath.Dir(rpcRootPath), 0o755); err != nil {
+		return fmt.Errorf("create rpc root dir: %w", err)
+	}
+	if err := os.WriteFile(rpcRootPath, []byte(rpcRootACL), 0o644); err != nil {
+		return fmt.Errorf("write rpc root acl: %w", err)
+	}
+
+	// Create ACL file for RPC endpoint
+	// Server will broadcast ACL files without permission checks (they're metadata)
+	// Use '**.request' to match files at any depth including same directory
+	aclContent := `rules:
+  - pattern: '**.request'
+    access:
+      admin: []
+      read:
+        - '*'
+      write:
+        - '*'
+  - pattern: '**.response'
     access:
       admin: []
       read:
@@ -434,7 +529,7 @@ func (c *ClientHelper) UploadRPCRequest(appName, endpoint, filename string, cont
 func (c *ClientHelper) WaitForRPCRequest(senderEmail, appName, endpoint, filename, expectedMD5 string, timeout time.Duration) error {
 	c.t.Helper()
 
-	// Bob receives at: {bob's datasite}/datasites/{alice's datasite}/app_data/{appname}/rpc/{endpoint}/{filename}
+	// Bob receives at: {bob's datasites dir}/{alice's datasite}/app_data/{appname}/rpc/{endpoint}/{filename}
 	fullPath := filepath.Join(
 		c.dataDir,
 		"datasites",

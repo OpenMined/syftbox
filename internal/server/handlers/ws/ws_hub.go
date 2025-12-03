@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxMessageSize = 4 * 1024 * 1024 // 4MB
+	maxMessageSize = 8 * 1024 * 1024 // 8MB (to handle 4MB files + JSON overhead)
 )
 
 type WebsocketHub struct {
@@ -31,7 +31,7 @@ func NewHub() *WebsocketHub {
 	return &WebsocketHub{
 		clients:  make(map[string]*WebsocketClient),
 		register: make(chan *WebsocketClient),
-		msgs:     make(chan *ClientMessage, 128),
+		msgs:     make(chan *ClientMessage, 256), // Increased from 128 to handle burst traffic
 	}
 }
 
@@ -110,6 +110,7 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 		User:    user,
 		IPAddr:  ctx.ClientIP(),
 		Headers: ctx.Request.Header.Clone(),
+		Version: ctx.GetHeader("X-Syft-Version"),
 	})
 
 	client.MsgTx <- syftmsg.NewSystemMessage(version.Version, "ok")
@@ -135,7 +136,7 @@ func (h *WebsocketHub) SendMessageUser(user string, msg *syftmsg.Message) bool {
 
 	for _, client := range h.clients {
 		if client.Info.User == user {
-			slog.Debug("sending message to client", "connId", client.ConnID, "user", user)
+			slog.Info("wshub sending to user", "connId", client.ConnID, "user", user, "msgType", msg.Type, "msgId", msg.Id)
 			select {
 			case client.MsgTx <- msg:
 				sent = true
@@ -143,6 +144,10 @@ func (h *WebsocketHub) SendMessageUser(user string, msg *syftmsg.Message) bool {
 				slog.Warn("wshub send buffer full", "connId", client.ConnID, "user", user)
 			}
 		}
+	}
+
+	if !sent {
+		slog.Warn("wshub no client found for user", "user", user, "msgType", msg.Type, "msgId", msg.Id)
 	}
 
 	return sent

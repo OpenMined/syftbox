@@ -66,6 +66,13 @@ func SetMarker(path string, mtype MarkerType) (string, error) {
 		return "", fmt.Errorf("cannot mark file: source file does not exist: %s", path)
 	}
 
+	// CRITICAL FIX: If the file is already marked with this marker type, do not mark it again.
+	// This prevents infinite rejection loops where sync.rejected.db becomes sync.rejected.rejected.db
+	if IsMarkedPath(path) && slices.Contains(GetMarkers(path), mtype) {
+		slog.Debug("file is already marked, skipping", "path", path, "marker", mtype)
+		return path, nil
+	}
+
 	markedPath := asMarkedPath(path, mtype)
 
 	// Check if the target marked path already exists.
