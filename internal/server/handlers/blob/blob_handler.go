@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openmined/syftbox/internal/server/accesslog"
 	"github.com/openmined/syftbox/internal/server/acl"
 	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/datasite"
@@ -193,6 +194,46 @@ func (h *BlobHandler) UploadComplete(ctx *gin.Context) {
 		Size:         result.Size,
 		LastModified: result.LastModified.Format(time.RFC3339),
 	})
+}
+
+func (h *BlobHandler) UploadAbort(ctx *gin.Context) {
+	user := ctx.GetString("user")
+
+	var req AbortMultipartUploadRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("failed to bind json: %w", err))
+		return
+	}
+
+	if !datasite.IsValidPath(req.Key) {
+		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeDatasiteInvalidPath, fmt.Errorf("invalid key: %s", req.Key))
+		return
+	}
+
+	if err := h.checkPermissions(req.Key, user, acl.AccessWrite); err != nil {
+		if logger := accesslog.GetAccessLogger(ctx); logger != nil {
+			logger.LogAccess(ctx, req.Key, accesslog.AccessTypeWrite, acl.AccessWrite, false, err.Error())
+		}
+		slog.Warn("blob_abort_rejected", "path", req.Key, "user", user, "upload_id", req.UploadID, "error", err.Error())
+		api.AbortWithError(ctx, http.StatusForbidden, api.CodeAccessDenied, err)
+		return
+	}
+
+	if err := h.blob.Backend().AbortMultipartUpload(ctx.Request.Context(), &blob.AbortMultipartUploadParams{
+		Key:      req.Key,
+		UploadID: req.UploadID,
+	}); err != nil {
+		slog.Error("blob_abort_failed", "path", req.Key, "user", user, "upload_id", req.UploadID, "error", err.Error())
+		api.AbortWithError(ctx, http.StatusInternalServerError, api.CodeBlobDeleteFailed, fmt.Errorf("failed to abort multipart upload: %w", err))
+		return
+	}
+
+	if logger := accesslog.GetAccessLogger(ctx); logger != nil {
+		logger.LogAccess(ctx, req.Key, accesslog.AccessTypeWrite, acl.AccessWrite, true, "")
+	}
+	slog.Info("blob_abort_success", "path", req.Key, "user", user, "upload_id", req.UploadID)
+
+	ctx.Status(http.StatusNoContent)
 }
 
 func (h *BlobHandler) ListObjects(ctx *gin.Context) {

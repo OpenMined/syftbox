@@ -370,8 +370,11 @@ func parseStartFlags(args []string) (startOptions, error) {
 }
 
 func buildBinary(outPath, pkg, tags string) error {
-	// Force rebuild all packages to ensure latest code changes are included
-	args := []string{"build", "-a", "-tags", tags, "-o", outPath, pkg}
+	args := []string{"build", "-tags", tags, "-o", outPath, pkg}
+	if os.Getenv("SBDEV_REBUILD_ALL") == "1" {
+		// Full rebuild is opt-in to keep test runs fast in CI/dev
+		args = append(args[:1], append([]string{"-a"}, args[1:]...)...)
+	}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

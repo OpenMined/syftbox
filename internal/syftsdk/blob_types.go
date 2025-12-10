@@ -75,6 +75,11 @@ type CompleteMultipartUploadRequest struct {
 	Parts    []*CompletedPart `json:"parts"`
 }
 
+type AbortMultipartUploadRequest struct {
+	Key      string `json:"key"`
+	UploadID string `json:"uploadId"`
+}
+
 // ===================================================================================================
 
 // PresignedParams represents the parameters for getting presigned URLs

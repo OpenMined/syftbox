@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/imroc/req/v3"
 )
@@ -377,4 +378,81 @@ func divideAndCeil(numerator, denominator int64) int64 {
 		quotient++
 	}
 	return quotient
+}
+
+// CleanupStaleSessions removes session files older than maxAge from the resume directory.
+// It also attempts to abort the corresponding server-side multipart uploads.
+func CleanupStaleSessions(client *req.Client, resumeDir string, maxAge time.Duration) (cleaned int, errs []error) {
+	entries, err := os.ReadDir(resumeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, []error{fmt.Errorf("read resume dir: %w", err)}
+	}
+
+	now := time.Now()
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+
+		path := filepath.Join(resumeDir, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("stat %s: %w", entry.Name(), err))
+			continue
+		}
+
+		if now.Sub(info.ModTime()) < maxAge {
+			continue
+		}
+
+		// Try to abort server-side multipart upload
+		if client != nil {
+			if abortErr := abortSessionUpload(client, path); abortErr != nil {
+				errs = append(errs, fmt.Errorf("abort %s: %w", entry.Name(), abortErr))
+			}
+		}
+
+		// Remove the session file
+		if removeErr := os.Remove(path); removeErr != nil {
+			errs = append(errs, fmt.Errorf("remove %s: %w", entry.Name(), removeErr))
+		} else {
+			cleaned++
+		}
+	}
+
+	return cleaned, errs
+}
+
+func abortSessionUpload(client *req.Client, sessionPath string) error {
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		return err
+	}
+
+	var session uploadSession
+	if err := json.Unmarshal(data, &session); err != nil {
+		return err
+	}
+
+	if session.UploadID == "" || session.Key == "" {
+		return nil // No server-side upload to abort
+	}
+
+	resp, err := client.R().
+		SetBody(&AbortMultipartUploadRequest{
+			Key:      session.Key,
+			UploadID: session.UploadID,
+		}).
+		Post(v1BlobUploadAbort)
+
+	if err != nil {
+		return err
+	}
+	if resp.IsErrorState() {
+		return fmt.Errorf("abort failed: %s", resp.Status)
+	}
+	return nil
 }

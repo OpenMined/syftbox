@@ -17,6 +17,7 @@ const (
 	v1BlobDelete             = "/api/v1/blob/delete"
 	v1BlobUploadMultipart    = "/api/v1/blob/upload/multipart"
 	v1BlobUploadComplete     = "/api/v1/blob/upload/complete"
+	v1BlobUploadAbort        = "/api/v1/blob/upload/abort"
 	multipartUploadThreshold = int64(32 * 1024 * 1024) // switch to resumable uploads for larger files
 )
 
@@ -121,4 +122,10 @@ func (b *BlobAPI) Delete(ctx context.Context, params *DeleteParams) (apiResp *De
 	}
 
 	return apiResp, nil
+}
+
+// CleanupStaleSessions removes stale upload session files older than maxAge
+// and aborts the corresponding server-side multipart uploads.
+func (b *BlobAPI) CleanupStaleSessions(resumeDir string, maxAge time.Duration) (cleaned int, errs []error) {
+	return CleanupStaleSessions(b.client, resumeDir, maxAge)
 }

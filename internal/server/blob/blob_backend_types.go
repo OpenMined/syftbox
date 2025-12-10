@@ -42,6 +42,9 @@ type IBlobBackend interface {
 	// CompleteMultipartUpload finalizes a multipart upload
 	CompleteMultipartUpload(ctx context.Context, params *CompleteMultipartUploadParams) (*PutObjectResponse, error)
 
+	// AbortMultipartUpload cancels an in-progress multipart upload and frees associated resources
+	AbortMultipartUpload(ctx context.Context, params *AbortMultipartUploadParams) error
+
 	// CopyObject copies an object from one location to another
 	CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error)
 
@@ -118,6 +121,11 @@ type CompleteMultipartUploadParams struct {
 	Key      string           `json:"key"`
 	UploadID string           `json:"uploadId"`
 	Parts    []*CompletedPart `json:"parts"`
+}
+
+type AbortMultipartUploadParams struct {
+	Key      string `json:"key"`
+	UploadID string `json:"uploadId"`
 }
 
 // ===================================================================================================

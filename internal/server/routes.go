@@ -106,6 +106,7 @@ func SetupRoutes(cfg *Config, svc *Services, hub *ws.WebsocketHub) http.Handler 
 		v1.POST("/blob/upload/presigned", blobH.UploadPresigned)
 		v1.POST("/blob/upload/multipart", blobH.UploadMultipart)
 		v1.POST("/blob/upload/complete", blobH.UploadComplete)
+		v1.POST("/blob/upload/abort", middlewares.RateLimiter("10-M"), blobH.UploadAbort) // 10 aborts per minute per IP
 		v1.POST("/blob/download", blobH.DownloadObjectsPresigned)
 		v1.POST("/blob/delete", blobH.DeleteObjects)
 

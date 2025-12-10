@@ -69,6 +69,11 @@ type CompleteMultipartUploadRequest struct {
 	Parts    []*blob.CompletedPart `json:"parts" binding:"required"`
 }
 
+type AbortMultipartUploadRequest struct {
+	Key      string `json:"key" binding:"required"`
+	UploadID string `json:"uploadId" binding:"required"`
+}
+
 type PresignURLRequest struct {
 	Keys []string `json:"keys" binding:"required,min=1"`
 }

@@ -259,6 +259,19 @@ func (s *S3Backend) CompleteMultipartUpload(ctx context.Context, params *Complet
 	return result, nil
 }
 
+func (s *S3Backend) AbortMultipartUpload(ctx context.Context, params *AbortMultipartUploadParams) error {
+	if !ValidateKey(params.Key) {
+		return ErrInvalidKey
+	}
+
+	_, err := s.s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   &s.config.BucketName,
+		Key:      &params.Key,
+		UploadId: &params.UploadID,
+	})
+	return err
+}
+
 // ===================================================================================================
 
 func (s *S3Backend) CopyObject(ctx context.Context, params *CopyObjectParams) (*CopyObjectResponse, error) {
