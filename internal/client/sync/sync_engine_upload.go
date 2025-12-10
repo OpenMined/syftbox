@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 var (
 	maxUploadConcurrency = 8
+	uploadSessionTTL     = 24 * time.Hour
 )
 
 // upload
@@ -64,9 +66,14 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
+		resumeDir := filepath.Join(se.workspace.MetadataDir, "upload-sessions")
+		cleanupOldUploadSessions(resumeDir, uploadSessionTTL)
+
 		res, err := se.sdk.Blob.Upload(ctx, &syftsdk.UploadParams{
-			Key:      op.RelPath.String(),
-			FilePath: localAbsPath,
+			Key:         op.RelPath.String(),
+			FilePath:    localAbsPath,
+			Fingerprint: op.Local.ETag,
+			ResumeDir:   resumeDir,
 			Callback: func(uploadedBytes int64, totalBytes int64) {
 				progress := float64(uploadedBytes) / float64(totalBytes)
 				se.syncStatus.SetProgress(op.RelPath, progress)
@@ -151,4 +158,26 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 
 	// Wait for all worker goroutines to finish processing
 	wg.Wait()
+}
+
+// cleanupOldUploadSessions trims stale resumable upload state so disk doesn't accumulate abandoned sessions.
+func cleanupOldUploadSessions(dir string, ttl time.Duration) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Debug("cleanup upload sessions", "dir", dir, "error", err)
+		}
+		return
+	}
+
+	cutoff := time.Now().Add(-ttl)
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, entry.Name()))
+		}
+	}
 }

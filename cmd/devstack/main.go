@@ -697,10 +697,25 @@ func stopMinio(ms minioState) {
 }
 
 func writeServerConfig(path string, port, minioPort int, dataDir, logDir string) error {
+	httpCfg := map[string]any{
+		"addr": fmt.Sprintf("127.0.0.1:%d", port),
+	}
+
+	if v := os.Getenv("SBDEV_HTTP_READ_TIMEOUT"); v != "" {
+		httpCfg["read_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_WRITE_TIMEOUT"); v != "" {
+		httpCfg["write_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_IDLE_TIMEOUT"); v != "" {
+		httpCfg["idle_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_READ_HEADER_TIMEOUT"); v != "" {
+		httpCfg["read_header_timeout"] = v
+	}
+
 	cfg := map[string]any{
-		"http": map[string]any{
-			"addr": fmt.Sprintf("127.0.0.1:%d", port),
-		},
+		"http": httpCfg,
 		"blob": map[string]any{
 			"bucket_name": defaultBucket,
 			"region":      defaultRegion,

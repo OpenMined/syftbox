@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/openmined/syftbox/internal/server/auth"
 	"github.com/openmined/syftbox/internal/server/blob"
@@ -71,10 +72,14 @@ func (c *Config) Validate() error {
 
 // HTTPConfig holds HTTP server specific configuration.
 type HTTPConfig struct {
-	Addr         string `mapstructure:"addr"`
-	CertFilePath string `mapstructure:"cert_file"`
-	KeyFilePath  string `mapstructure:"key_file"`
-	Domain       string `mapstructure:"domain"` // Main domain for subdomain routing (e.g., "syftbox.net")
+	Addr              string        `mapstructure:"addr"`
+	CertFilePath      string        `mapstructure:"cert_file"`
+	KeyFilePath       string        `mapstructure:"key_file"`
+	Domain            string        `mapstructure:"domain"` // Main domain for subdomain routing (e.g., "syftbox.net")
+	ReadTimeout       time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout      time.Duration `mapstructure:"write_timeout"`
+	IdleTimeout       time.Duration `mapstructure:"idle_timeout"`
+	ReadHeaderTimeout time.Duration `mapstructure:"read_header_timeout"`
 }
 
 // LogValue for HTTPConfig
@@ -84,6 +89,10 @@ func (hc HTTPConfig) LogValue() slog.Value {
 		slog.String("cert_file", hc.CertFilePath),
 		slog.String("key_file", hc.KeyFilePath),
 		slog.String("domain", hc.Domain),
+		slog.Duration("read_timeout", hc.ReadTimeout),
+		slog.Duration("write_timeout", hc.WriteTimeout),
+		slog.Duration("idle_timeout", hc.IdleTimeout),
+		slog.Duration("read_header_timeout", hc.ReadHeaderTimeout),
 	)
 }
 
@@ -97,6 +106,20 @@ func (c *HTTPConfig) Validate() error {
 	}
 	if (c.CertFilePath != "" && c.KeyFilePath == "") || (c.CertFilePath == "" && c.KeyFilePath != "") {
 		return fmt.Errorf("cert_file and key_file paths are required together")
+	}
+
+	// Apply defaults when not provided to avoid unexpectedly short timeouts for large uploads
+	if c.ReadTimeout == 0 {
+		c.ReadTimeout = 5 * time.Minute
+	}
+	if c.WriteTimeout == 0 {
+		c.WriteTimeout = 15 * time.Minute
+	}
+	if c.IdleTimeout == 0 {
+		c.IdleTimeout = 15 * time.Minute
+	}
+	if c.ReadHeaderTimeout == 0 {
+		c.ReadHeaderTimeout = 15 * time.Second
 	}
 	return nil
 }

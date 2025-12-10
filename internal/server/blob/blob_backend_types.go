@@ -94,14 +94,17 @@ type PutObjectPresignedResponse struct {
 // ===================================================================================================
 
 type PutObjectMultipartParams struct {
-	Key   string `json:"key" binding:"required"`
-	Parts uint16 `json:"parts" binding:"required"`
+	Key          string `json:"key" binding:"required"`
+	Parts        uint16 `json:"parts"`
+	UploadID     string `json:"uploadId"`
+	PartNumbers  []int  `json:"partNumbers"`
+	PartSizeHint int64  `json:"-"`
 }
 
 type PutObjectMultipartResponse struct {
-	Key      string   `json:"key"`
-	UploadID string   `json:"uploadId"`
-	URLs     []string `json:"urls"`
+	Key      string         `json:"key"`
+	UploadID string         `json:"uploadId"`
+	URLs     map[int]string `json:"urls"`
 }
 
 // ===================================================================================================

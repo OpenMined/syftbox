@@ -3,6 +3,7 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/imroc/req/v3"
@@ -10,10 +11,13 @@ import (
 )
 
 const (
-	v1BlobUpload          = "/api/v1/blob/upload"
-	v1BlobUploadPresigned = "/api/v1/blob/upload/presigned"
-	v1BlobDownload        = "/api/v1/blob/download"
-	v1BlobDelete          = "/api/v1/blob/delete"
+	v1BlobUpload             = "/api/v1/blob/upload"
+	v1BlobUploadPresigned    = "/api/v1/blob/upload/presigned"
+	v1BlobDownload           = "/api/v1/blob/download"
+	v1BlobDelete             = "/api/v1/blob/delete"
+	v1BlobUploadMultipart    = "/api/v1/blob/upload/multipart"
+	v1BlobUploadComplete     = "/api/v1/blob/upload/complete"
+	multipartUploadThreshold = int64(32 * 1024 * 1024) // switch to resumable uploads for larger files
 )
 
 type BlobAPI struct {
@@ -32,6 +36,20 @@ func (b *BlobAPI) Upload(ctx context.Context, params *UploadParams) (apiResp *Up
 		return nil, ErrFileNotFound
 	}
 
+	info, err := os.Stat(params.FilePath)
+	if err != nil {
+		return nil, fmt.Errorf("stat file: %w", err)
+	}
+
+	if params.ResumeDir == "" && info.Size() <= multipartUploadThreshold {
+		return b.uploadSingle(ctx, params)
+	}
+
+	uploader := newResumableUploader(b.client, params, info)
+	return uploader.Upload(ctx)
+}
+
+func (b *BlobAPI) uploadSingle(ctx context.Context, params *UploadParams) (apiResp *UploadResponse, err error) {
 	resp, err := b.client.R().
 		SetContext(ctx).
 		SetQueryParam("key", params.Key).
