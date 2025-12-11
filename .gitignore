@@ -23,6 +23,7 @@ dist/
 
 # Go-specific Files
 *.test
+.gomodcache/
 
 # Go coverage tool output
 *.out
@@ -55,3 +56,5 @@ server.dev.yaml
 sandbox/*
 cmd/devstack/profiles/*
 cmd/sandbox/*
+cmd/devstack/.gocache/*
+.test-sandbox/*

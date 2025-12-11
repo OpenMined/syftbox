@@ -370,7 +370,8 @@ func parseStartFlags(args []string) (startOptions, error) {
 }
 
 func buildBinary(outPath, pkg, tags string) error {
-	args := []string{"build", "-tags", tags, "-o", outPath, pkg}
+	// Force rebuild all packages to ensure latest code changes are included
+	args := []string{"build", "-a", "-tags", tags, "-o", outPath, pkg}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -380,6 +381,12 @@ func buildBinary(outPath, pkg, tags string) error {
 func ensureMinioBinary(binDir string) (string, error) {
 	if path, err := exec.LookPath(minioBinaryName); err == nil {
 		return path, nil
+	}
+
+	// check sbdev cache (~/.sbdev/bin/minio) if present
+	sbdevPath := filepath.Join(os.Getenv("HOME"), ".sbdev", "bin", minioBinaryName)
+	if _, err := os.Stat(sbdevPath); err == nil {
+		return sbdevPath, nil
 	}
 
 	// check global cache
@@ -825,7 +832,7 @@ func runSyncCheck(root string, emails []string) error {
 	}
 
 	for _, email := range emails[1:] {
-		// Each client syncs alice's public dir to their local datasites/alice@example.com/public/
+		// Each client syncs alice's public dir to their local <root>/<client>/<sender>/public
 		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
@@ -840,7 +847,7 @@ func runSyncCheck(root string, emails []string) error {
 }
 
 func publicPath(root, email string) string {
-	// Workspace root is <root>/<email>; actual public dir lives under datasites/<user>/public
+	// Workspace root is <root>/<email>; actual public dir lives under <root>/<email>/datasites/<email>/public
 	return filepath.Join(root, email, "datasites", email, "public")
 }
 

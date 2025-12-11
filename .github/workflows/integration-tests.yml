@@ -1,4 +1,4 @@
-name: Devstack Integration Tests
+name: Integration Tests
 
 on:
   workflow_dispatch:
@@ -9,9 +9,9 @@ on:
 
 jobs:
   devstack-integration:
-    name: devstack sync test
+    name: devstack chaos test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
     - uses: actions/checkout@v4
@@ -25,5 +25,5 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@v2
 
-    - name: Run devstack integration test
-      run: go test -v -timeout 5m -tags integration -run TestDevstackIntegration ./cmd/devstack/
+    - name: Run chaos test (1 minute)
+      run: CHAOS_DURATION=1m just sbdev-test-chaos

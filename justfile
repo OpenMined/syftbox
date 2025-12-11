@@ -220,7 +220,19 @@ sbdev-test-perf *ARGS:
     set -eou pipefail
     echo "Running devstack performance tests..."
     cd cmd/devstack
-    go test -v -timeout 30m {{ ARGS }}
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests"
+    fi
+    echo "Using sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" go test -v -timeout 30m -tags integration {{ ARGS }}
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
 
 [group('devstack')]
 sbdev-test-perf-profile *ARGS:
@@ -228,7 +240,18 @@ sbdev-test-perf-profile *ARGS:
     set -eou pipefail
     echo "Running performance tests with profiling enabled..."
     cd cmd/devstack
-    PERF_PROFILE=1 go test -v -timeout 30m {{ ARGS }}
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests-profile"
+    fi
+    echo "Using sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Profiles saved to: cmd/devstack/profiles/"
     echo "View flame graphs: go tool pprof -http=:8080 cmd/devstack/profiles/{test}/cpu.prof"
@@ -237,15 +260,23 @@ sbdev-test-perf-profile *ARGS:
 sbdev-test-perf-sandbox *ARGS:
     #!/bin/bash
     set -eou pipefail
-    sandbox_path="$(pwd)/sandbox"
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) sandbox_path="$PERF_TEST_SANDBOX" ;;
+            *) sandbox_path="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        sandbox_path="$REPO_ROOT/.test-sandbox/perf-sandbox"
+    fi
     echo "Running performance tests with persistent sandbox: $sandbox_path"
-    mkdir -p "$sandbox_path"
+    rm -rf "$sandbox_path"
     cd cmd/devstack
-    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m {{ ARGS }}
+    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Test files preserved in: $sandbox_path"
-    echo "Files from alice: $sandbox_path/alice@example.com/datasites/alice@example.com/public/"
-    echo "Files synced to bob: $sandbox_path/bob@example.com/datasites/alice@example.com/public/"
+    echo "Files from alice: $sandbox_path/alice@example.com/datasites/datasites/alice@example.com/public/"
+    echo "Files synced to bob: $sandbox_path/bob@example.com/datasites/datasites/alice@example.com/public/"
 
 [group('devstack')]
 sbdev-list:
@@ -264,12 +295,109 @@ sbdev-test-cleanup:
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
 [group('devstack')]
+sbdev-test-all:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running all performance tests..."
+    echo ""
+    just sbdev-test-acl
+    echo ""
+    just sbdev-test-ws
+    echo ""
+    just sbdev-test-large
+    echo ""
+    just sbdev-test-concurrent
+    echo ""
+    just sbdev-test-conflict
+    echo ""
+    just sbdev-test-many
+    echo ""
+    just sbdev-test-ack
+    echo ""
+    echo "✅ All performance tests completed!"
+
+[group('devstack')]
+sbdev-test-acl:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS=${1:-1}
+    shift || true
+    echo "Running ACL race condition test ($RUNS time(s))..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    # Resolve sandbox base path
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *)  BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/acl-test"
+    fi
+
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLRaceCondition "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
+sbdev-test-acl-prop:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS=${1:-1}
+    shift || true
+    echo "Running ACL propagation regression test ($RUNS time(s))..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    # Resolve sandbox base path
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *)  BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/acl-prop"
+    fi
+
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLPropagationUpdates "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
 sbdev-test-ws:
     #!/bin/bash
     set -eou pipefail
     echo "Running WebSocket latency test..."
     cd cmd/devstack
-    go test -v -timeout 10m -run TestWebSocketLatency
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/ws-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestWebSocketLatency
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
 
 [group('devstack')]
 sbdev-test-large:
@@ -277,7 +405,17 @@ sbdev-test-large:
     set -eou pipefail
     echo "Running large file transfer test..."
     cd cmd/devstack
-    go test -v -timeout 30m -run TestLargeFileTransfer
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
 
 [group('devstack')]
 sbdev-test-concurrent:
@@ -285,7 +423,54 @@ sbdev-test-concurrent:
     set -eou pipefail
     echo "Running concurrent upload test..."
     cd cmd/devstack
-    go test -v -timeout 15m -run TestConcurrentUploads
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/concurrent-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestConcurrentUploads
+
+[group('devstack')]
+sbdev-test-conflict:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running conflict resolution tests (simultaneous writes, divergent edits, etc.)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/conflict-test"
+    fi
+
+    # Run each test separately to prevent state pollution
+    TESTS=("TestSimultaneousWrite" "TestDivergentEdits" "TestThreeWayConflict" "TestConflictDuringACLChange" "TestNestedPathConflict")
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        for TEST in "${TESTS[@]}"; do
+            echo "Running $TEST..."
+            rm -rf "$SANDBOX_DIR"
+            PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
+        done
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
 
 [group('devstack')]
 sbdev-test-many:
@@ -293,7 +478,143 @@ sbdev-test-many:
     set -eou pipefail
     echo "Running many small files test..."
     cd cmd/devstack
-    go test -v -timeout 15m -run TestManySmallFiles
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/batch-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run TestManySmallFiles
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+sbdev-test-ack:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running ACK/NACK mechanism test..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/ack-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 5m -tags integration -run TestACKNACKMechanism
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+sbdev-test-profile:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running performance profiling test with CPU/memory tracking..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/profile-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestProfilePerformance
+    echo ""
+    echo "✅ Profile data saved to: cmd/devstack/profiles/performance_profile/"
+    echo "   - cpu.prof (CPU profile)"
+    echo "   - trace.out (execution trace)"
+    echo "   - mem.prof (memory profile)"
+    echo ""
+    echo "Generate flame graphs with: just sbdev-flamegraph"
+
+sbdev-test-race:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running race condition tests (delete during download, ACL during upload, etc.)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/race-test"
+    fi
+
+    # Run each test separately to prevent state pollution
+    TESTS=("TestDeleteDuringDownload" "TestACLChangeDuringUpload" "TestOverwriteDuringDownload" "TestDeleteDuringTempRename")
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        for TEST in "${TESTS[@]}"; do
+            echo "Running $TEST..."
+            rm -rf "$SANDBOX_DIR"
+            PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
+        done
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+sbdev-test-chaos:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running chaos sync test (3 clients, random ops)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/chaos-test"
+    fi
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestChaosSync "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+sbdev-flamegraph:
+    #!/bin/bash
+    set -eou pipefail
+    cd cmd/devstack/profiles/performance_profile
+    echo "Generating flame graphs from profiling data..."
+    echo ""
+    echo "🔥 CPU Flame Graph:"
+    echo "   go tool pprof -http=:8080 cpu.prof"
+    echo ""
+    echo "🔥 Memory Flame Graph:"
+    echo "   go tool pprof -http=:8081 mem.prof"
+    echo ""
+    echo "🔥 Execution Trace (detailed timeline):"
+    echo "   go tool trace trace.out"
+    echo ""
+    echo "Interactive CPU profile analysis starting..."
+    go tool pprof -http=:8080 cpu.prof
 
 [group('dev')]
 test:

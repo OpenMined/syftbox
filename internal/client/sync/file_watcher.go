@@ -12,7 +12,7 @@ import (
 const (
 	DefaultIgnoreTimeout   = time.Second
 	defaultCleanupInterval = 15 * time.Second
-	eventBufferSize        = 64
+	eventBufferSize        = 256 // Increased from 64 to handle burst traffic (100+ files)
 	defaultDebounceTimeout = 50 * time.Millisecond
 )
 
