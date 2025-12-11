@@ -280,7 +280,7 @@ func runStart(args []string) error {
 			}
 		}
 
-		clientBin, err := clientBinaryForEmail(email, defaultClientBin)
+		clientBin, err := clientBinaryForEmail(email, i, defaultClientBin)
 		if err != nil {
 			return fmt.Errorf("client bin for %s: %w", email, err)
 		}
@@ -412,7 +412,7 @@ func resolveClientBinary(binDir, pkg, tags string) (string, error) {
 	return clientBin, nil
 }
 
-func clientBinaryForEmail(email, defaultBin string) (string, error) {
+func clientBinaryForEmail(email string, idx int, defaultBin string) (string, error) {
 	envKey := envKeyForEmail(email)
 	if override := os.Getenv(envKey); override != "" {
 		path := filepath.Clean(override)
@@ -432,6 +432,44 @@ func clientBinaryForEmail(email, defaultBin string) (string, error) {
 		}
 		return path, nil
 	}
+
+	// Global override for all clients.
+	if override := os.Getenv("SBDEV_CLIENT_BIN"); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve: %w", err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory: %s", path)
+		}
+		return path, nil
+	}
+
+	mode := strings.ToLower(os.Getenv("SBDEV_CLIENT_MODE"))
+	rustBin := os.Getenv("SBDEV_RUST_CLIENT_BIN")
+	switch mode {
+	case "rust":
+		if rustBin == "" {
+			return "", fmt.Errorf("SBDEV_CLIENT_MODE=rust requires SBDEV_RUST_CLIENT_BIN")
+		}
+		return rustBin, nil
+	case "mixed":
+		if idx%2 == 1 { // second client gets rust; third is go, etc.
+			if rustBin == "" {
+				return "", fmt.Errorf("SBDEV_CLIENT_MODE=mixed requires SBDEV_RUST_CLIENT_BIN")
+			}
+			return rustBin, nil
+		}
+	}
+
 	return defaultBin, nil
 }
 

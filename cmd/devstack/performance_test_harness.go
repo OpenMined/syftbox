@@ -181,9 +181,9 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	// Start clients
 	t.Logf("Starting clients...")
 	var clients []clientState
-	for _, email := range emails {
+	for i, email := range emails {
 		port, _ := getFreePort()
-		binForEmail, err := clientBinaryForEmail(email, clientBin)
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
 		if err != nil {
 			t.Fatalf("client bin for %s: %v", email, err)
 		}

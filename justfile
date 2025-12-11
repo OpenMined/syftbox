@@ -739,10 +739,24 @@ sbdev-test-large-rust:
     SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
 
 [group('devstack')]
-sbdev-test-concurrent:
+sbdev-test-concurrent mode="go":
     #!/bin/bash
     set -eou pipefail
-    echo "Running concurrent upload test..."
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+
+    echo "Running concurrent upload test (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
     cd cmd/devstack
     REPO_ROOT="$(pwd)/../.."
     if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
@@ -835,23 +849,8 @@ sbdev-test-conflict-rust:
 [group('devstack')]
 sbdev-test-concurrent-rust:
     #!/bin/bash
-    set -eou pipefail
-    echo "Running concurrent upload test with Rust client..."
-    root_dir="$(pwd)"
-    rust_bin="$root_dir/rust/target/release/syftbox-rs"
-    cd rust && cargo build --release && cd "$root_dir"
-    cd cmd/devstack
-    REPO_ROOT="$(pwd)/../.."
-    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
-        case "$PERF_TEST_SANDBOX" in
-            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
-            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
-        esac
-    else
-        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/concurrent-test"
-    fi
-    rm -rf "$SANDBOX_DIR"
-    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestConcurrentUploads
+    # Back-compat shim: call unified recipe with rust mode
+    just sbdev-test-concurrent mode="rust"
 
 [group('devstack')]
 sbdev-test-many:

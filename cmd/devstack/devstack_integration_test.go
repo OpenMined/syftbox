@@ -157,7 +157,7 @@ func TestDevstackIntegration(t *testing.T) {
 			port = clientPortStart + i
 		}
 
-		binForEmail, err := clientBinaryForEmail(email, clientBin)
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
 		if err != nil {
 			t.Fatalf("client bin for %s: %v", email, err)
 		}
