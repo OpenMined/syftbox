@@ -139,7 +139,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	if err := buildBinary(serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
 		t.Fatalf("build server: %v", err)
 	}
-	if err := buildBinary(clientBin, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+	if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
 		t.Fatalf("build client: %v", err)
 	}
 
@@ -183,7 +183,11 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	var clients []clientState
 	for _, email := range emails {
 		port, _ := getFreePort()
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, clientBin)
+		if err != nil {
+			t.Fatalf("client bin for %s: %v", email, err)
+		}
+		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
 			t.Fatalf("start client %s: %v", email, err)
 		}

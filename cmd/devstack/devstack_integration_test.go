@@ -81,7 +81,7 @@ func TestDevstackIntegration(t *testing.T) {
 
 	// Build binaries
 	serverBin := addExe(filepath.Join(binDir, "server"))
-	clientBin := addExe(filepath.Join(binDir, "syftbox"))
+	clientBin := filepath.Join(binDir, "syftbox")
 
 	t.Logf("Building server binary...")
 	serverPkg := filepath.Join(repoRoot, "cmd", "server")
@@ -91,7 +91,8 @@ func TestDevstackIntegration(t *testing.T) {
 
 	t.Logf("Building client binary...")
 	clientPkg := filepath.Join(repoRoot, "cmd", "client")
-	if err := buildBinary(clientBin, clientPkg, clientBuildTags); err != nil {
+	clientBin, err = resolveClientBinary(binDir, clientPkg, clientBuildTags)
+	if err != nil {
 		t.Fatalf("build client: %v", err)
 	}
 
@@ -156,7 +157,11 @@ func TestDevstackIntegration(t *testing.T) {
 			port = clientPortStart + i
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, clientBin)
+		if err != nil {
+			t.Fatalf("client bin for %s: %v", email, err)
+		}
+		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
 			t.Fatalf("start client %s: %v", email, err)
 		}

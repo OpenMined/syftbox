@@ -209,12 +209,11 @@ func runStart(args []string) error {
 	}
 
 	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
-
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(clientBin, "./cmd/client", clientBuildTags); err != nil {
+	defaultClientBin, err := resolveClientBinary(binDir, "./cmd/client", clientBuildTags)
+	if err != nil {
 		return fmt.Errorf("build client: %w", err)
 	}
 
@@ -281,6 +280,10 @@ func runStart(args []string) error {
 			}
 		}
 
+		clientBin, err := clientBinaryForEmail(email, defaultClientBin)
+		if err != nil {
+			return fmt.Errorf("client bin for %s: %w", email, err)
+		}
 		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
 		if err != nil {
 			return fmt.Errorf("start client %s: %w", email, err)
@@ -376,6 +379,68 @@ func buildBinary(outPath, pkg, tags string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func resolveClientBinary(binDir, pkg, tags string) (string, error) {
+	if override := os.Getenv("SBDEV_CLIENT_BIN"); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve: %w", err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory: %s", path)
+		}
+		return path, nil
+	}
+
+	clientBin := filepath.Join(binDir, "syftbox")
+	clientBin = addExe(clientBin)
+	if err := buildBinary(clientBin, pkg, tags); err != nil {
+		return "", err
+	}
+	return clientBin, nil
+}
+
+func clientBinaryForEmail(email, defaultBin string) (string, error) {
+	envKey := envKeyForEmail(email)
+	if override := os.Getenv(envKey); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve for %s: %w", email, err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat for %s: %w", email, err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory for %s: %s", email, path)
+		}
+		return path, nil
+	}
+	return defaultBin, nil
+}
+
+func envKeyForEmail(email string) string {
+	normalized := strings.ToUpper(email)
+	normalized = strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, normalized)
+	return fmt.Sprintf("SBDEV_CLIENT_BIN_%s", normalized)
 }
 
 func ensureMinioBinary(binDir string) (string, error) {
