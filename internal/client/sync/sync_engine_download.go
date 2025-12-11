@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/openmined/syftbox/internal/queue"
@@ -208,6 +209,17 @@ func (se *SyncEngine) downloadBatchUnique(ctx context.Context, batch BatchLocalW
 				for _, path := range pathsToCopy {
 					targetPath := filepath.Join(se.workspace.DatasitesDir, path)
 
+					// Resolve any path/type conflicts before writing the file.
+					skip, prepErr := se.prepareDownloadTarget(targetPath, pathToMeta[path])
+					if prepErr != nil {
+						resultsChan <- downloadResult{Path: path, Metadata: pathToMeta[path], Error: prepErr}
+						continue
+					}
+					if skip {
+						resultsChan <- downloadResult{Path: path, Metadata: pathToMeta[path], Error: nil}
+						continue
+					}
+
 					if se.isPriorityFile(targetPath) {
 						// a priority file was just downloaded, we don't wanna fire an event for THIS write
 						se.watcher.IgnoreOnce(targetPath)
@@ -243,6 +255,76 @@ func (se *SyncEngine) getDownloadPriority(meta *FileMetadata) int {
 	}
 
 	return priority
+}
+
+// prepareDownloadTarget ensures the download destination can be written safely.
+// It handles file-vs-directory conflicts by comparing timestamps - the newer
+// version wins, and the older version is preserved as a conflict marker.
+func (se *SyncEngine) prepareDownloadTarget(dst string, meta *FileMetadata) (skip bool, err error) {
+	parentDir := filepath.Dir(dst)
+
+	// If the parent exists as a file, we have a file-vs-directory conflict.
+	if info, statErr := os.Stat(parentDir); statErr == nil {
+		if !info.IsDir() {
+			// Local file blocks directory creation - compare timestamps.
+			localMtime := info.ModTime()
+			remoteMtime := meta.LastModified
+
+			if localMtime.After(remoteMtime) {
+				// Local file is newer - skip download, keep local
+				slog.Warn("download parent path is file and newer than remote; skipping download",
+					"path", meta.Path, "localMtime", localMtime, "remoteMtime", remoteMtime)
+				return true, nil
+			}
+
+			// Remote is newer - move local file to conflict and create directory
+			conflictPath, markErr := SetMarker(parentDir, Conflict)
+			if markErr != nil {
+				return false, fmt.Errorf("prepare download target: parent is file %s: %w", parentDir, markErr)
+			}
+			slog.Warn("download parent path is file; preserving as conflict and creating directory",
+				"path", meta.Path, "conflictPath", conflictPath, "localMtime", localMtime, "remoteMtime", remoteMtime)
+			if err := os.MkdirAll(parentDir, 0o755); err != nil {
+				return false, fmt.Errorf("prepare download target: create directory %s: %w", parentDir, err)
+			}
+		}
+	} else if os.IsNotExist(statErr) {
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return false, fmt.Errorf("prepare download target: create parent %s: %w", parentDir, err)
+		}
+	} else {
+		return false, fmt.Errorf("prepare download target: stat parent %s: %w", parentDir, statErr)
+	}
+
+	// If the destination already exists as a directory, we have a directory-vs-file conflict.
+	if info, statErr := os.Stat(dst); statErr == nil && info.IsDir() {
+		localMtime := info.ModTime()
+		remoteMtime := meta.LastModified
+
+		if localMtime.After(remoteMtime) {
+			// Local directory is newer - skip download, keep local directory
+			slog.Warn("download target is directory and newer than remote file; skipping download",
+				"path", meta.Path, "localMtime", localMtime, "remoteMtime", remoteMtime)
+			return true, nil
+		}
+
+		// Remote file is newer - move directory to conflict and proceed with download
+		conflictPath := dst + string(Conflict)
+
+		// If conflict path already exists, add timestamp
+		if _, err := os.Stat(conflictPath); err == nil {
+			timestamp := time.Now().Format("20060102150405")
+			conflictPath = fmt.Sprintf("%s%s.%s", dst, string(Conflict), timestamp)
+		}
+
+		if err := os.Rename(dst, conflictPath); err != nil {
+			return false, fmt.Errorf("prepare download target: move directory to conflict %s -> %s: %w", dst, conflictPath, err)
+		}
+		slog.Warn("download target is directory; preserving as conflict and downloading file",
+			"path", meta.Path, "conflictPath", conflictPath, "localMtime", localMtime, "remoteMtime", remoteMtime)
+	}
+
+	return false, nil
 }
 
 func copyLocalWithTmp(src, dst, workspaceRoot string) error {

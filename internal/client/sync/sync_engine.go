@@ -247,7 +247,6 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 		slog.Info("rebuilding journal")
 		se.rebuildJournal(localState, remoteState)
 	}
-
 	// get the journal state
 	tjournalStart := time.Now()
 	journalState, err := se.journal.GetState()
@@ -435,6 +434,17 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 			(localCreated && remoteCreated) {
 			// Conflict Case: Local Create/Modify + Remote Create/Modify
 			// todo we can also consider local modify + remote delete or local delete + remote modify as conflict
+			journalEtag := ""
+			if journal != nil {
+				journalEtag = journal.ETag
+			}
+			slog.Warn("CONFLICT DETECTED",
+				"path", path,
+				"localEtag", local.ETag,
+				"remoteEtag", remote.ETag,
+				"journalEtag", journalEtag,
+				"localModified", localModified,
+				"remoteModified", remoteModified)
 			reconcileOps.Conflicts[path] = &SyncOperation{Type: OpConflict, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 			continue
 		}
