@@ -404,7 +404,14 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 			isEmpty = true
 		}
 
-		if isSyncing || isIgnored || isEmpty || errorCount >= maxRetryCount {
+		// Check if remote has changed since we last synced this file.
+		// This is important for handling rapid overwrites where a file gets synced,
+		// but the remote is overwritten again before the 5s grace period expires.
+		remoteChanged := remoteExists && journalExists && se.hasModified(journal, remote)
+
+		// Skip files that are syncing/recently completed, UNLESS the remote has changed
+		// which means we need to re-download the new version
+		if (isSyncing && !remoteChanged) || isIgnored || isEmpty || errorCount >= maxRetryCount {
 			reconcileOps.Ignored[path] = struct{}{}
 			continue
 		}
