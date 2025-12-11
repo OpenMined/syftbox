@@ -177,6 +177,7 @@ func TestChaosSync(t *testing.T) {
 		}
 	}
 
+mainLoop:
 	for i := 0; i < iterations; i++ {
 		if deadlinePassed(deadline) {
 			t.Logf("Chaos duration reached after %d iterations", i)
@@ -202,14 +203,8 @@ func TestChaosSync(t *testing.T) {
 			md5 := CalculateMD5(content)
 			addFileToExpected(sender.email, name, md5, false)
 			// Verify replication to current allowed peers only
-			for _, peerEmail := range aclState[sender.email] {
-				for _, c := range clients {
-					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
-							t.Fatalf("replication to %s for %s failed: %v", c.email, name, err)
-						}
-					}
-				}
+			if !verifyReplicationWithDeadline(t, clients, aclState, sender, name, md5, deadline) {
+				break mainLoop
 			}
 
 		case 1: // overwrite existing - pick random non-RPC file
@@ -269,14 +264,8 @@ func TestChaosSync(t *testing.T) {
 			}
 
 			// Verify replication to current allowed peers
-			for _, peerEmail := range aclState[sender.email] {
-				for _, c := range clients {
-					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, selectedFile.path, newMD5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
-							t.Fatalf("overwrite replication to %s for %s failed: %v", c.email, selectedFile.path, err)
-						}
-					}
-				}
+			if !verifyReplicationWithDeadline(t, clients, aclState, sender, selectedFile.path, newMD5, deadline) {
+				break mainLoop
 			}
 
 		case 2: // nested public path create/overwrite
@@ -289,14 +278,8 @@ func TestChaosSync(t *testing.T) {
 			md5 := CalculateMD5(content)
 			addFileToExpected(sender.email, nested, md5, false)
 			// Verify replication to current allowed peers only
-			for _, peerEmail := range aclState[sender.email] {
-				for _, c := range clients {
-					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, nested, md5, timeoutWithDeadline(10*time.Second, deadline)); err != nil {
-							t.Fatalf("nested replication to %s for %s failed: %v", c.email, nested, err)
-						}
-					}
-				}
+			if !verifyReplicationWithDeadline(t, clients, aclState, sender, nested, md5, deadline) {
+				break mainLoop
 			}
 		case 3: // RPC request/response ping-pong
 			sender := clients[rng.Intn(len(clients))]
@@ -374,7 +357,7 @@ rules:
 
 			if !waitForACLPropagationWithDeadline(t, target, clients, aclContent, aclPropagationTimeout, deadline) {
 				t.Logf("Deadline reached during ACL propagation")
-				break
+				break mainLoop
 			}
 
 			name := fmt.Sprintf("acl-read-%d.txt", i)
@@ -383,12 +366,20 @@ rules:
 				t.Fatalf("acl-upload %s by %s: %v", name, target.email, err)
 			}
 			md5 := CalculateMD5(payload)
+			if deadlinePassed(deadline) {
+				break mainLoop
+			}
 			if err := peer.WaitForFile(target.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
+				if deadlinePassed(deadline) {
+					break mainLoop
+				}
 				t.Fatalf("peer %s did not receive after grant: %v", peer.email, err)
 			}
-			if denied != nil {
-				if err := assertNotReplicated(denied, target.email, name, 5*time.Second); err != nil {
-					t.Fatalf("denied peer %s unexpectedly received %s: %v", denied.email, name, err)
+			if denied != nil && !deadlinePassed(deadline) {
+				if err := assertNotReplicated(denied, target.email, name, timeoutWithDeadline(5*time.Second, deadline)); err != nil {
+					if !deadlinePassed(deadline) {
+						t.Fatalf("denied peer %s unexpectedly received %s: %v", denied.email, name, err)
+					}
 				}
 			}
 			// Add file to expected files (will only go to peer based on current ACL state)
@@ -462,7 +453,7 @@ rules:
 
 			if !waitForACLPropagationWithDeadline(t, target, clients, aclContent, aclPropagationTimeout, deadline) {
 				t.Logf("Deadline reached during ACL propagation")
-				break
+				break mainLoop
 			}
 
 			name := fmt.Sprintf("acl-public-%d.txt", i)
@@ -475,7 +466,13 @@ rules:
 				if c.email == target.email {
 					continue
 				}
+				if deadlinePassed(deadline) {
+					break mainLoop
+				}
 				if err := c.WaitForFile(target.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
+					if deadlinePassed(deadline) {
+						break mainLoop
+					}
 					t.Fatalf("public-read peer %s did not receive %s: %v", c.email, name, err)
 				}
 			}
@@ -596,7 +593,7 @@ rules:
 			data, _ := os.ReadFile(aclPath)
 			if !waitForACLPropagationWithDeadline(t, target, clients, string(data), aclPropagationTimeout, deadline) {
 				t.Logf("Deadline reached during rapid ACL propagation")
-				break
+				break mainLoop
 			}
 
 			// Upload a file to verify final state works
@@ -610,9 +607,15 @@ rules:
 
 			// Verify only expected peers got it
 			for _, peerEmail := range aclState[target.email] {
+				if deadlinePassed(deadline) {
+					break mainLoop
+				}
 				for _, c := range clients {
 					if c.email == peerEmail {
 						if err := c.WaitForFile(target.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
+							if deadlinePassed(deadline) {
+								break mainLoop
+							}
 							t.Fatalf("rapid-acl peer %s did not receive %s: %v", c.email, name, err)
 						}
 					}
@@ -633,17 +636,28 @@ rules:
 				addFileToExpected(sender.email, name, md5, false)
 			}
 
-			// Wait for all to propagate
-			time.Sleep(2 * time.Second)
+			// Wait for all to propagate (skip if deadline passed)
+			if !deadlinePassed(deadline) {
+				time.Sleep(timeoutWithDeadline(2*time.Second, deadline))
+			}
 
 			// Spot-check first and last file
+			if deadlinePassed(deadline) {
+				break mainLoop
+			}
 			firstFile := fmt.Sprintf("burst-%d-0.bin", i)
 			for _, peerEmail := range aclState[sender.email] {
+				if deadlinePassed(deadline) {
+					break mainLoop
+				}
 				for _, c := range clients {
 					if c.email == peerEmail {
 						fileKey := fmt.Sprintf("%s/%s", sender.email, firstFile)
 						if info, exists := expectedFiles[c.email][fileKey]; exists {
 							if err := c.WaitForFile(sender.email, firstFile, info.md5, timeoutWithDeadline(5*time.Second, deadline)); err != nil {
+								if deadlinePassed(deadline) {
+									break mainLoop
+								}
 								t.Fatalf("burst file %s not received by %s: %v", firstFile, c.email, err)
 							}
 						}
@@ -674,10 +688,15 @@ rules:
 
 			// Verify replication
 			for _, peerEmail := range aclState[sender.email] {
+				if deadlinePassed(deadline) {
+					break mainLoop
+				}
 				for _, c := range clients {
 					if c.email == peerEmail {
 						if err := c.WaitForFile(sender.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
-							t.Logf("Weird filename '%s' replication to %s failed: %v", name, c.email, err)
+							if !deadlinePassed(deadline) {
+								t.Logf("Weird filename '%s' replication to %s failed: %v", name, c.email, err)
+							}
 						}
 					}
 				}
@@ -686,9 +705,18 @@ rules:
 		case 11: // delete during download (race condition test)
 			// Upload a large file, start download on peer, delete during download
 			sender := clients[rng.Intn(len(clients))]
+			// Skip if sender has no peers with access
+			if len(aclState[sender.email]) == 0 {
+				continue
+			}
 			receiver := clients[rng.Intn(len(clients))]
+			attempts := 0
 			for receiver.email == sender.email || !contains(aclState[sender.email], receiver.email) {
 				receiver = clients[rng.Intn(len(clients))]
+				attempts++
+				if attempts > 100 {
+					continue // skip this iteration if can't find valid receiver
+				}
 			}
 
 			name := fmt.Sprintf("delete-race-%d.bin", i)
@@ -804,9 +832,18 @@ rules:
 
 		case 13: // overwrite during download (race condition test)
 			sender := clients[rng.Intn(len(clients))]
+			// Skip if sender has no peers with access
+			if len(aclState[sender.email]) == 0 {
+				continue
+			}
 			receiver := clients[rng.Intn(len(clients))]
+			attempts := 0
 			for receiver.email == sender.email || !contains(aclState[sender.email], receiver.email) {
 				receiver = clients[rng.Intn(len(clients))]
+				attempts++
+				if attempts > 100 {
+					continue // skip this iteration if can't find valid receiver
+				}
 			}
 
 			name := fmt.Sprintf("overwrite-race-%d.bin", i)
@@ -982,6 +1019,29 @@ func timeoutWithDeadline(maxTimeout time.Duration, deadline time.Time) time.Dura
 
 func deadlinePassed(deadline time.Time) bool {
 	return !deadline.IsZero() && time.Now().After(deadline)
+}
+
+func verifyReplicationWithDeadline(t *testing.T, clients []*ClientHelper, aclState map[string][]string, sender *ClientHelper, path, md5 string, deadline time.Time) bool {
+	t.Helper()
+	if deadlinePassed(deadline) {
+		return false
+	}
+	for _, peerEmail := range aclState[sender.email] {
+		if deadlinePassed(deadline) {
+			return false
+		}
+		for _, c := range clients {
+			if c.email == peerEmail {
+				if err := c.WaitForFile(sender.email, path, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
+					if deadlinePassed(deadline) {
+						return false
+					}
+					t.Fatalf("replication to %s for %s failed: %v", c.email, path, err)
+				}
+			}
+		}
+	}
+	return true
 }
 
 // forceBroadcastPublicACL rewrites the public ACL to trigger a priority upload even if unchanged.

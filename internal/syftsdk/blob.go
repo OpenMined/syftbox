@@ -42,7 +42,9 @@ func (b *BlobAPI) Upload(ctx context.Context, params *UploadParams) (apiResp *Up
 		return nil, fmt.Errorf("stat file: %w", err)
 	}
 
-	if params.ResumeDir == "" && info.Size() <= multipartUploadThreshold {
+	// Use single upload for small files regardless of ResumeDir
+	// This ensures ACL files and other small files go through the proper upload path
+	if info.Size() <= multipartUploadThreshold {
 		return b.uploadSingle(ctx, params)
 	}
 
