@@ -493,7 +493,7 @@ sbdev-test-conflict:
     fi
 
     # Run each test separately to prevent state pollution
-    TESTS=("TestSimultaneousWrite" "TestDivergentEdits" "TestThreeWayConflict" "TestConflictDuringACLChange" "TestNestedPathConflict")
+    TESTS=("TestSimultaneousWrite" "TestDivergentEdits" "TestThreeWayConflict" "TestConflictDuringACLChange" "TestNestedPathConflict" "TestJournalWriteTiming" "TestNonConflictUpdate" "TestRapidSequentialEdits" "TestJournalLossRecovery")
     for i in $(seq 1 "$RUNS"); do
         if [ "$RUNS" -gt 1 ]; then
             SANDBOX_DIR="${BASE_SANDBOX}-${i}"

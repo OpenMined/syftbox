@@ -53,14 +53,6 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
-		// Skip files that don't belong to the current user - these are downloaded from other datasites
-		// and should not be re-uploaded
-		if !se.workspace.IsOwner(op.RelPath.String()) {
-			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "not owner", "path", op.RelPath)
-			se.syncStatus.SetCompleted(op.RelPath)
-			return
-		}
-
 		if !se.workspace.IsValidPath(op.RelPath.String()) {
 			slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", "invalid datasite path", "DEBUG_REJECTION_REASON", "IsValidPath_check_failed")
 			markedPath, markErr := SetMarker(localAbsPath, Rejected)
