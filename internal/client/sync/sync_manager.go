@@ -50,3 +50,19 @@ func (m *SyncManager) Stop() error {
 	slog.Info("sync manager stop")
 	return m.engine.Stop()
 }
+
+func (m *SyncManager) GetSyncStatus() *SyncStatus {
+	return m.engine.syncStatus
+}
+
+func (m *SyncManager) GetUploadRegistry() *UploadRegistry {
+	return m.engine.uploadRegistry
+}
+
+func (m *SyncManager) TriggerSync() {
+	go func() {
+		if err := m.engine.RunSync(context.Background()); err != nil {
+			slog.Error("triggered sync", "error", err)
+		}
+	}()
+}

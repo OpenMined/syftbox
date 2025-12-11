@@ -9,7 +9,7 @@ import (
 
 const (
 	progressMin         = 0.0
-	progressMax         = 100.0
+	progressMax         = 1.0 // Progress is stored as 0-1 decimal, converted to percentage in API layer
 	syncEventBufferSize = 16
 )
 

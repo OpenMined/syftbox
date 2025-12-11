@@ -93,6 +93,12 @@ func (d *DatasiteManager) Get() (*datasite.Datasite, error) {
 	return d.datasite, nil
 }
 
+func (d *DatasiteManager) GetPrimaryDatasite() *datasite.Datasite {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.datasite
+}
+
 func (d *DatasiteManager) Status() *DatasiteManagerStatus {
 	d.mu.RLock()
 	defer d.mu.RUnlock()

@@ -436,6 +436,27 @@ sbdev-test-large-upload:
     PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadResume
 
 [group('devstack')]
+sbdev-test-progress-api:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Progress API demo..."
+    echo "This demo shows the sync status and upload management APIs in action."
+    echo "Features: status tracking, progress bars, pause/resume, error handling, auth"
+    echo ""
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/progress-api-demo"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestProgressAPIDemo
+
+[group('devstack')]
 sbdev-test-concurrent:
     #!/bin/bash
     set -eou pipefail
