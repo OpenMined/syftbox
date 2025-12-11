@@ -53,14 +53,6 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
-		// Skip files that don't belong to the current user - these are downloaded from other datasites
-		// and should not be re-uploaded
-		if !se.workspace.IsOwner(op.RelPath.String()) {
-			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "not owner", "path", op.RelPath)
-			se.syncStatus.SetCompleted(op.RelPath)
-			return
-		}
-
 		if !se.workspace.IsValidPath(op.RelPath.String()) {
 			slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", "invalid datasite path", "DEBUG_REJECTION_REASON", "IsValidPath_check_failed")
 			markedPath, markErr := SetMarker(localAbsPath, Rejected)
@@ -78,7 +70,10 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		resumeDir := filepath.Join(se.workspace.MetadataDir, "upload-sessions")
 		cleanupOldUploadSessions(resumeDir, uploadSessionTTL)
 
-		res, err := se.sdk.Blob.Upload(ctx, &syftsdk.UploadParams{
+		uploadInfo, uploadCtx, cancel := se.uploadRegistry.Register(op.RelPath.String(), localAbsPath, op.Local.Size)
+		defer cancel()
+
+		res, err := se.sdk.Blob.Upload(uploadCtx, &syftsdk.UploadParams{
 			Key:         op.RelPath.String(),
 			FilePath:    localAbsPath,
 			Fingerprint: op.Local.ETag,
@@ -86,6 +81,13 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			Callback: func(uploadedBytes int64, totalBytes int64) {
 				progress := float64(uploadedBytes) / float64(totalBytes)
 				se.syncStatus.SetProgress(op.RelPath, progress)
+				se.uploadRegistry.UpdateProgress(
+					uploadInfo.ID,
+					uploadedBytes,
+					nil,
+					0,
+					0,
+				)
 				slog.Debug("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "progress", fmt.Sprintf("%.2f%%", progress*100.0))
 			},
 		})
@@ -118,7 +120,12 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 				se.syncStatus.SetError(op.RelPath, err)
 				slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", err)
 			}
+			se.uploadRegistry.SetError(uploadInfo.ID, err)
 			return // return on ANY error
+		}
+		if errors.Is(uploadCtx.Err(), context.Canceled) {
+			se.uploadRegistry.SetError(uploadInfo.ID, errors.New("upload cancelled"))
+			return
 		}
 
 		lastModified, err := time.Parse(time.RFC3339, res.LastModified)
@@ -135,6 +142,7 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 
 		// mark as completed on success
 		se.syncStatus.SetCompleted(op.RelPath)
+		se.uploadRegistry.SetCompleted(uploadInfo.ID)
 	}
 
 	var wg sync.WaitGroup

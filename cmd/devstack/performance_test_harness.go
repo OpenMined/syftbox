@@ -389,7 +389,7 @@ rules:
 		c.t.Logf("%s created root ACL", c.email)
 	}
 
-	// Create public ACL with public read access
+	// Create public ACL with public read/write access
 	publicACLPath := filepath.Join(publicDir, "syft.pub.yaml")
 	if _, err := os.Stat(publicACLPath); os.IsNotExist(err) {
 		publicACL := `terminal: false
@@ -397,7 +397,7 @@ rules:
   - pattern: '**'
     access:
       admin: []
-      write: []
+      write: ['*']
       read: ['*']
 `
 		if err := os.MkdirAll(publicDir, 0o755); err != nil {
