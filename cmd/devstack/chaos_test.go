@@ -178,7 +178,7 @@ func TestChaosSync(t *testing.T) {
 	}
 
 	for i := 0; i < iterations; i++ {
-		if !deadline.IsZero() && time.Now().After(deadline) {
+		if deadlinePassed(deadline) {
 			t.Logf("Chaos duration reached after %d iterations", i)
 			break
 		}
@@ -205,7 +205,7 @@ func TestChaosSync(t *testing.T) {
 			for _, peerEmail := range aclState[sender.email] {
 				for _, c := range clients {
 					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, name, md5, 8*time.Second); err != nil {
+						if err := c.WaitForFile(sender.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
 							t.Fatalf("replication to %s for %s failed: %v", c.email, name, err)
 						}
 					}
@@ -272,7 +272,7 @@ func TestChaosSync(t *testing.T) {
 			for _, peerEmail := range aclState[sender.email] {
 				for _, c := range clients {
 					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, selectedFile.path, newMD5, 8*time.Second); err != nil {
+						if err := c.WaitForFile(sender.email, selectedFile.path, newMD5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
 							t.Fatalf("overwrite replication to %s for %s failed: %v", c.email, selectedFile.path, err)
 						}
 					}
@@ -292,7 +292,7 @@ func TestChaosSync(t *testing.T) {
 			for _, peerEmail := range aclState[sender.email] {
 				for _, c := range clients {
 					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, nested, md5, 10*time.Second); err != nil {
+						if err := c.WaitForFile(sender.email, nested, md5, timeoutWithDeadline(10*time.Second, deadline)); err != nil {
 							t.Fatalf("nested replication to %s for %s failed: %v", c.email, nested, err)
 						}
 					}
@@ -372,7 +372,10 @@ rules:
 			// Update ACL state - only peer has access now
 			updateACLState(target.email, []string{peer.email})
 
-			waitForACLPropagation(t, target, clients, aclContent, aclPropagationTimeout)
+			if !waitForACLPropagationWithDeadline(t, target, clients, aclContent, aclPropagationTimeout, deadline) {
+				t.Logf("Deadline reached during ACL propagation")
+				break
+			}
 
 			name := fmt.Sprintf("acl-read-%d.txt", i)
 			payload := GenerateRandomFile(2 * 1024)
@@ -380,7 +383,7 @@ rules:
 				t.Fatalf("acl-upload %s by %s: %v", name, target.email, err)
 			}
 			md5 := CalculateMD5(payload)
-			if err := peer.WaitForFile(target.email, name, md5, 8*time.Second); err != nil {
+			if err := peer.WaitForFile(target.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
 				t.Fatalf("peer %s did not receive after grant: %v", peer.email, err)
 			}
 			if denied != nil {
@@ -410,7 +413,9 @@ rules:
 			// Update ACL state - no peers have access (owner only)
 			updateACLState(target.email, []string{})
 
-			waitForACLPropagation(t, target, clients, aclContent, aclPropagationTimeout)
+			// Don't wait for ACL propagation - owner-only ACL won't be sent to peers
+			// Just wait for the ACL to be uploaded to server
+			time.Sleep(500 * time.Millisecond)
 
 			name := fmt.Sprintf("acl-revoke-%d.txt", i)
 			payload := GenerateRandomFile(2 * 1024)
@@ -455,7 +460,10 @@ rules:
 			}
 			updateACLState(target.email, allPeers)
 
-			waitForACLPropagation(t, target, clients, aclContent, aclPropagationTimeout)
+			if !waitForACLPropagationWithDeadline(t, target, clients, aclContent, aclPropagationTimeout, deadline) {
+				t.Logf("Deadline reached during ACL propagation")
+				break
+			}
 
 			name := fmt.Sprintf("acl-public-%d.txt", i)
 			payload := GenerateRandomFile(2 * 1024)
@@ -467,7 +475,7 @@ rules:
 				if c.email == target.email {
 					continue
 				}
-				if err := c.WaitForFile(target.email, name, md5, 8*time.Second); err != nil {
+				if err := c.WaitForFile(target.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
 					t.Fatalf("public-read peer %s did not receive %s: %v", c.email, name, err)
 				}
 			}
@@ -586,7 +594,10 @@ rules:
 
 			// Wait for final state to propagate
 			data, _ := os.ReadFile(aclPath)
-			waitForACLPropagation(t, target, clients, string(data), aclPropagationTimeout)
+			if !waitForACLPropagationWithDeadline(t, target, clients, string(data), aclPropagationTimeout, deadline) {
+				t.Logf("Deadline reached during rapid ACL propagation")
+				break
+			}
 
 			// Upload a file to verify final state works
 			name := fmt.Sprintf("rapid-acl-%d.txt", i)
@@ -601,7 +612,7 @@ rules:
 			for _, peerEmail := range aclState[target.email] {
 				for _, c := range clients {
 					if c.email == peerEmail {
-						if err := c.WaitForFile(target.email, name, md5, 8*time.Second); err != nil {
+						if err := c.WaitForFile(target.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
 							t.Fatalf("rapid-acl peer %s did not receive %s: %v", c.email, name, err)
 						}
 					}
@@ -632,7 +643,7 @@ rules:
 					if c.email == peerEmail {
 						fileKey := fmt.Sprintf("%s/%s", sender.email, firstFile)
 						if info, exists := expectedFiles[c.email][fileKey]; exists {
-							if err := c.WaitForFile(sender.email, firstFile, info.md5, 5*time.Second); err != nil {
+							if err := c.WaitForFile(sender.email, firstFile, info.md5, timeoutWithDeadline(5*time.Second, deadline)); err != nil {
 								t.Fatalf("burst file %s not received by %s: %v", firstFile, c.email, err)
 							}
 						}
@@ -665,7 +676,7 @@ rules:
 			for _, peerEmail := range aclState[sender.email] {
 				for _, c := range clients {
 					if c.email == peerEmail {
-						if err := c.WaitForFile(sender.email, name, md5, 8*time.Second); err != nil {
+						if err := c.WaitForFile(sender.email, name, md5, timeoutWithDeadline(8*time.Second, deadline)); err != nil {
 							t.Logf("Weird filename '%s' replication to %s failed: %v", name, c.email, err)
 						}
 					}
@@ -926,6 +937,51 @@ func waitForACLPropagation(t *testing.T, owner *ClientHelper, clients []*ClientH
 			t.Fatalf("ACL propagation to %s from %s failed: %v", c.email, owner.email, err)
 		}
 	}
+}
+
+func waitForACLPropagationWithDeadline(t *testing.T, owner *ClientHelper, clients []*ClientHelper, content string, maxTimeout time.Duration, deadline time.Time) bool {
+	t.Helper()
+	timeout := maxTimeout
+	if !deadline.IsZero() {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false // deadline already passed
+		}
+		if remaining < timeout {
+			timeout = remaining
+		}
+	}
+	md5 := CalculateMD5([]byte(content))
+	for _, c := range clients {
+		if c.email == owner.email {
+			continue
+		}
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			return false
+		}
+		if err := c.WaitForFile(owner.email, "syft.pub.yaml", md5, timeout); err != nil {
+			t.Fatalf("ACL propagation to %s from %s failed: %v", c.email, owner.email, err)
+		}
+	}
+	return true
+}
+
+func timeoutWithDeadline(maxTimeout time.Duration, deadline time.Time) time.Duration {
+	if deadline.IsZero() {
+		return maxTimeout
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return 100 * time.Millisecond // minimal timeout to allow quick exit
+	}
+	if remaining < maxTimeout {
+		return remaining
+	}
+	return maxTimeout
+}
+
+func deadlinePassed(deadline time.Time) bool {
+	return !deadline.IsZero() && time.Now().After(deadline)
 }
 
 // forceBroadcastPublicACL rewrites the public ACL to trigger a priority upload even if unchanged.
