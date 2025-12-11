@@ -32,6 +32,10 @@ type UploadParams struct {
 	FilePath          string
 	ChecksumCRC64NVME string
 	Callback          func(uploadedBytes int64, totalBytes int64)
+	ResumeDir         string
+	Fingerprint       string
+	PartSize          int64
+	PartUploadTimeout time.Duration
 }
 
 // UploadResponse represents the response from a blob upload
@@ -41,6 +45,39 @@ type UploadResponse struct {
 	ETag         string `json:"etag"`
 	Size         int64  `json:"size"`
 	LastModified string `json:"lastModified"`
+}
+
+// MultipartUploadRequest represents a request to initiate or resume a multipart upload
+type MultipartUploadRequest struct {
+	Key         string `json:"key"`
+	Size        int64  `json:"size"`
+	PartSize    int64  `json:"partSize,omitempty"`
+	UploadID    string `json:"uploadId,omitempty"`
+	PartNumbers []int  `json:"partNumbers,omitempty"`
+}
+
+type MultipartUploadResponse struct {
+	Key       string         `json:"key"`
+	UploadID  string         `json:"uploadId"`
+	PartSize  int64          `json:"partSize"`
+	PartCount int            `json:"partCount"`
+	URLs      map[int]string `json:"urls"`
+}
+
+type CompletedPart struct {
+	PartNumber int    `json:"partNumber"`
+	ETag       string `json:"etag"`
+}
+
+type CompleteMultipartUploadRequest struct {
+	Key      string           `json:"key"`
+	UploadID string           `json:"uploadId"`
+	Parts    []*CompletedPart `json:"parts"`
+}
+
+type AbortMultipartUploadRequest struct {
+	Key      string `json:"key"`
+	UploadID string `json:"uploadId"`
 }
 
 // ===================================================================================================

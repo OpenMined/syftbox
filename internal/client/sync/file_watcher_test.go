@@ -127,28 +127,20 @@ func TestFileWatcherAutoCleanup(t *testing.T) {
 	fw.ignoreMu.RUnlock()
 	assert.Equal(t, 2, initialCount, "should have 2 entries in ignore map initially")
 
-	// Wait for the first entry to expire and be cleaned up
-	time.Sleep(100 * time.Millisecond) // Enough time for cleanup to run and remove expired entries
+	require.Eventually(t, func() bool {
+		fw.ignoreMu.RLock()
+		defer fw.ignoreMu.RUnlock()
+		afterCleanupCount := len(fw.ignore)
+		_, path1Exists := fw.ignore[testPath1]
+		_, path2Exists := fw.ignore[testPath2]
+		return afterCleanupCount == 1 && !path1Exists && path2Exists
+	}, 750*time.Millisecond, 25*time.Millisecond, "path1 should expire first and path2 should remain")
 
-	// Check that expired entry was cleaned up
-	fw.ignoreMu.RLock()
-	afterCleanupCount := len(fw.ignore)
-	_, path1Exists := fw.ignore[testPath1]
-	_, path2Exists := fw.ignore[testPath2]
-	fw.ignoreMu.RUnlock()
-
-	assert.Equal(t, 1, afterCleanupCount, "should have 1 entry remaining after cleanup")
-	assert.False(t, path1Exists, "path1 should have been cleaned up")
-	assert.True(t, path2Exists, "path2 should still exist")
-
-	// Wait for the second entry to expire and be cleaned up
-	time.Sleep(200 * time.Millisecond)
-
-	fw.ignoreMu.RLock()
-	finalCount := len(fw.ignore)
-	fw.ignoreMu.RUnlock()
-
-	assert.Equal(t, 0, finalCount, "all entries should have been cleaned up")
+	require.Eventually(t, func() bool {
+		fw.ignoreMu.RLock()
+		defer fw.ignoreMu.RUnlock()
+		return len(fw.ignore) == 0
+	}, 750*time.Millisecond, 25*time.Millisecond, "all entries should eventually be cleaned up")
 }
 
 func TestFileWatcher_StopProperlyShutdown(t *testing.T) {

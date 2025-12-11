@@ -15,6 +15,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/openmined/syftbox/internal/client"
 	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/client/controlplane"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
@@ -30,6 +31,38 @@ var rootCmd = &cobra.Command{
 	Short:   "SyftBox CLI",
 	Version: version.Detailed(),
 	Run: func(cmd *cobra.Command, args []string) {
+		enableControlPlane, _ := cmd.Flags().GetBool("control-plane")
+		if enableControlPlane {
+			cmd.SilenceUsage = true
+
+			configPath := resolveConfigPath(cmd)
+			httpAddr, _ := cmd.Flags().GetString("http-addr")
+			httpToken, _ := cmd.Flags().GetString("http-token")
+			enableSwagger, _ := cmd.Flags().GetBool("http-swagger")
+
+			showSyftBoxHeader()
+			slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
+			slog.Info("control plane mode", "addr", httpAddr, "config", configPath)
+
+			daemon, err := client.NewClientDaemon(&controlplane.CPServerConfig{
+				Addr:          httpAddr,
+				AuthToken:     httpToken,
+				EnableSwagger: enableSwagger,
+				ConfigPath:    configPath,
+			})
+			if err != nil {
+				slog.Error("syftbox control plane", "error", err)
+				os.Exit(1)
+			}
+
+			defer slog.Info("Bye!")
+			if err := daemon.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("syftbox control plane start", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
+
 		cfg, err := loadConfig(cmd)
 		if err != nil {
 			slog.Error("syftbox config", "error", err)
@@ -76,6 +109,10 @@ func init() {
 	rootCmd.Flags().StringP("datadir", "d", config.DefaultDataDir, "data directory where the syftbox workspace is stored")
 	rootCmd.Flags().StringP("server", "s", config.DefaultServerURL, "url of the syftbox server")
 	rootCmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "path to config file")
+	rootCmd.Flags().Bool("control-plane", false, "start the local control plane HTTP server")
+	rootCmd.Flags().String("http-addr", "localhost:7938", "address to bind the local control plane http server")
+	rootCmd.Flags().String("http-token", "", "access token for the local control plane http server")
+	rootCmd.Flags().Bool("http-swagger", true, "enable Swagger for the local control plane http server")
 }
 
 func main() {

@@ -111,6 +111,20 @@ Secondary queue for extreme burst scenarios:
 - `internal/server/handlers/ws/ws_client.go` - RX/TX buffers (8→256)
 - `internal/server/handlers/ws/ws_hub.go` - Message queue (128→256)
 
+##### Benchmark Comparison (branch vs main, 2025-11-30)
+
+| Scenario | Old (main) | New (`madhava/fuzz`) | Delta |
+|----------|------------|----------------------|-------|
+| Large file transfer (1/4/10/50MB) | P50 latency 10.03s, avg 1.60 MB/s, peak 4.91 MB/s | P50 latency 232ms, avg 33.90 MB/s, peak 73.23 MB/s | ~21x avg throughput; ~43x peak |
+| Concurrent uploads (10x1MB per client) | 122ms, 163.95 MB/s | 112ms, 178.64 MB/s | ~9% throughput, lower latency |
+| WebSocket latency (RPC priority) | All sizes timed out (no delivery) | Same (no delivery) | Needs fix: RPC/notify path not delivering |
+| Many small files (RPC batch) | 100 files → 62 timeouts; 5m10s sync | 1 file timed out immediately | Regression to investigate |
+
+Notes:
+- Measurements taken with `go test -tags integration` + `PERF_TEST_SANDBOX` per scenario.
+- Large-file path shows major gains from adaptive sync + buffer increases.
+- RPC/priority path (WebSocket latency + small-file batch) still failing; investigate notify/RPC delivery and timeouts.
+
 #### 🧪 Testing
 
 ##### New Tests
@@ -585,4 +599,3 @@ go tool trace cmd/devstack/profiles/trace.out
 - **E2E Encryption Diagrams**: Step-by-step visual guide of encryption process
 - **System Flow Charts**: Clear diagrams showing request processing and access control flow
 - **Docker Architecture**: Visual representation of container setup and networking
-

@@ -373,8 +373,11 @@ func parseStartFlags(args []string) (startOptions, error) {
 }
 
 func buildBinary(outPath, pkg, tags string) error {
-	// Force rebuild all packages to ensure latest code changes are included
-	args := []string{"build", "-a", "-tags", tags, "-o", outPath, pkg}
+	args := []string{"build", "-tags", tags, "-o", outPath, pkg}
+	if os.Getenv("SBDEV_REBUILD_ALL") == "1" {
+		// Full rebuild is opt-in to keep test runs fast in CI/dev
+		args = append(args[:1], append([]string{"-a"}, args[1:]...)...)
+	}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -762,10 +765,25 @@ func stopMinio(ms minioState) {
 }
 
 func writeServerConfig(path string, port, minioPort int, dataDir, logDir string) error {
+	httpCfg := map[string]any{
+		"addr": fmt.Sprintf("127.0.0.1:%d", port),
+	}
+
+	if v := os.Getenv("SBDEV_HTTP_READ_TIMEOUT"); v != "" {
+		httpCfg["read_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_WRITE_TIMEOUT"); v != "" {
+		httpCfg["write_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_IDLE_TIMEOUT"); v != "" {
+		httpCfg["idle_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_READ_HEADER_TIMEOUT"); v != "" {
+		httpCfg["read_header_timeout"] = v
+	}
+
 	cfg := map[string]any{
-		"http": map[string]any{
-			"addr": fmt.Sprintf("127.0.0.1:%d", port),
-		},
+		"http": httpCfg,
 		"blob": map[string]any{
 			"bucket_name": defaultBucket,
 			"region":      defaultRegion,

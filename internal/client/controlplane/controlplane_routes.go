@@ -45,7 +45,8 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 		Limit:  10,
 	})
 
-	// syncH := handlers.NewSyncHandler(datasiteMgr)
+	syncH := handlers.NewSyncHandler(datasiteMgr)
+	uploadH := handlers.NewUploadHandler(datasiteMgr)
 	appH := handlers.NewAppHandler(datasiteMgr)
 	initH := handlers.NewInitHandler(datasiteMgr, routeConfig.ControlPlaneURL)
 	statusH := handlers.NewStatusHandler(datasiteMgr)
@@ -97,12 +98,25 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 		v1.GET("/logs", logsH.GetLogs)
 		v1.GET("/logs/download", logsH.DownloadLogs)
 
-		// v1Sync := v1.Group("/sync")
-		// {
-		// 	v1Sync.GET("/status", syncH.Status)
-		// 	v1Sync.GET("/events", syncH.Events)
-		// 	v1Sync.GET("/now", syncH.Now)
-		// }
+		// Sync status endpoints
+		v1Sync := v1.Group("/sync")
+		{
+			v1Sync.GET("/status", syncH.Status)
+			v1Sync.GET("/status/file", syncH.StatusByPath)
+			v1Sync.GET("/events", syncH.Events)
+			v1Sync.POST("/now", syncH.TriggerSync)
+		}
+
+		// Upload management endpoints
+		v1Uploads := v1.Group("/uploads")
+		{
+			v1Uploads.GET("/", uploadH.List)
+			v1Uploads.GET("/:id", uploadH.Get)
+			v1Uploads.POST("/:id/pause", uploadH.Pause)
+			v1Uploads.POST("/:id/resume", uploadH.Resume)
+			v1Uploads.POST("/:id/restart", uploadH.Restart)
+			v1Uploads.DELETE("/:id", uploadH.Cancel)
+		}
 	}
 
 	if routeConfig.Swagger {

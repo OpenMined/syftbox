@@ -184,6 +184,11 @@ func (w *Workspace) IsValidPath(path string) bool {
 	return IsValidPath(path)
 }
 
+// IsOwner checks if the path belongs to the workspace owner
+func (w *Workspace) IsOwner(path string) bool {
+	return IsOwner(path, w.Owner)
+}
+
 func (w *Workspace) isLegacyWorkspace() bool {
 	// a .metadata.json exists
 	return utils.FileExists(filepath.Join(w.Root, legacyMetadataFile))

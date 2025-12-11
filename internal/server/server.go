@@ -63,10 +63,10 @@ func New(config *Config) (*Server, error) {
 			Addr:    config.HTTP.Addr,
 			Handler: httpHandler,
 			// Timeouts to prevent slow client attacks
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      60 * time.Second,
-			IdleTimeout:       120 * time.Second,
-			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       config.HTTP.ReadTimeout,
+			WriteTimeout:      config.HTTP.WriteTimeout,
+			IdleTimeout:       config.HTTP.IdleTimeout,
+			ReadHeaderTimeout: config.HTTP.ReadHeaderTimeout,
 			// Connection control
 			MaxHeaderBytes: 1 << 20, // 1 MB,
 			TLSConfig: &tls.Config{

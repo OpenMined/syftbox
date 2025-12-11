@@ -35,6 +35,7 @@ type SyncEngine struct {
 	journal           *SyncJournal
 	localState        *SyncLocalState
 	syncStatus        *SyncStatus
+	uploadRegistry    *UploadRegistry
 	watcher           *FileWatcher
 	ignoreList        *SyncIgnoreList
 	priorityList      *SyncPriorityList
@@ -62,6 +63,9 @@ func NewSyncEngine(
 	syncStatus := NewSyncStatus()
 	adaptiveScheduler := NewAdaptiveSyncScheduler()
 
+	resumeDir := filepath.Join(workspace.MetadataDir, "upload_sessions")
+	uploadRegistry := NewUploadRegistry(resumeDir)
+
 	return &SyncEngine{
 		sdk:               sdk,
 		workspace:         workspace,
@@ -71,6 +75,7 @@ func NewSyncEngine(
 		journal:           journal,
 		localState:        localState,
 		syncStatus:        syncStatus,
+		uploadRegistry:    uploadRegistry,
 		adaptiveScheduler: adaptiveScheduler,
 	}, nil
 }
@@ -83,6 +88,11 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	// and we don't want to load pre-migrations state
 	if err := se.journal.Open(); err != nil {
 		return fmt.Errorf("sync journal: %w", err)
+	}
+
+	// Load any existing upload sessions from disk
+	if err := se.uploadRegistry.LoadFromDisk(); err != nil {
+		slog.Warn("failed to load upload sessions", "error", err)
 	}
 
 	// run sync once and wait before starting watcher//websocket
@@ -182,6 +192,7 @@ func (se *SyncEngine) Stop() error {
 	slog.Info("sync stopped")
 
 	// Now it's safe to close resources
+	se.uploadRegistry.Close()
 	se.syncStatus.Close()
 	return se.journal.Close()
 }
@@ -393,7 +404,14 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 			isEmpty = true
 		}
 
-		if isSyncing || isIgnored || isEmpty || errorCount >= maxRetryCount {
+		// Check if remote has changed since we last synced this file.
+		// This is important for handling rapid overwrites where a file gets synced,
+		// but the remote is overwritten again before the 5s grace period expires.
+		remoteChanged := remoteExists && journalExists && se.hasModified(journal, remote)
+
+		// Skip files that are syncing/recently completed, UNLESS the remote has changed
+		// which means we need to re-download the new version
+		if (isSyncing && !remoteChanged) || isIgnored || isEmpty || errorCount >= maxRetryCount {
 			reconcileOps.Ignored[path] = struct{}{}
 			continue
 		}

@@ -511,6 +511,45 @@ sbdev-test-large:
     PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
 
 [group('devstack')]
+sbdev-test-large-upload:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running resumable large upload test..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadResume
+
+[group('devstack')]
+sbdev-test-progress-api:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Progress API demo..."
+    echo "This demo shows the sync status and upload management APIs in action."
+    echo "Features: status tracking, progress bars, pause/resume, error handling, auth"
+    echo ""
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/progress-api-demo"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestProgressAPIDemo
+
+[group('devstack')]
 sbdev-test-large-rust:
     #!/bin/bash
     set -eou pipefail
@@ -518,7 +557,7 @@ sbdev-test-large-rust:
     root_dir="$(pwd)"
     rust_bin="$root_dir/rust/target/release/syftbox-rs"
     cd rust && cargo build --release && cd "$root_dir"
-    SBDEV_CLIENT_BIN="$rust_bin" GOCACHE="$root_dir/.gocache" go test -v -timeout 30m -run TestLargeFileTransfer ./cmd/devstack
+    SBDEV_CLIENT_BIN="$rust_bin" GOCACHE="$root_dir/.gocache" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer ./cmd/devstack
 
 [group('devstack')]
 sbdev-test-concurrent:
@@ -746,7 +785,7 @@ sbdev-test-rust *ARGS:
     root_dir="$(pwd)"
     rust_client_path="$root_dir/rust/target/release/syftbox-rs"
 
-    echo "Building Rust client shim at $rust_client_path..."
+    echo "Building Rust client at $rust_client_path..."
     cd rust
     cargo build --release
     cd "$root_dir"
@@ -754,7 +793,7 @@ sbdev-test-rust *ARGS:
     echo "Running devstack tests with Rust client..."
     SBDEV_CLIENT_BIN="$rust_client_path" \
     GOCACHE="$root_dir/.gocache" \
-    go test -v -timeout 30m ./cmd/devstack {{ ARGS }}
+    go test -v -timeout 30m -tags integration ./cmd/devstack {{ ARGS }}
 
 [group('dev')]
 test:
