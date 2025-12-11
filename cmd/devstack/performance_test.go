@@ -24,10 +24,23 @@ func TestLargeFileTransfer(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default ACLs (required for Bob to see Alice's public files)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+
+	// Wait for ACL propagation - need more time for periodic sync to upload ACLs
+	t.Log("Waiting for ACL files to sync to server...")
+	time.Sleep(5 * time.Second)
+
 	testCases := []struct {
 		name string
 		size int
 	}{
+		{"100KB", 100 * 1024},
 		{"1MB", 1 * 1024 * 1024},
 		{"4MB", 4 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
@@ -178,6 +191,17 @@ func TestConcurrentUploads(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default ACLs (required for clients to see each other's public files)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+
+	// Wait for ACL propagation
+	time.Sleep(1 * time.Second)
+
 	numFiles := 10
 	fileSize := 1 * 1024 * 1024 // 1MB each
 
@@ -248,6 +272,17 @@ func TestFileModificationDuringSync(t *testing.T) {
 	if err := h.StartProfiling("TestFileModificationDuringSync"); err != nil {
 		t.Fatalf("start profiling: %v", err)
 	}
+
+	// Create default ACLs (required for Bob to see Alice's public files)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+
+	// Wait for ACL propagation
+	time.Sleep(1 * time.Second)
 
 	content := GenerateRandomFile(1 * 1024 * 1024) // 1MB
 	filename := "modify-test.bin"
