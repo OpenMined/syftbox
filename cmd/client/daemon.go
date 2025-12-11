@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
 
 	"github.com/openmined/syftbox/internal/client"
-	"github.com/openmined/syftbox/internal/client/config"
 	"github.com/openmined/syftbox/internal/client/controlplane"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
@@ -30,18 +28,7 @@ func newDaemonCmd() *cobra.Command {
 
 			slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
 
-			// Get config path from flag or environment variable
-			// Check if flag was explicitly set
-			configPath := ""
-			if cmd.Flag("config").Changed {
-				configPath = cmd.Flag("config").Value.String()
-			} else if envPath := os.Getenv("SYFTBOX_CONFIG_PATH"); envPath != "" {
-				// Use environment variable if flag wasn't explicitly set
-				configPath = envPath
-			} else {
-				// Fall back to default
-				configPath = config.DefaultConfigPath
-			}
+			configPath := resolveConfigPath(cmd)
 			slog.Info("daemon using config", "path", configPath)
 
 			daemon, err := client.NewClientDaemon(&controlplane.CPServerConfig{

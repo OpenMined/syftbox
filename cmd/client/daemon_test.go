@@ -22,19 +22,9 @@ func TestDaemonConfigPath(t *testing.T) {
 			Use:   "daemon",
 			Short: "Test daemon command",
 			RunE: func(cmd *cobra.Command, args []string) error {
-				// Extract config path logic from the actual daemon command
-				configPath := ""
-				if cmd.Flag("config").Changed {
-					configPath = cmd.Flag("config").Value.String()
-				} else if envPath := os.Getenv("SYFTBOX_CONFIG_PATH"); envPath != "" {
-					configPath = envPath
-				} else {
-					configPath = config.DefaultConfigPath
+				cmd.Annotations = map[string]string{
+					"resolved_config": resolveConfigPath(cmd),
 				}
-				
-				// Store the resolved path for testing
-				cmd.SetContext(cmd.Context())
-				cmd.Annotations = map[string]string{"resolved_config": configPath}
 				return nil
 			},
 		}
@@ -43,7 +33,7 @@ func TestDaemonConfigPath(t *testing.T) {
 		cmd.Flags().StringVarP(&authToken, "http-token", "t", "", "Access token")
 		cmd.Flags().BoolVarP(&enableSwagger, "http-swagger", "s", true, "Enable Swagger")
 		cmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "path to config file")
-		
+
 		return cmd
 	}
 
@@ -55,10 +45,10 @@ func TestDaemonConfigPath(t *testing.T) {
 
 		cmd := createTestDaemonCmd()
 		cmd.SetArgs([]string{})
-		
+
 		err := cmd.Execute()
 		require.NoError(t, err)
-		
+
 		// Check resolved config path
 		assert.Equal(t, testPath, cmd.Annotations["resolved_config"])
 	})
@@ -72,10 +62,10 @@ func TestDaemonConfigPath(t *testing.T) {
 		flagPath := "/flag/path/config.json"
 		cmd := createTestDaemonCmd()
 		cmd.SetArgs([]string{"--config", flagPath})
-		
+
 		err := cmd.Execute()
 		require.NoError(t, err)
-		
+
 		// Flag should override env var
 		assert.Equal(t, flagPath, cmd.Annotations["resolved_config"])
 	})
@@ -86,10 +76,10 @@ func TestDaemonConfigPath(t *testing.T) {
 
 		cmd := createTestDaemonCmd()
 		cmd.SetArgs([]string{})
-		
+
 		err := cmd.Execute()
 		require.NoError(t, err)
-		
+
 		// Should use default
 		home, _ := os.UserHomeDir()
 		expectedDefault := filepath.Join(home, ".syftbox", "config.json")
@@ -102,10 +92,10 @@ func TestDaemonConfigPath(t *testing.T) {
 		flagPath := "/short/flag/config.json"
 		cmd := createTestDaemonCmd()
 		cmd.SetArgs([]string{"-c", flagPath})
-		
+
 		err := cmd.Execute()
 		require.NoError(t, err)
-		
+
 		assert.Equal(t, flagPath, cmd.Annotations["resolved_config"])
 	})
 
@@ -113,7 +103,7 @@ func TestDaemonConfigPath(t *testing.T) {
 		// This test documents the expected priority order
 		envPath := "/env/config.json"
 		flagPath := "/flag/config.json"
-		
+
 		// Test 1: Only env var set
 		os.Setenv("SYFTBOX_CONFIG_PATH", envPath)
 		cmd1 := createTestDaemonCmd()
@@ -138,7 +128,7 @@ func TestDaemonConfigPath(t *testing.T) {
 		home, _ := os.UserHomeDir()
 		expectedDefault := filepath.Join(home, ".syftbox", "config.json")
 		assert.Equal(t, expectedDefault, cmd3.Annotations["resolved_config"], "Should use default when nothing set")
-		
+
 		// Clean up
 		os.Unsetenv("SYFTBOX_CONFIG_PATH")
 	})

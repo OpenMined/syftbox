@@ -51,3 +51,4 @@ releases
 .env
 
 server.dev.yaml
+.gocache/*
