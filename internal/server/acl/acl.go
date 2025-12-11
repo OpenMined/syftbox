@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -113,14 +112,6 @@ func (s *ACLService) CanAccess(req *ACLRequest) error {
 	// early return if user is the owner
 	if isOwner(req.Path, req.User.ID) {
 		return nil
-	}
-
-	// Public datasite content is world-readable; allow fast path for canonical /public/ paths.
-	// Path format: "owner@email.com/public/..." - only match when "public" is the first directory.
-	if req.Level == AccessRead {
-		if idx := strings.Index(req.Path, "/"); idx > 0 && strings.HasPrefix(req.Path[idx:], "/public/") {
-			return nil
-		}
 	}
 
 	// check against access cache
