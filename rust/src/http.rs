@@ -1,21 +1,23 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use reqwest::{Client as HttpClient, ClientBuilder, Response, StatusCode};
+use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
 
 #[derive(Clone)]
 pub struct ApiClient {
     base: String,
     http: HttpClient,
+    user: String,
 }
 
 impl ApiClient {
-    pub fn new(base: &str, auth_token: Option<&str>) -> Result<Self> {
+    pub fn new(base: &str, user: &str, auth_token: Option<&str>) -> Result<Self> {
         let mut builder = ClientBuilder::new()
             .timeout(Duration::from_secs(15))
             .connect_timeout(Duration::from_secs(5))
-            .user_agent("syftbox-rs/0.1");
+            .user_agent("syftbox-rs/0.1")
+            .no_proxy();
 
         if let Some(token) = auth_token {
             builder = builder.default_headers({
@@ -33,20 +35,50 @@ impl ApiClient {
         Ok(ApiClient {
             base: base.trim_end_matches('/').to_string(),
             http,
+            user: user.to_string(),
         })
     }
 
     pub async fn healthz(&self) -> Result<()> {
         let url = format!("{}/healthz", self.base);
-        let resp = self.http.get(url).send().await?;
+        let resp = self.with_user(self.http.get(url)).send().await?;
         map_status(resp, "healthz").await?;
         Ok(())
     }
 
     pub async fn get_blob_presigned(&self, body: &PresignedParams) -> Result<PresignedResponse> {
         let url = format!("{}/api/v1/blob/download", self.base);
-        let resp = self.http.post(url).json(body).send().await?;
+        let resp = self
+            .with_user(self.http.post(url))
+            .json(body)
+            .send()
+            .await?;
         map_error(resp, "blob download").await
+    }
+
+    pub async fn upload_blob(&self, key: &str, path: &std::path::Path) -> Result<()> {
+        let url = format!("{}/api/v1/blob/upload", self.base);
+        let form = reqwest::multipart::Form::new().file("file", path).await?;
+        let resp = self
+            .with_user(self.http.put(url).query(&[("key", key)]))
+            .multipart(form)
+            .send()
+            .await?;
+        map_status(resp, "blob upload").await
+    }
+
+    pub fn http(&self) -> &HttpClient {
+        &self.http
+    }
+
+    pub async fn datasite_view(&self) -> Result<DatasiteViewResponse> {
+        let url = format!("{}/api/v1/datasite/view", self.base);
+        let resp = self.with_user(self.http.get(url)).send().await?;
+        map_error(resp, "datasite view").await
+    }
+
+    fn with_user(&self, req: RequestBuilder) -> RequestBuilder {
+        req.query(&[("user", &self.user)])
     }
 }
 
@@ -81,9 +113,25 @@ async fn map_status(resp: Response, op: &str) -> Result<()> {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+pub struct DatasiteViewResponse {
+    pub files: Vec<BlobInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BlobInfo {
+    pub key: String,
+    pub etag: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PresignedResponse {
-    pub urls: Vec<String>,
+    pub urls: Vec<BlobUrl>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BlobUrl {
+    pub key: String,
+    pub url: String,
 }
 
 #[derive(Debug, serde::Serialize)]

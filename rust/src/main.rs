@@ -1,5 +1,6 @@
 mod client;
 mod config;
+mod control;
 mod events;
 mod http;
 mod sync;
@@ -9,6 +10,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::Config;
+use control::ControlPlane;
 use http::ApiClient;
 
 #[derive(Parser, Debug)]
@@ -47,10 +49,18 @@ async fn main() -> Result<()> {
 }
 
 async fn run_daemon(cfg: Config) -> Result<()> {
-    let api = ApiClient::new(&cfg.server_url, cfg.access_token.as_deref())?;
+    let api = ApiClient::new(&cfg.server_url, &cfg.email, cfg.access_token.as_deref())?;
+
+    let client_addr = cfg
+        .client_url
+        .as_deref()
+        .unwrap_or("http://127.0.0.1:0")
+        .replace("http://", "")
+        .replace("https://", "");
+    let control = ControlPlane::start(&client_addr)?;
 
     // TODO: wire websocket events; keep None until implemented.
-    let mut client = client::Client::new(cfg, api, None);
+    let mut client = client::Client::new(cfg, api, None, Some(control));
     client.start().await?;
     Ok(())
 }

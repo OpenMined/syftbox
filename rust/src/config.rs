@@ -73,3 +73,67 @@ fn validate_email(email: &str) -> Result<()> {
         anyhow::bail!("invalid email: {email}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{env, fs};
+
+    #[test]
+    fn load_config_from_json_and_normalize() {
+        let tmp = env::temp_dir().join("syftbox-rs-config-test");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let cfg_path = tmp.join("config.json");
+        let data_dir = tmp.join("data");
+        let json = format!(
+            r#"{{
+                "email": "Alice@Example.com",
+                "data_dir": "{}",
+                "server_url": "http://127.0.0.1:8080",
+                "client_url": "http://127.0.0.1:7938"
+            }}"#,
+            data_dir.display()
+        );
+        fs::write(&cfg_path, json).unwrap();
+
+        let cfg = Config::load(&cfg_path).unwrap();
+        assert_eq!(cfg.email, "alice@example.com");
+        assert_eq!(cfg.server_url, "http://127.0.0.1:8080");
+        assert_eq!(cfg.client_url.as_deref(), Some("http://127.0.0.1:7938"));
+        assert_eq!(cfg.config_path.as_ref().unwrap(), &cfg_path);
+        assert!(cfg.data_dir.is_absolute());
+    }
+
+    #[test]
+    fn reject_invalid_url_scheme() {
+        let tmp = env::temp_dir().join("syftbox-rs-config-test-bad-url");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let cfg_path = tmp.join("config.json");
+        let json = r#"{
+            "email": "alice@example.com",
+            "data_dir": "/tmp/data",
+            "server_url": "ftp://bad.example.com"
+        }"#;
+        fs::write(&cfg_path, json).unwrap();
+        let err = Config::load(&cfg_path).unwrap_err();
+        assert!(err.to_string().contains("server_url"));
+    }
+
+    #[test]
+    fn reject_invalid_email() {
+        let tmp = env::temp_dir().join("syftbox-rs-config-test-bad-email");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        let cfg_path = tmp.join("config.json");
+        let json = r#"{
+            "email": "not-an-email",
+            "data_dir": "/tmp/data",
+            "server_url": "http://localhost:8080"
+        }"#;
+        fs::write(&cfg_path, json).unwrap();
+        let err = Config::load(&cfg_path).unwrap_err();
+        assert!(err.to_string().contains("invalid email"));
+    }
+}
