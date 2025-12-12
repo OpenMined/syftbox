@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -12,6 +13,7 @@ import (
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/version"
+	"github.com/openmined/syftbox/internal/wsproto"
 )
 
 const (
@@ -99,6 +101,8 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	}
 
 	// Upgrade HTTP connection to WebSocket
+	enc := wsproto.PreferredEncoding(ctx.GetHeader("X-Syft-WS-Encodings"))
+	ctx.Writer.Header().Set("X-Syft-WS-Encoding", strings.ToLower(enc.String()))
 	conn, err := websocket.Accept(ctx.Writer, ctx.Request, nil)
 	if err != nil {
 		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("websocket accept failed: %w", err))
@@ -111,6 +115,7 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 		IPAddr:  ctx.ClientIP(),
 		Headers: ctx.Request.Header.Clone(),
 		Version: ctx.GetHeader("X-Syft-Version"),
+		WSEncoding: enc,
 	})
 
 	client.MsgTx <- syftmsg.NewSystemMessage(version.Version, "ok")

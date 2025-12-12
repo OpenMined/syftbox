@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/imroc/req/v3"
 	"github.com/openmined/syftbox/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/wsproto"
 )
 
 const (
@@ -253,7 +254,8 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 
 	// Connect with auth in headers
 	headers := e.client.Headers.Clone()
-	conn, _, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+	headers.Set("X-Syft-WS-Encodings", "msgpack,json")
+	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
 		HTTPHeader: headers, // this will include the auth token
 	})
 	if err != nil {
@@ -261,8 +263,14 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 	}
 	conn.SetReadLimit(wsClientMaxMessageSize)
 
+	encHeader := ""
+	if resp != nil {
+		encHeader = resp.Header.Get("X-Syft-WS-Encoding")
+	}
+	enc := wsproto.PreferredEncoding(encHeader)
+
 	// Create and start client
-	wsClient := newWSClient(conn)
+	wsClient := newWSClient(conn, enc)
 	wsClient.Start(e.ctx)
 
 	e.wsClient = wsClient
