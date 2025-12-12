@@ -57,9 +57,14 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	}
 
 	// Update the sync journal
+	localETag := ""
+	if et, err := calculateETag(localAbsPath); err == nil {
+		localETag = et
+	}
 	se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         createMsg.ETag,
+		LocalETag:    localETag,
 		Size:         createMsg.Length,
 		LastModified: time.Now(),
 		Version:      "",

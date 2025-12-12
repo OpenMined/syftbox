@@ -78,6 +78,13 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 			continue
 		}
 
+		// Persist stable local hash so later scans don't treat mixed-format ETags as modified.
+		if res.Metadata != nil {
+			localAbs := se.workspace.DatasiteAbsPath(syncRelPath.String())
+			if et, err := calculateETag(localAbs); err == nil {
+				res.Metadata.LocalETag = et
+			}
+		}
 		se.journal.Set(res.Metadata)
 		se.syncStatus.SetCompleted(syncRelPath)
 		slog.Info("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Completed", "path", res.Path, "size", humanize.Bytes(uint64(res.Metadata.Size)))

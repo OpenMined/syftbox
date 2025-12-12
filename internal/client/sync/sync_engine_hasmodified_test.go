@@ -66,3 +66,21 @@ func TestHasModified_MixedMultipartETags_DifferentSize_Modified(t *testing.T) {
 	}
 }
 
+func TestHasModified_UsesLocalETag_WhenPresent(t *testing.T) {
+	se := &SyncEngine{workspace: &workspace.Workspace{Owner: "client1@sandbox.local"}}
+	local := &FileMetadata{
+		Path:      "client1@sandbox.local/public/a.bin",
+		Size:      100,
+		ETag:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		LocalETag: "same",
+	}
+	journal := &FileMetadata{
+		Path:      "client1@sandbox.local/public/a.bin",
+		Size:      100,
+		ETag:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-4",
+		LocalETag: "same",
+	}
+	if se.hasModified(local, journal) {
+		t.Fatal("expected LocalETag equality to treat as unmodified even if ETags differ")
+	}
+}

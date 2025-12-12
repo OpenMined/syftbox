@@ -555,6 +555,11 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 		return f1.Version != f2.Version
 	}
 
+	// Option 1.5: Compare stable local hashes when both are present (local vs journal).
+	if f1.LocalETag != "" && f2.LocalETag != "" {
+		return normalizeETag(f1.LocalETag) != normalizeETag(f2.LocalETag)
+	}
+
 	// Option 2: Use ETag/Hash if VersionID isn't reliable or available
 	// Need clarity on whether f1.ETag represents local hash or server ETag
 	if f1.ETag != "" && f2.ETag != "" {

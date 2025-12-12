@@ -86,6 +86,7 @@ func (s *SyncLocalState) Scan() (map[SyncPath]*FileMetadata, error) {
 			Size:         info.Size(),
 			LastModified: info.ModTime(),
 			ETag:         etag,
+			LocalETag:    etag,
 			Version:      "",
 		}
 

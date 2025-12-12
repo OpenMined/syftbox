@@ -167,6 +167,7 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		se.journal.Set(&FileMetadata{
 			Path:         op.RelPath,
 			ETag:         res.ETag,
+			LocalETag:    op.Local.ETag,
 			Size:         res.Size,
 			LastModified: lastModified,
 		})

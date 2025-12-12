@@ -28,12 +28,17 @@ func DownloadFile(ctx context.Context, job *DownloadJob) (string, error) {
 
 	destPath := filepath.Join(job.TargetDir, job.Name)
 
+	stats := getHTTPStats()
+	var lastDownloaded int64
+
 	// Use context for cancelation
 	resp, err := HTTPClient.R().
 		DisableAutoReadResponse().
 		SetContext(ctx).
 		SetOutputFile(destPath).
 		SetDownloadCallbackWithInterval(func(info req.DownloadInfo) {
+			// Update global HTTP rx stats for presigned downloads.
+			recordDownloadedDelta(stats, &lastDownloaded, int64(info.DownloadedSize))
 			if info.Response.Response != nil && job.Callback != nil {
 				job.Callback(job, info.DownloadedSize, info.Response.ContentLength)
 			}
@@ -84,6 +89,18 @@ func DownloadFile(ctx context.Context, job *DownloadJob) (string, error) {
 	}
 
 	return destPath, nil
+}
+
+func recordDownloadedDelta(stats *httpStats, lastDownloaded *int64, downloaded int64) {
+	if stats == nil || lastDownloaded == nil {
+		return
+	}
+	delta := downloaded - *lastDownloaded
+	if delta <= 0 {
+		return
+	}
+	stats.onRecv(int(delta))
+	*lastDownloaded += delta
 }
 
 func Downloader(ctx context.Context, opts *DownloadOpts) <-chan *DownloadResult {

@@ -96,6 +96,7 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 	se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         file.ETag,
+		LocalETag:    file.ETag,
 		Size:         file.Size,
 		LastModified: file.LastModified,
 		Version:      "",
