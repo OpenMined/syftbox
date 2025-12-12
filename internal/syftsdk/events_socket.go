@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/openmined/syftbox/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/wsproto"
 )
 
 const (
@@ -28,17 +28,19 @@ type wsClient struct {
 	msgTx     chan *syftmsg.Message // messages sent to the websocket
 	closed    chan struct{}         // websocket is closed
 	closing   chan struct{}         // websocket is closing
+	encoding  wsproto.Encoding      // negotiated encoding for this connection
 	closeOnce sync.Once             // closeOnce ensures the connection is closed only once
 	wg        sync.WaitGroup        // waitGroup for the read and write loops
 }
 
-func newWSClient(conn *websocket.Conn) *wsClient {
+func newWSClient(conn *websocket.Conn, enc wsproto.Encoding) *wsClient {
 	return &wsClient{
 		msgRx:   make(chan *syftmsg.Message, wsClientChannelSize),
 		msgTx:   make(chan *syftmsg.Message, wsClientChannelSize),
 		closed:  make(chan struct{}),
 		closing: make(chan struct{}),
 		conn:    conn,
+		encoding: enc,
 	}
 }
 
@@ -86,16 +88,18 @@ func (c *wsClient) readLoop(ctx context.Context) {
 			// Continue with read attempt
 		}
 
-		// IMPORTANT: Declare data inside the loop so each message gets its own pointer
-		// Previously this was declared outside the loop, causing pointer aliasing where
-		// multiple channel buffer slots would reference the same memory location
-		var data *syftmsg.Message
-		err := wsjson.Read(ctx, c.conn, &data)
+		typ, raw, err := c.conn.Read(ctx)
 		if err != nil {
 			if !isWSExpectedCloseError(err) {
 				slog.Warn("socket RECV", "error", err)
 			}
 			return
+		}
+
+		data, _, uerr := wsproto.Unmarshal(typ, raw)
+		if uerr != nil {
+			slog.Warn("socket RECV decode", "error", uerr)
+			continue
 		}
 
 		select {
@@ -137,7 +141,10 @@ func (c *wsClient) writeLoop(ctx context.Context) {
 
 			// write message within timeout
 			ctxWrite, cancel := context.WithTimeout(ctx, wsClientWriteTimeout)
-			err := wsjson.Write(ctxWrite, c.conn, msg)
+			typ, payload, err := wsproto.Marshal(msg, c.encoding)
+			if err == nil {
+				err = c.conn.Write(ctxWrite, typ, payload)
+			}
 			cancel()
 
 			if err != nil {

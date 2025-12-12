@@ -4,12 +4,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/openmined/syftbox/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/wsproto"
 )
 
 // TestLargeFileTransfer tests uploading and syncing files of various sizes
@@ -126,6 +130,32 @@ func TestWebSocketLatency(t *testing.T) {
 	// 4. ACL file sync via WebSocket (~70-200ms)
 	// Total: ~520-900ms for fresh environment with adaptive sync
 	time.Sleep(1 * time.Second)
+
+	t.Run("EncodingComparison", func(t *testing.T) {
+		content := GenerateRandomFile(3 * 1024 * 1024)
+		msg := syftmsg.NewFileWrite("perf/encode.request", "etag", int64(len(content)), content)
+
+		startJSON := time.Now()
+		jsonBytes, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("json marshal: %v", err)
+		}
+		jsonTime := time.Since(startJSON)
+
+		startMP := time.Now()
+		_, mpBytes, err := wsproto.Marshal(msg, wsproto.EncodingMsgPack)
+		if err != nil {
+			t.Fatalf("msgpack marshal: %v", err)
+		}
+		mpTime := time.Since(startMP)
+
+		t.Logf("JSON size=%d time=%v", len(jsonBytes), jsonTime)
+		t.Logf("MsgPack size=%d time=%v", len(mpBytes), mpTime)
+
+		if len(mpBytes) >= len(jsonBytes)*8/10 {
+			t.Errorf("expected msgpack to be at least 20%% smaller than json, got json=%d msgpack=%d", len(jsonBytes), len(mpBytes))
+		}
+	})
 
 	testCases := []struct {
 		name          string
