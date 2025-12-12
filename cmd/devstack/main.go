@@ -631,10 +631,15 @@ func startMinio(mode, binPath, root string, apiPort, consolePort int, keepData b
 	cmd.Stderr = f
 
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		return minioState{}, err
 	}
 
 	if err := waitForMinio(apiPort); err != nil {
+		// MinIO may have failed to bind to the selected port; ensure the process is stopped
+		// so subsequent test runs can retry cleanly.
+		_ = killProcess(cmd.Process.Pid)
+		_ = f.Close()
 		return minioState{}, fmt.Errorf("minio health: %w", err)
 	}
 
@@ -1360,7 +1365,11 @@ func killProcess(pid int) error {
 func getFreePort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, err
+		// Some sandboxed environments disallow binding to loopback explicitly; fall back to any interface.
+		ln, err = net.Listen("tcp", ":0")
+		if err != nil {
+			return 0, err
+		}
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port, nil

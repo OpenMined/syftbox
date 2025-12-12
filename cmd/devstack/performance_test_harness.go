@@ -143,13 +143,11 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		t.Fatalf("build client: %v", err)
 	}
 
-	// Allocate ports (ensure MinIO API and console ports differ)
+	// Allocate ports (ensure MinIO API and console ports differ).
+	// MinIO can occasionally fail to bind if a port becomes occupied between selection and start,
+	// especially across rapid test runs. Retry with new ports if startup fails.
 	serverPort, _ := getFreePort()
-	minioAPIPort, _ := getFreePort()
-	minioConsolePort, _ := getFreePort()
-	for minioConsolePort == minioAPIPort {
-		minioConsolePort, _ = getFreePort()
-	}
+	var minioAPIPort, minioConsolePort int
 
 	// Start MinIO
 	t.Logf("Starting MinIO...")
@@ -158,9 +156,43 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		t.Fatalf("minio binary unavailable: %v", err)
 	}
 
-	mState, err := startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
-	if err != nil {
-		t.Fatalf("start minio: %v", err)
+	var mState minioState
+	var minioErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		var err error
+		minioAPIPort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio api port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		minioConsolePort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio console port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
+			minioConsolePort, err = getFreePort()
+			if err != nil {
+				minioErr = fmt.Errorf("allocate minio console port: %w", err)
+				break
+			}
+		}
+		if minioConsolePort == minioAPIPort {
+			minioErr = fmt.Errorf("unable to allocate distinct minio ports")
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
+		if minioErr == nil {
+			break
+		}
+		t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
+	}
+	if minioErr != nil {
+		t.Fatalf("start minio: %v", minioErr)
 	}
 
 	// Setup bucket

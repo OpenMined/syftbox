@@ -1,8 +1,10 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Clone)]
 pub struct ApiClient {
@@ -67,6 +69,20 @@ impl ApiClient {
         map_status(resp, "blob upload").await
     }
 
+    pub async fn delete_blobs(&self, keys: &[String]) -> Result<()> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let url = format!("{}/api/v1/blob/delete", self.base);
+        let body = DeleteParams { keys };
+        let resp = self
+            .with_user(self.http.post(url))
+            .json(&body)
+            .send()
+            .await?;
+        map_status(resp, "blob delete").await
+    }
+
     pub fn http(&self) -> &HttpClient {
         &self.http
     }
@@ -121,6 +137,9 @@ pub struct DatasiteViewResponse {
 pub struct BlobInfo {
     pub key: String,
     pub etag: String,
+    pub size: i64,
+    #[serde(rename = "lastModified")]
+    pub last_modified: DateTime<Utc>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,4 +156,9 @@ pub struct BlobUrl {
 #[derive(Debug, serde::Serialize)]
 pub struct PresignedParams {
     pub keys: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DeleteParams<'a> {
+    keys: &'a [String],
 }

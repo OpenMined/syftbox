@@ -22,7 +22,9 @@ use walkdir::WalkDir;
 use crate::config::Config;
 use crate::control::ControlPlane;
 use crate::http::ApiClient;
-use crate::sync::{download_keys, sync_once_with_control};
+use crate::sync::{
+    download_keys, ensure_parent_dirs, sync_once_with_control, write_file_resolving_conflicts,
+};
 
 static ACL_READY: AtomicBool = AtomicBool::new(false);
 
@@ -101,14 +103,17 @@ impl Client {
 async fn run_sync_loop(
     api: ApiClient,
     data_dir: PathBuf,
-    email: String,
+    _email: String,
     control: Option<ControlPlane>,
 ) -> Result<()> {
+    let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
     loop {
-        if let Err(err) = sync_once_with_control(&api, &data_dir, &email, control.clone()).await {
+        if let Err(err) =
+            sync_once_with_control(&api, &data_dir, control.clone(), &mut journal).await
+        {
             eprintln!("sync error: {err:?}");
         }
-        sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_secs(5)).await;
     }
 }
 
@@ -265,11 +270,8 @@ fn syft_url_to_rel_path(raw: &str) -> Option<String> {
 
 fn write_bytes(datasites_root: &Path, rel_path: &str, bytes: &[u8]) -> Result<()> {
     let target = datasites_root.join(rel_path);
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&target, bytes)?;
-    Ok(())
+    ensure_parent_dirs(&target)?;
+    write_file_resolving_conflicts(&target, bytes)
 }
 
 async fn upload_existing_acls(
