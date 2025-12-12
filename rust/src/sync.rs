@@ -47,7 +47,8 @@ impl SyncJournal {
     pub(crate) fn load(data_dir: &Path) -> Result<Self> {
         let path = data_dir.join(".data").join("sync.json");
         let state = if path.exists() {
-            let bytes = fs::read(&path).with_context(|| format!("read journal {}", path.display()))?;
+            let bytes =
+                fs::read(&path).with_context(|| format!("read journal {}", path.display()))?;
             serde_json::from_slice::<JournalState>(&bytes)
                 .with_context(|| format!("parse journal {}", path.display()))?
         } else {
@@ -81,7 +82,11 @@ impl SyncJournal {
         self.state.files.len()
     }
 
-    fn rebuild_if_empty(&mut self, local: &HashMap<String, LocalFile>, remote: &HashMap<String, BlobInfo>) {
+    fn rebuild_if_empty(
+        &mut self,
+        local: &HashMap<String, LocalFile>,
+        remote: &HashMap<String, BlobInfo>,
+    ) {
         if self.count() > 0 {
             return;
         }
@@ -142,8 +147,9 @@ pub async fn sync_once_with_control(
         // Recent-complete grace window to avoid spurious conflicts on rapid overwrites.
         if let Some(jm) = journal_meta {
             let now = chrono::Utc::now().timestamp();
-            if jm.completed_at > 0 && now-jm.completed_at < 5 {
-                let remote_changed = remote_exists && has_modified_remote(Some(jm), remote_meta.unwrap());
+            if jm.completed_at > 0 && now - jm.completed_at < 5 {
+                let remote_changed =
+                    remote_exists && has_modified_remote(Some(jm), remote_meta.unwrap());
                 if !remote_changed {
                     continue;
                 }
@@ -156,7 +162,8 @@ pub async fn sync_once_with_control(
         let remote_deleted = local_exists && journal_exists && !remote_exists;
 
         let local_modified = local_exists && has_modified_local(local_meta.unwrap(), journal_meta);
-        let remote_modified = remote_exists && has_modified_remote(journal_meta, remote_meta.unwrap());
+        let remote_modified =
+            remote_exists && has_modified_remote(journal_meta, remote_meta.unwrap());
 
         if !local_exists && !remote_exists && journal_exists {
             journal.delete(&key);
@@ -276,17 +283,20 @@ pub async fn sync_once_with_control(
 }
 
 fn has_modified_local(local: &LocalFile, journal: Option<&FileMetadata>) -> bool {
-    has_modified(journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)), Some((&local.etag, local.size, local.last_modified)))
+    has_modified(
+        journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)),
+        Some((&local.etag, local.size, local.last_modified)),
+    )
 }
 
 fn has_modified_remote(journal: Option<&FileMetadata>, remote: &BlobInfo) -> bool {
-    has_modified(journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)), Some((&remote.etag, remote.size, remote.last_modified.timestamp())))
+    has_modified(
+        journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)),
+        Some((&remote.etag, remote.size, remote.last_modified.timestamp())),
+    )
 }
 
-fn has_modified(
-    a: Option<(&str, i64, i64)>,
-    b: Option<(&str, i64, i64)>,
-) -> bool {
+fn has_modified(a: Option<(&str, i64, i64)>, b: Option<(&str, i64, i64)>) -> bool {
     match (a, b) {
         (None, None) => false,
         (None, Some(_)) | (Some(_), None) => true,
@@ -400,10 +410,7 @@ fn scan_local(datasites_root: &Path) -> Result<HashMap<String, LocalFile>> {
         let meta = entry.metadata()?;
         let etag = compute_md5(path)?;
         let size = meta.len() as i64;
-        let last_modified = meta
-            .modified()
-            .map(to_epoch_seconds)
-            .unwrap_or(0);
+        let last_modified = meta.modified().map(to_epoch_seconds).unwrap_or(0);
         out.insert(
             key.clone(),
             LocalFile {
@@ -481,4 +488,48 @@ fn mark_conflict(path: &Path) -> Result<()> {
 
     fs::rename(path, marked)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::SystemTime;
+
+    #[test]
+    fn scan_local_empty_dir() {
+        let root = make_temp_dir();
+        let state = scan_local(&root).unwrap();
+        assert!(state.is_empty());
+    }
+
+    #[test]
+    fn scan_local_collects_files_and_md5() {
+        let root = make_temp_dir();
+        let f1 = root.join("alice@example.com/public/a.txt");
+        fs::create_dir_all(f1.parent().unwrap()).unwrap();
+        let mut file = fs::File::create(&f1).unwrap();
+        writeln!(file, "hello").unwrap();
+
+        let state = scan_local(&root).unwrap();
+        let key = "alice@example.com/public/a.txt".to_string();
+        assert!(state.contains_key(&key));
+        let meta = state.get(&key).unwrap();
+        assert_eq!(meta.key, key);
+        assert!(!meta.etag.is_empty());
+
+        let computed = compute_md5(&f1).unwrap();
+        assert_eq!(computed, meta.etag);
+    }
+
+    fn make_temp_dir() -> PathBuf {
+        let mut root = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        root.push(format!("syftbox-rs-sync-test-{nanos}"));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 }
