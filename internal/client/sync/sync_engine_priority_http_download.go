@@ -52,9 +52,14 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	fileSize := int64(len(httpMsg.Body))
 
 	// update the journal
+	localETag := ""
+	if et, err := calculateETag(rpcLocalAbsPath); err == nil {
+		localETag = et
+	}
 	se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         httpMsg.Etag,
+		LocalETag:    localETag,
 		Size:         fileSize,
 		LastModified: time.Now(),
 		Version:      "",

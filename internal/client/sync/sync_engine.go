@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -27,20 +30,25 @@ const (
 
 var (
 	ErrSyncAlreadyRunning = errors.New("sync already running")
+	plainMD5ETagRE        = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	multipartETagRE       = regexp.MustCompile(`^[0-9a-f]{32}-\d+$`)
 )
 
 type SyncEngine struct {
-	workspace    *workspace.Workspace
-	sdk          *syftsdk.SyftSDK
-	journal      *SyncJournal
-	localState   *SyncLocalState
-	syncStatus   *SyncStatus
-	watcher      *FileWatcher
-	ignoreList   *SyncIgnoreList
-	priorityList *SyncPriorityList
-	lastSyncTime time.Time
-	wg           sync.WaitGroup
-	muSync       sync.Mutex
+	workspace         *workspace.Workspace
+	sdk               *syftsdk.SyftSDK
+	journal           *SyncJournal
+	localState        *SyncLocalState
+	syncStatus        *SyncStatus
+	uploadRegistry    *UploadRegistry
+	watcher           *FileWatcher
+	ignoreList        *SyncIgnoreList
+	priorityList      *SyncPriorityList
+	lastSyncTime      time.Time
+	lastSyncNs        atomic.Int64
+	adaptiveScheduler *AdaptiveSyncScheduler
+	wg                sync.WaitGroup
+	muSync            sync.Mutex
 }
 
 func NewSyncEngine(
@@ -59,16 +67,22 @@ func NewSyncEngine(
 
 	localState := NewSyncLocalState(workspace.DatasitesDir)
 	syncStatus := NewSyncStatus()
+	adaptiveScheduler := NewAdaptiveSyncScheduler()
+
+	resumeDir := filepath.Join(workspace.MetadataDir, "upload_sessions")
+	uploadRegistry := NewUploadRegistry(resumeDir)
 
 	return &SyncEngine{
-		sdk:          sdk,
-		workspace:    workspace,
-		watcher:      watcher,
-		ignoreList:   ignore,
-		priorityList: priority,
-		journal:      journal,
-		localState:   localState,
-		syncStatus:   syncStatus,
+		sdk:               sdk,
+		workspace:         workspace,
+		watcher:           watcher,
+		ignoreList:        ignore,
+		priorityList:      priority,
+		journal:           journal,
+		localState:        localState,
+		syncStatus:        syncStatus,
+		uploadRegistry:    uploadRegistry,
+		adaptiveScheduler: adaptiveScheduler,
 	}, nil
 }
 
@@ -80,6 +94,11 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	// and we don't want to load pre-migrations state
 	if err := se.journal.Open(); err != nil {
 		return fmt.Errorf("sync journal: %w", err)
+	}
+
+	// Load any existing upload sessions from disk
+	if err := se.uploadRegistry.LoadFromDisk(); err != nil {
+		slog.Warn("failed to load upload sessions", "error", err)
 	}
 
 	// run sync once and wait before starting watcher//websocket
@@ -110,8 +129,12 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 
 		// using a timer and not a ticker to avoid queued ticks when
 		// runFullSync takes more than fullSyncInterval to complete
-		timer := time.NewTimer(fullSyncInterval)
+		// Adaptive: start with default interval, adjust based on activity
+		interval := se.adaptiveScheduler.GetSyncInterval()
+		timer := time.NewTimer(interval)
 		defer timer.Stop()
+
+		lastLevel := se.adaptiveScheduler.GetActivityLevel()
 
 		for {
 			select {
@@ -123,7 +146,18 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 				if err != nil && !errors.Is(err, context.Canceled) {
 					slog.Error("full sync", "error", err)
 				}
-				timer.Reset(fullSyncInterval)
+
+				// Adaptive: adjust interval based on current activity level
+				newInterval := se.adaptiveScheduler.GetSyncInterval()
+				currentLevel := se.adaptiveScheduler.GetActivityLevel()
+
+				// Log activity level changes
+				if currentLevel != lastLevel {
+					slog.Info("sync adaptive interval", "level", currentLevel.String(), "interval", newInterval)
+					lastLevel = currentLevel
+				}
+
+				timer.Reset(newInterval)
 			}
 		}
 	}()
@@ -164,6 +198,7 @@ func (se *SyncEngine) Stop() error {
 	slog.Info("sync stopped")
 
 	// Now it's safe to close resources
+	se.uploadRegistry.Close()
 	se.syncStatus.Close()
 	return se.journal.Close()
 }
@@ -218,7 +253,6 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 		slog.Info("rebuilding journal")
 		se.rebuildJournal(localState, remoteState)
 	}
-
 	// get the journal state
 	tjournalStart := time.Now()
 	journalState, err := se.journal.GetState()
@@ -267,6 +301,7 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 
 	se.lastSyncTime = time.Now()
+	se.lastSyncNs.Store(se.lastSyncTime.UnixNano())
 	return nil
 }
 
@@ -375,7 +410,14 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 			isEmpty = true
 		}
 
-		if isSyncing || isIgnored || isEmpty || errorCount >= maxRetryCount {
+		// Check if remote has changed since we last synced this file.
+		// This is important for handling rapid overwrites where a file gets synced,
+		// but the remote is overwritten again before the 5s grace period expires.
+		remoteChanged := remoteExists && journalExists && se.hasModified(journal, remote)
+
+		// Skip files that are syncing/recently completed, UNLESS the remote has changed
+		// which means we need to re-download the new version
+		if (isSyncing && !remoteChanged) || isIgnored || isEmpty || errorCount >= maxRetryCount {
 			reconcileOps.Ignored[path] = struct{}{}
 			continue
 		}
@@ -399,6 +441,17 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 			(localCreated && remoteCreated) {
 			// Conflict Case: Local Create/Modify + Remote Create/Modify
 			// todo we can also consider local modify + remote delete or local delete + remote modify as conflict
+			journalEtag := ""
+			if journal != nil {
+				journalEtag = journal.ETag
+			}
+			slog.Warn("CONFLICT DETECTED",
+				"path", path,
+				"localEtag", local.ETag,
+				"remoteEtag", remote.ETag,
+				"journalEtag", journalEtag,
+				"localModified", localModified,
+				"remoteModified", remoteModified)
 			reconcileOps.Conflicts[path] = &SyncOperation{Type: OpConflict, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 			continue
 		}
@@ -502,10 +555,30 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 		return f1.Version != f2.Version
 	}
 
+	// Option 1.5: Compare stable local hashes when both are present (local vs journal).
+	if f1.LocalETag != "" && f2.LocalETag != "" {
+		return normalizeETag(f1.LocalETag) != normalizeETag(f2.LocalETag)
+	}
+
 	// Option 2: Use ETag/Hash if VersionID isn't reliable or available
 	// Need clarity on whether f1.ETag represents local hash or server ETag
 	if f1.ETag != "" && f2.ETag != "" {
-		return f1.ETag != f2.ETag
+		e1 := normalizeETag(f1.ETag)
+		e2 := normalizeETag(f2.ETag)
+		if e1 != e2 {
+			path := f1.Path
+			if path == "" {
+				path = f2.Path
+			}
+			// Large files can have multipart-style remote ETags (md5-<parts>) while local ETags
+			// are plain MD5. For non-owner mirror paths, treat mixed-format ETags as unmodified
+			// when sizes match to avoid reupload/conflict loops.
+			if !isOwnerSyncPath(se.workspace.Owner, path) && isMixedMultipartETagPair(e1, e2) && f1.Size == f2.Size {
+				return false
+			}
+			return true
+		}
+		return false
 	}
 
 	// Option 3: Fallback to Size (more reliable than ModTime)
@@ -522,9 +595,37 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 	return false
 }
 
+func normalizeETag(etag string) string {
+	etag = strings.TrimSpace(etag)
+	etag = strings.Trim(etag, "\"")
+	return strings.ToLower(etag)
+}
+
+func isMixedMultipartETagPair(e1, e2 string) bool {
+	return (plainMD5ETagRE.MatchString(e1) && multipartETagRE.MatchString(e2)) ||
+		(multipartETagRE.MatchString(e1) && plainMD5ETagRE.MatchString(e2))
+}
+
 func (se *SyncEngine) isSyncing(path SyncPath) bool {
 	status, exists := se.syncStatus.GetStatus(path)
-	return exists && status.SyncState == SyncStateSyncing
+	if !exists {
+		return false
+	}
+
+	// File is syncing
+	if status.SyncState == SyncStateSyncing {
+		return true
+	}
+
+	// RACE CONDITION FIX: Also treat recently completed files (within 5s) as "syncing"
+	// to prevent concurrent reconciliations from re-processing them
+	if status.SyncState == SyncStateCompleted && !status.CompletedAt.IsZero() {
+		if time.Since(status.CompletedAt) < 5*time.Second {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (se *SyncEngine) isPriorityFile(path string) bool {
@@ -586,12 +687,21 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				slog.Debug("handleSocketEvents channel closed")
 				return
 			}
+			slog.Info("client received websocket message", "msgType", msg.Type, "msgId", msg.Id)
+
+			// Record activity for adaptive sync (except system messages)
+			if msg.Type != syftmsg.MsgSystem {
+				se.adaptiveScheduler.RecordActivity()
+			}
+
 			switch msg.Type {
 			case syftmsg.MsgSystem:
 				go se.handleSystem(msg)
 			case syftmsg.MsgError:
 				go se.handlePriorityError(msg)
 			case syftmsg.MsgFileWrite:
+				go se.handlePriorityDownload(msg)
+			case syftmsg.MsgFileNotify:
 				go se.handlePriorityDownload(msg)
 			case syftmsg.MsgHttp:
 				go se.processHttpMessage(msg)
@@ -615,6 +725,12 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 			path := event.Path()
 
 			// this is already filtered
+			relPath, _ := se.workspace.DatasiteRelPath(path)
+			slog.Info("watcher detected priority file", "path", relPath, "event", event.Event())
+
+			// Record activity for adaptive sync
+			se.adaptiveScheduler.RecordActivity()
+
 			go se.handlePriorityUpload(path)
 		}
 	}

@@ -1,23 +1,29 @@
 package syftmsg
 
-type Ack struct{}
+type Ack struct {
+	OriginalId string `json:"oid"`
+}
 
-func NewAck(id string) *Message {
+func NewAck(originalMsgId string) *Message {
 	return &Message{
-		Id:   id,
+		Id:   generateID(),
 		Type: MsgAck,
-		Data: &Ack{},
+		Data: &Ack{OriginalId: originalMsgId},
 	}
 }
 
 type Nack struct {
-	Error string `json:"err"`
+	OriginalId string `json:"oid"`
+	Error      string `json:"err"`
 }
 
-func NewNack(id string, err string) *Message {
+func NewNack(originalMsgId string, err string) *Message {
 	return &Message{
-		Id:   id,
+		Id:   generateID(),
 		Type: MsgNack,
-		Data: &Nack{Error: err},
+		Data: &Nack{
+			OriginalId: originalMsgId,
+			Error:      err,
+		},
 	}
 }

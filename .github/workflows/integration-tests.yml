@@ -1,0 +1,49 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  devstack-all:
+    name: All Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+        cache: true
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run all integration tests
+      run: just sbdev-test-all
+
+  devstack-chaos:
+    name: Chaos Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+        cache: true
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run chaos test (1 minute)
+      run: CHAOS_DURATION=1m just sbdev-test-chaos
