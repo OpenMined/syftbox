@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -40,6 +41,7 @@ type SyncEngine struct {
 	ignoreList        *SyncIgnoreList
 	priorityList      *SyncPriorityList
 	lastSyncTime      time.Time
+	lastSyncNs        atomic.Int64
 	adaptiveScheduler *AdaptiveSyncScheduler
 	wg                sync.WaitGroup
 	muSync            sync.Mutex
@@ -295,6 +297,7 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 
 	se.lastSyncTime = time.Now()
+	se.lastSyncNs.Store(se.lastSyncTime.UnixNano())
 	return nil
 }
 

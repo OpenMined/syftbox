@@ -47,6 +47,7 @@ type EventsAPI struct {
 	reconnectAttempt int
 	pendingAcks      map[string]*pendingAck
 	ackMu            sync.RWMutex
+	stats            *wsStats
 }
 
 // newEventsAPI creates a new EventsAPI instance
@@ -60,6 +61,7 @@ func newEventsAPI(client *req.Client) *EventsAPI {
 		messages:      make(chan *syftmsg.Message, eventsBufferSize),
 		overflowQueue: make(chan *syftmsg.Message, eventsBufferSize*2), // 2x buffer for overflow
 		pendingAcks:   make(map[string]*pendingAck),
+		stats:         newWSStats(),
 	}
 
 	// Start overflow queue processor
@@ -186,6 +188,44 @@ func (e *EventsAPI) Close() {
 	slog.Info("socketmgr closed")
 }
 
+// Stats returns a point-in-time snapshot of websocket telemetry.
+func (e *EventsAPI) Stats() EventsStatsSnapshot {
+	e.mu.RLock()
+	wsClient := e.wsClient
+	connected := e.connected
+	reconnectAttempt := e.reconnectAttempt
+	overflowLen := len(e.overflowQueue)
+	e.mu.RUnlock()
+
+	txLen, rxLen := 0, 0
+	enc := ""
+	if wsClient != nil {
+		txLen = len(wsClient.msgTx)
+		rxLen = len(wsClient.msgRx)
+		enc = wsClient.encoding.String()
+	}
+
+	lastErr, _ := e.stats.lastErrorValue.Load().(string)
+
+	return EventsStatsSnapshot{
+		Connected:        connected,
+		Encoding:         enc,
+		ReconnectAttempt: reconnectAttempt,
+		Reconnects:       e.stats.reconnects.Load(),
+		TxQueueLen:       txLen,
+		RxQueueLen:       rxLen,
+		OverflowQueueLen: overflowLen,
+		BytesSentTotal:   e.stats.bytesSent.Load(),
+		BytesRecvTotal:   e.stats.bytesRecv.Load(),
+		ConnectedAtNs:    e.stats.connectedAtNs.Load(),
+		DisconnectedAtNs: e.stats.disconnAtNs.Load(),
+		LastSentAtNs:     e.stats.lastSentNs.Load(),
+		LastRecvAtNs:     e.stats.lastRecvNs.Load(),
+		LastPingAtNs:     e.stats.lastPingNs.Load(),
+		LastError:        lastErr,
+	}
+}
+
 // processOverflowQueue drains the overflow queue and sends messages when capacity is available
 func (e *EventsAPI) processOverflowQueue() {
 	for {
@@ -270,11 +310,12 @@ func (e *EventsAPI) connectLocked(ctx context.Context) (*wsClient, error) {
 	enc := wsproto.PreferredEncoding(encHeader)
 
 	// Create and start client
-	wsClient := newWSClient(conn, enc)
+	wsClient := newWSClient(conn, enc, e.stats)
 	wsClient.Start(e.ctx)
 
 	e.wsClient = wsClient
 	e.connected = true
+	e.stats.onConnected()
 
 	slog.Info("socketmgr client connected")
 	return wsClient, nil
@@ -293,6 +334,7 @@ func (e *EventsAPI) manageConnection(wsClient *wsClient) {
 			e.wsClient = nil
 			e.connected = false
 			e.reconnectAttempt = 0
+			e.stats.onDisconnected()
 		}
 		e.mu.Unlock()
 

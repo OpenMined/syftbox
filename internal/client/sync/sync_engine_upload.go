@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,7 +72,11 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		resumeDir := filepath.Join(se.workspace.MetadataDir, "upload-sessions")
 		cleanupOldUploadSessions(resumeDir, uploadSessionTTL)
 
-		uploadInfo, uploadCtx, cancel := se.uploadRegistry.Register(op.RelPath.String(), localAbsPath, op.Local.Size)
+		uploadInfo, uploadCtx, cancel, alreadyActive := se.uploadRegistry.TryRegister(op.RelPath.String(), localAbsPath, op.Local.Size)
+		if alreadyActive {
+			slog.Debug("sync upload already active", "path", op.RelPath)
+			return
+		}
 		defer cancel()
 
 		res, err := se.sdk.Blob.Upload(uploadCtx, &syftsdk.UploadParams{
@@ -78,17 +84,22 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			FilePath:    localAbsPath,
 			Fingerprint: op.Local.ETag,
 			ResumeDir:   resumeDir,
+			PartSize:          parsePartSizeEnv(),
+			PartUploadTimeout: parsePartUploadTimeoutEnv(),
 			Callback: func(uploadedBytes int64, totalBytes int64) {
 				progress := float64(uploadedBytes) / float64(totalBytes)
 				se.syncStatus.SetProgress(op.RelPath, progress)
+				se.uploadRegistry.UpdateProgress(uploadInfo.ID, uploadedBytes, nil, 0, 0)
+				slog.Debug("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "progress", fmt.Sprintf("%.2f%%", progress*100.0))
+			},
+			AdvancedCallback: func(p syftsdk.UploadProgress) {
 				se.uploadRegistry.UpdateProgress(
 					uploadInfo.ID,
-					uploadedBytes,
-					nil,
-					0,
-					0,
+					p.UploadedBytes,
+					p.CompletedParts,
+					p.PartSize,
+					p.PartCount,
 				)
-				slog.Debug("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "progress", fmt.Sprintf("%.2f%%", progress*100.0))
 			},
 		})
 
@@ -175,6 +186,43 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 
 	// Wait for all worker goroutines to finish processing
 	wg.Wait()
+}
+
+func parsePartSizeEnv() int64 {
+	if v := os.Getenv("SBDEV_PART_SIZE"); v != "" {
+		// Parse suffixes MB/GB/KB or raw bytes.
+		s := strings.ToUpper(strings.TrimSpace(v))
+		mult := int64(1)
+		switch {
+		case strings.HasSuffix(s, "GB"):
+			mult = 1024 * 1024 * 1024
+			s = strings.TrimSuffix(s, "GB")
+		case strings.HasSuffix(s, "MB"):
+			mult = 1024 * 1024
+			s = strings.TrimSuffix(s, "MB")
+		case strings.HasSuffix(s, "KB"):
+			mult = 1024
+			s = strings.TrimSuffix(s, "KB")
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil && n > 0 {
+			return n * mult
+		}
+	}
+	return 0
+}
+
+func parsePartUploadTimeoutEnv() time.Duration {
+	if v := os.Getenv("SBDEV_PART_UPLOAD_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	if v := os.Getenv("SYFTBOX_PART_UPLOAD_TIMEOUT_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 0
 }
 
 // cleanupOldUploadSessions trims stale resumable upload state so disk doesn't accumulate abandoned sessions.

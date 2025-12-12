@@ -114,6 +114,64 @@ func (r *UploadRegistry) Register(key, localPath string, size int64) (*UploadInf
 	return info, ctx, cancel
 }
 
+// TryRegister is like Register, but returns alreadyActive=true if an upload for this key/localPath
+// is already in-flight (uploading/pending/paused). In that case ctx/cancel are nil and caller
+// should skip starting a duplicate upload goroutine.
+func (r *UploadRegistry) TryRegister(key, localPath string, size int64) (*UploadInfo, context.Context, context.CancelFunc, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	id := r.generateID(key, localPath)
+
+	if existing, exists := r.uploads[id]; exists {
+		// Snapshot current state under entry lock.
+		existing.mu.RLock()
+		state := existing.info.State
+		existing.mu.RUnlock()
+
+		switch state {
+		case UploadStateUploading, UploadStatePending, UploadStatePaused:
+			// Already tracked and active/paused; don't start another goroutine.
+			return existing.info, nil, nil, true
+		default:
+			// For error or other non-active states, allow retry by re-arming context.
+			existing.mu.Lock()
+			existing.info.State = UploadStateUploading
+			existing.info.UpdatedAt = time.Now()
+			existing.info.Paused = false
+			existing.mu.Unlock()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			existing.cancel = cancel
+			return existing.info, ctx, cancel, false
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	info := &UploadInfo{
+		ID:        id,
+		Key:       key,
+		LocalPath: localPath,
+		State:     UploadStateUploading,
+		Size:      size,
+		StartedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	entry := &uploadEntry{
+		info:     info,
+		cancel:   cancel,
+		pauseCh:  make(chan struct{}),
+		resumeCh: make(chan struct{}),
+	}
+
+	r.uploads[id] = entry
+	r.byPath[key] = id
+
+	return info, ctx, cancel, false
+}
+
 func (r *UploadRegistry) UpdateProgress(id string, uploadedBytes int64, completedParts []int, partSize int64, partCount int) {
 	r.mu.RLock()
 	entry, exists := r.uploads[id]
