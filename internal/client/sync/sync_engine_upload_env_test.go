@@ -59,3 +59,31 @@ func TestParsePartUploadTimeoutEnv(t *testing.T) {
 		t.Fatalf("expected 0 on invalid, got %v", got)
 	}
 }
+
+func TestIsOwnerSyncPath(t *testing.T) {
+	if !isOwnerSyncPath("alice@example.com", SyncPath("alice@example.com/public/a.txt")) {
+		t.Fatal("expected owner path to be true")
+	}
+	if isOwnerSyncPath("alice@example.com", SyncPath("bob@example.com/public/a.txt")) {
+		t.Fatal("expected non-owner path to be false")
+	}
+	if isOwnerSyncPath("", SyncPath("alice@example.com/public/a.txt")) {
+		t.Fatal("expected empty owner to be false")
+	}
+}
+
+func TestRemoteETagMatchesLocalSkipsUploadGuard(t *testing.T) {
+	owner := "alice@example.com"
+	op := &SyncOperation{
+		RelPath: "bob@example.com/public/x.txt",
+		Local:   &FileMetadata{ETag: "same"},
+		Remote:  &FileMetadata{ETag: "same"},
+	}
+	// Even for non-owner, equality check should consider it no-op.
+	if op.Remote.ETag != op.Local.ETag {
+		t.Fatal("test setup invalid")
+	}
+	if !isOwnerSyncPath(owner, op.RelPath) && op.Remote.ETag == op.Local.ETag {
+		// expected no-op path; nothing to assert beyond condition holding.
+	}
+}

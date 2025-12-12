@@ -48,6 +48,13 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
+		// If remote state matches local content, skip upload even if mtime changed.
+		if op.Remote != nil && op.Local != nil && op.Remote.ETag == op.Local.ETag {
+			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "remote etag matches local", "path", op.RelPath)
+			se.syncStatus.SetCompleted(op.RelPath)
+			return
+		}
+
 		localAbsPath := se.workspace.DatasiteAbsPath(op.RelPath.String())
 		if !utils.FileExists(localAbsPath) {
 			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "file no longer exists", "path", op.RelPath)
@@ -112,13 +119,19 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 					// 1. mark as rejected
 					// 2. delete from journal
 					// 3. need to pull the previous version again
-					if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
-						// Failed to mark as rejected, set error state
-						se.syncStatus.SetError(op.RelPath, markErr)
-						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
+					if isOwnerSyncPath(se.workspace.Owner, op.RelPath) {
+						if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
+							// Failed to mark as rejected, set error state
+							se.syncStatus.SetError(op.RelPath, markErr)
+							slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
+						} else {
+							// Successfully marked as rejected
+							slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
+							se.syncStatus.SetRejected(op.RelPath)
+						}
 					} else {
-						// Successfully marked as rejected
-						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
+						// For non-owner datasites, do not create rejected markers to avoid loops/disk spam.
+						slog.Warn("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "reason", "non-owner rejection (marker suppressed)")
 						se.syncStatus.SetRejected(op.RelPath)
 					}
 					se.journal.Delete(op.RelPath)
@@ -223,6 +236,15 @@ func parsePartUploadTimeoutEnv() time.Duration {
 		}
 	}
 	return 0
+}
+
+func isOwnerSyncPath(owner string, p SyncPath) bool {
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" {
+		return false
+	}
+	raw := strings.ToLower(strings.TrimLeft(p.String(), "/"))
+	return strings.HasPrefix(raw, owner+"/")
 }
 
 // cleanupOldUploadSessions trims stale resumable upload state so disk doesn't accumulate abandoned sessions.
