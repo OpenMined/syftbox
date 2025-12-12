@@ -48,9 +48,8 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
-		// If remote state matches local content, skip upload even if mtime changed.
-		if op.Remote != nil && op.Local != nil && op.Remote.ETag == op.Local.ETag {
-			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "remote etag matches local", "path", op.RelPath)
+		if skip, reason := shouldSkipUpload(op, se.workspace.Owner); skip {
+			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", reason, "path", op.RelPath)
 			se.syncStatus.SetCompleted(op.RelPath)
 			return
 		}
@@ -59,6 +58,14 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		if !utils.FileExists(localAbsPath) {
 			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "file no longer exists", "path", op.RelPath)
 			se.syncStatus.SetCompleted(op.RelPath)
+			return
+		}
+
+		// If we already have a rejected marker for this path, don't keep retrying until resolved.
+		if RejectedFileExists(localAbsPath) {
+			slog.Warn("sync", "type", SyncStandard, "op", OpSkipped, "reason", "previous rejection (marker present)", "path", op.RelPath)
+			se.syncStatus.SetRejected(op.RelPath)
+			se.journal.Delete(op.RelPath)
 			return
 		}
 
@@ -245,6 +252,19 @@ func isOwnerSyncPath(owner string, p SyncPath) bool {
 	}
 	raw := strings.ToLower(strings.TrimLeft(p.String(), "/"))
 	return strings.HasPrefix(raw, owner+"/")
+}
+
+// shouldSkipUpload returns true if a WriteRemote should be treated as a no-op
+// based on content identity or ownership rules.
+func shouldSkipUpload(op *SyncOperation, owner string) (bool, string) {
+	if op == nil {
+		return true, "nil operation"
+	}
+	// If remote state matches local content, skip upload even if mtime changed.
+	if op.Remote != nil && op.Local != nil && op.Remote.ETag != "" && op.Remote.ETag == op.Local.ETag {
+		return true, "remote etag matches local"
+	}
+	return false, ""
 }
 
 // cleanupOldUploadSessions trims stale resumable upload state so disk doesn't accumulate abandoned sessions.
