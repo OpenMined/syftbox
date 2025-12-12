@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.17
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.70
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.83.0
+	github.com/aws/smithy-go v1.22.4
 	github.com/bmatcuk/doublestar/v4 v4.9.1
 	github.com/bytedance/sonic v1.13.3
 	github.com/charmbracelet/bubbles v0.21.0
@@ -42,6 +43,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/swaggo/swag/v2 v2.0.0-rc4
 	github.com/ulule/limiter/v3 v3.11.2
+	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/sync v0.18.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -63,7 +65,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.25.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.30.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.34.0 // indirect
-	github.com/aws/smithy-go v1.22.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.3.1 // indirect
@@ -129,6 +130,7 @@ require (
 	github.com/tklauser/numcpus v0.10.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	go.opentelemetry.io/otel v1.37.0 // indirect

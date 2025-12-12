@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/coder/websocket/wsjson"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/utils"
+	"github.com/openmined/syftbox/internal/wsproto"
 )
 
 const (
@@ -84,9 +84,7 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 	}()
 
 	for {
-		var data *syftmsg.Message
-
-		err := wsjson.Read(ctx, c.conn, &data)
+		typ, raw, err := c.conn.Read(ctx)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
 				// connection closed by client
@@ -96,15 +94,21 @@ func (c *WebsocketClient) readLoop(ctx context.Context) {
 			return
 		}
 
+		msg, _, uerr := wsproto.Unmarshal(typ, raw)
+		if uerr != nil {
+			slog.Warn("wsclient reader decode", "error", uerr, "connId", c.ConnID)
+			continue
+		}
+
 		select {
 		case <-c.wsDone:
 			return
 
-		case c.MsgRx <- data:
+		case c.MsgRx <- msg:
 			// pushed to recieve queue
 
 		default:
-			slog.Warn("wsclient reader buffer full", "connId", c.ConnID, "dropped", data)
+			slog.Warn("wsclient reader buffer full", "connId", c.ConnID)
 		}
 	}
 }
@@ -122,7 +126,10 @@ func (c *WebsocketClient) writeLoop(ctx context.Context) {
 
 			// write message within timeout
 			ctxWrite, cancel := context.WithTimeout(ctx, writeTimeout)
-			err := wsjson.Write(ctxWrite, c.conn, msg)
+			typ, payload, err := wsproto.Marshal(msg, c.Info.WSEncoding)
+			if err == nil {
+				err = c.conn.Write(ctxWrite, typ, payload)
+			}
 			cancel()
 			if err != nil {
 				slog.Error("wsclient writer", "connId", c.ConnID, "msgId", msg.Id, "msgType", msg.Type, "error", err)

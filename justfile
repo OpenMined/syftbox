@@ -405,6 +405,18 @@ sbdev-test-cleanup:
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
 [group('devstack')]
+sbdev-test-all:
+    #!/bin/bash
+    set -eou pipefail
+    REPO_ROOT="$(pwd)"
+    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$REPO_ROOT/.test-sandbox/all-tests}"
+    echo "Running selected performance tests in one persistent stack..."
+    echo "Sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    cd cmd/devstack
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 30m -tags integration -run "TestACLRaceCondition|TestWebSocketLatency|TestLargeFileTransfer|TestConcurrentUploads|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestManySmallFiles|TestACKNACKMechanism"
+    echo ""
+    echo "✅ All performance tests completed! Sandbox preserved at: $SANDBOX_DIR"
 sbdev-test-acl:
     #!/bin/bash
     set -eou pipefail
@@ -788,8 +800,8 @@ sbdev-test-conflict:
         BASE_SANDBOX="$REPO_ROOT/.test-sandbox/conflict-test"
     fi
 
-    # Run each test separately to prevent state pollution
-    TESTS=("TestSimultaneousWrite" "TestDivergentEdits" "TestThreeWayConflict" "TestConflictDuringACLChange" "TestNestedPathConflict" "TestJournalWriteTiming" "TestNonConflictUpdate" "TestRapidSequentialEdits" "TestJournalLossRecovery")
+    # Run all conflict tests in one go test process; harness resets state per test.
+    RUN_REGEX="TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery"
     for i in $(seq 1 "$RUNS"); do
         if [ "$RUNS" -gt 1 ]; then
             SANDBOX_DIR="${BASE_SANDBOX}-${i}"
@@ -799,11 +811,8 @@ sbdev-test-conflict:
             echo "Using sandbox: $SANDBOX_DIR"
         fi
 
-        for TEST in "${TESTS[@]}"; do
-            echo "Running $TEST..."
-            rm -rf "$SANDBOX_DIR"
-            PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
-        done
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^(${RUN_REGEX})$" "$@" || exit 1
         echo "Test artifacts preserved at: $SANDBOX_DIR"
     done
 
@@ -930,8 +939,8 @@ sbdev-test-race:
         BASE_SANDBOX="$REPO_ROOT/.test-sandbox/race-test"
     fi
 
-    # Run each test separately to prevent state pollution
-    TESTS=("TestDeleteDuringDownload" "TestACLChangeDuringUpload" "TestOverwriteDuringDownload" "TestDeleteDuringTempRename")
+    # Run all race tests in one go test process; harness resets state per test.
+    RUN_REGEX="TestDeleteDuringDownload|TestACLChangeDuringUpload|TestOverwriteDuringDownload|TestDeleteDuringTempRename"
     for i in $(seq 1 "$RUNS"); do
         if [ "$RUNS" -gt 1 ]; then
             SANDBOX_DIR="${BASE_SANDBOX}-${i}"
@@ -941,11 +950,8 @@ sbdev-test-race:
             echo "Using sandbox: $SANDBOX_DIR"
         fi
 
-        for TEST in "${TESTS[@]}"; do
-            echo "Running $TEST..."
-            rm -rf "$SANDBOX_DIR"
-            PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
-        done
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^(${RUN_REGEX})$" "$@" || exit 1
         echo "Test artifacts preserved at: $SANDBOX_DIR"
     done
 

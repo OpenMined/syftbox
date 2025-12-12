@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/md5"
 	"crypto/rand"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
@@ -32,6 +40,24 @@ type DevstackTestHarness struct {
 	traceFile    *os.File
 	blockProfile *os.File
 }
+
+// persistentSuite holds a reusable stack when PERF_TEST_SANDBOX is set.
+type persistentSuite struct {
+	mu          sync.Mutex
+	initialized bool
+	root        string
+	relayRoot   string
+	binDir      string
+	serverBin   string
+	clientBin   string
+	emails      []string
+	minio       minioState
+	server      serverState
+	clients     []clientState
+	cleanupOnce sync.Once
+}
+
+var suite persistentSuite
 
 // ClientHelper wraps a client with test utilities
 type ClientHelper struct {
@@ -86,44 +112,277 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	t.Helper()
 
 	// Use persistent sandbox dir if PERF_TEST_SANDBOX env var is set
-	var stackRoot string
 	if sandboxPath := os.Getenv("PERF_TEST_SANDBOX"); sandboxPath != "" {
-		stackRoot = sandboxPath
-		t.Logf("Using persistent sandbox: %s", stackRoot)
-	} else {
-		tmpDir := t.TempDir()
-		stackRoot = filepath.Join(tmpDir, "teststack")
-		t.Logf("Using temporary directory: %s", stackRoot)
+		suite.mu.Lock()
+		defer suite.mu.Unlock()
+
+		if !suite.initialized {
+			if err := suite.initPersistent(t, sandboxPath); err != nil {
+				t.Fatalf("init persistent suite: %v", err)
+			}
+		} else {
+			if err := suite.resetForTest(t); err != nil {
+				t.Fatalf("reset persistent suite: %v", err)
+			}
+		}
+
+		state := stackState{
+			Root:    suite.root,
+			Server:  suite.server,
+			Minio:   suite.minio,
+			Clients: suite.clients,
+			Created: time.Now().UTC(),
+		}
+		return suite.newHarnessForTest(t, &state)
 	}
 
-	emails := []string{"alice@example.com", "bob@example.com"}
+	// Default (non-persistent) path: create a full fresh stack per test.
+	stackRoot := filepath.Join(t.TempDir(), "teststack")
+	t.Logf("Using temporary directory: %s", stackRoot)
+	state, err := startFullStack(t, stackRoot, true)
+	if err != nil {
+		t.Fatalf("start full stack: %v", err)
+	}
+	return newHarnessFromState(t, &state, true)
+}
 
+func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error {
+	t.Helper()
+	rootAbs, err := filepath.Abs(sandboxPath)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+	// Preflight: if another devstack is still running on this root, stop it.
+	preflightCleanup(rootAbs, t)
+	s.root = rootAbs
+	s.relayRoot = filepath.Join(s.root, relayDir)
+	s.binDir = filepath.Join(s.relayRoot, "bin")
+	s.emails = []string{"alice@example.com", "bob@example.com"}
+
+	if err := os.MkdirAll(s.binDir, 0o755); err != nil {
+		return fmt.Errorf("create bin dir: %w", err)
+	}
+
+	s.serverBin = filepath.Join(s.binDir, "server")
+	s.clientBin = filepath.Join(s.binDir, "syftbox")
+
+	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
+	if err != nil {
+		return fmt.Errorf("find repo root: %w", err)
+	}
+
+	t.Logf("Using persistent sandbox: %s", s.root)
+	t.Logf("Building binaries once for persistent suite...")
+	if err := buildBinary(s.serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
+		return fmt.Errorf("build server: %w", err)
+	}
+	if err := buildBinary(s.clientBin, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+		return fmt.Errorf("build client: %w", err)
+	}
+
+	// Allocate ports for MinIO; keep it running across tests.
+	minioAPIPort, _ := getFreePort()
+	minioConsolePort, _ := getFreePort()
+	for minioConsolePort == minioAPIPort {
+		minioConsolePort, _ = getFreePort()
+	}
+
+	t.Logf("Starting MinIO for persistent suite...")
+	minioBin, err := ensureMinioBinary(s.binDir)
+	if err != nil {
+		return fmt.Errorf("minio binary unavailable: %w", err)
+	}
+	mState, err := startMinio("local", minioBin, s.relayRoot, minioAPIPort, minioConsolePort, false)
+	if err != nil {
+		return fmt.Errorf("start minio: %w", err)
+	}
+	if err := setupBucket(mState.APIPort); err != nil {
+		stopMinio(mState)
+		return fmt.Errorf("setup bucket: %w", err)
+	}
+	s.minio = mState
+
+	// Start server+clients fresh for first test.
+	if err := s.resetForTest(t); err != nil {
+		stopMinio(mState)
+		return err
+	}
+
+	s.initialized = true
+	return nil
+}
+
+// preflightCleanup ensures no other tracked devstack is running on the same root.
+// This prevents path/port collisions from leaked local stacks.
+func preflightCleanup(root string, t *testing.T) {
+	t.Helper()
+	// Best effort prune of dead global stacks.
+	_ = pruneDeadStacks()
+
+	state, _, err := readState(root)
+	if err != nil || state == nil {
+		return
+	}
+	absRoot, _ := filepath.Abs(root)
+	if state.Root != "" {
+		stateAbs, _ := filepath.Abs(state.Root)
+		if stateAbs != absRoot {
+			// Hash collision or different root; ignore.
+			return
+		}
+	}
+
+	alive := false
+	if state.Server.PID > 0 && processExists(state.Server.PID) {
+		alive = true
+	}
+	if state.Minio.PID > 0 && processExists(state.Minio.PID) {
+		alive = true
+	}
+	for _, c := range state.Clients {
+		if c.PID > 0 && processExists(c.PID) {
+			alive = true
+			break
+		}
+	}
+	if alive {
+		t.Logf("Found existing devstack for %s; stopping before test run", absRoot)
+		stopStack(absRoot) // best effort
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func (s *persistentSuite) resetForTest(t *testing.T) error {
+	t.Helper()
+
+	// Stop prior server/clients, if any.
+	if s.server.PID > 0 {
+		_ = killProcess(s.server.PID)
+	}
+	for _, c := range s.clients {
+		if c.PID > 0 {
+			_ = killProcess(c.PID)
+		}
+	}
+
+	// Wipe server and client state on disk while processes are stopped.
+	serverDir := filepath.Join(s.relayRoot, "server")
+	_ = os.RemoveAll(serverDir)
+	for _, email := range s.emails {
+		_ = os.RemoveAll(filepath.Join(s.root, email))
+	}
+
+	// Clear MinIO bucket contents for a clean server state.
+	// If MinIO isn't healthy (e.g., externally stopped), restart it.
+	if err := waitForMinio(s.minio.APIPort); err != nil {
+		t.Logf("MinIO not healthy (%v); restarting for persistent suite", err)
+		stopMinio(s.minio)
+		minioAPIPort, _ := getFreePort()
+		minioConsolePort, _ := getFreePort()
+		for minioConsolePort == minioAPIPort {
+			minioConsolePort, _ = getFreePort()
+		}
+		minioBin, err2 := ensureMinioBinary(s.binDir)
+		if err2 != nil {
+			return fmt.Errorf("minio binary unavailable: %w", err2)
+		}
+		mState, err2 := startMinio("local", minioBin, s.relayRoot, minioAPIPort, minioConsolePort, false)
+		if err2 != nil {
+			return fmt.Errorf("restart minio: %w", err2)
+		}
+		if err2 := setupBucket(mState.APIPort); err2 != nil {
+			stopMinio(mState)
+			return fmt.Errorf("setup bucket after restart: %w", err2)
+		}
+		s.minio = mState
+	}
+	if err := emptyBucket(s.minio.APIPort); err != nil {
+		return fmt.Errorf("empty bucket: %w", err)
+	}
+
+	// Start server and clients using already-built binaries and existing MinIO.
+	serverPort, _ := getFreePort()
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", serverPort)
+	t.Logf("Starting server for test...")
+	sState, err := startServer(s.serverBin, s.relayRoot, serverPort, s.minio.APIPort)
+	if err != nil {
+		return fmt.Errorf("start server: %w", err)
+	}
+
+	t.Logf("Starting clients for test...")
+	var clients []clientState
+	for _, email := range s.emails {
+		port, _ := getFreePort()
+		cState, err := startClient(s.clientBin, s.root, email, serverURL, port)
+		if err != nil {
+			_ = killProcess(sState.PID)
+			return fmt.Errorf("start client %s: %w", email, err)
+		}
+		clients = append(clients, cState)
+	}
+
+	// Write stack state for debugging tools.
+	statePath := filepath.Join(s.relayRoot, stateFileName)
+	state := stackState{
+		Root:    s.root,
+		Server:  sState,
+		Minio:   s.minio,
+		Clients: clients,
+		Created: time.Now().UTC(),
+	}
+	if err := writeState(statePath, &state); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+
+	s.server = sState
+	s.clients = clients
+
+	// Wait for initial sync in the fresh state.
+	time.Sleep(2 * time.Second)
+	t.Logf("Persistent devstack ready: server=%s, alice=pid:%d, bob=pid:%d",
+		serverURL, clients[0].PID, clients[1].PID)
+
+	return nil
+}
+
+func (s *persistentSuite) newHarnessForTest(t *testing.T, state *stackState) *DevstackTestHarness {
+	t.Helper()
+	return newHarnessFromState(t, state, false)
+}
+
+func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, error) {
+	t.Helper()
 	opts := startOptions{
 		root:        stackRoot,
-		clients:     emails,
+		clients:     []string{"alice@example.com", "bob@example.com"},
 		randomPorts: true,
-		reset:       true,
+		reset:       reset,
 	}
 
 	var err error
 	opts.root, err = filepath.Abs(opts.root)
 	if err != nil {
-		t.Fatalf("resolve root: %v", err)
+		return stackState{}, fmt.Errorf("resolve root: %w", err)
+	}
+
+	if reset {
+		stopStack(opts.root) // best effort
+		_ = os.RemoveAll(opts.root)
 	}
 
 	// Create directories
 	if err := os.MkdirAll(opts.root, 0o755); err != nil {
-		t.Fatalf("create root dir: %v", err)
+		return stackState{}, fmt.Errorf("create root dir: %w", err)
 	}
 
 	relayRoot := filepath.Join(opts.root, relayDir)
 	if err := os.MkdirAll(relayRoot, 0o755); err != nil {
-		t.Fatalf("create relay dir: %v", err)
+		return stackState{}, fmt.Errorf("create relay dir: %w", err)
 	}
 
 	binDir := filepath.Join(relayRoot, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("create bin dir: %v", err)
+		return stackState{}, fmt.Errorf("create bin dir: %w", err)
 	}
 
 	// Build binaries
@@ -132,16 +391,16 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
 	if err != nil {
-		t.Fatalf("find repo root: %v", err)
+		return stackState{}, fmt.Errorf("find repo root: %w", err)
 	}
 
 	t.Logf("Building binaries...")
 	if err := buildBinary(serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
-		t.Fatalf("build server: %v", err)
+		return stackState{}, fmt.Errorf("build server: %w", err)
 	}
-	if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
-		t.Fatalf("build client: %v", err)
-	}
+		if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+			return stackState{}, fmt.Errorf("build client: %w", err)
+		}
 
 	// Allocate ports (ensure MinIO API and console ports differ).
 	// MinIO can occasionally fail to bind if a port becomes occupied between selection and start,
@@ -153,52 +412,52 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	t.Logf("Starting MinIO...")
 	minioBin, err := ensureMinioBinary(binDir)
 	if err != nil {
-		t.Fatalf("minio binary unavailable: %v", err)
+		return stackState{}, fmt.Errorf("minio binary unavailable: %w", err)
 	}
 
-	var mState minioState
-	var minioErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		var err error
-		minioAPIPort, err = getFreePort()
-		if err != nil {
-			minioErr = fmt.Errorf("allocate minio api port: %w", err)
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		minioConsolePort, err = getFreePort()
-		if err != nil {
-			minioErr = fmt.Errorf("allocate minio console port: %w", err)
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
+		var mState minioState
+		var minioErr error
+		for attempt := 0; attempt < 5; attempt++ {
+			var err error
+			minioAPIPort, err = getFreePort()
+			if err != nil {
+				minioErr = fmt.Errorf("allocate minio api port: %w", err)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
 			minioConsolePort, err = getFreePort()
 			if err != nil {
 				minioErr = fmt.Errorf("allocate minio console port: %w", err)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
+				minioConsolePort, err = getFreePort()
+				if err != nil {
+					minioErr = fmt.Errorf("allocate minio console port: %w", err)
+					break
+				}
+			}
+			if minioConsolePort == minioAPIPort {
+				minioErr = fmt.Errorf("unable to allocate distinct minio ports")
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+
+			mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
+			if minioErr == nil {
 				break
 			}
+			t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
 		}
-		if minioConsolePort == minioAPIPort {
-			minioErr = fmt.Errorf("unable to allocate distinct minio ports")
-			time.Sleep(200 * time.Millisecond)
-			continue
+		if minioErr != nil {
+			return stackState{}, fmt.Errorf("start minio: %w", minioErr)
 		}
-
-		mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
-		if minioErr == nil {
-			break
-		}
-		t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
-	}
-	if minioErr != nil {
-		t.Fatalf("start minio: %v", minioErr)
-	}
 
 	// Setup bucket
 	if err := setupBucket(mState.APIPort); err != nil {
 		stopMinio(mState)
-		t.Fatalf("setup bucket: %v", err)
+		return stackState{}, fmt.Errorf("setup bucket: %w", err)
 	}
 
 	// Start server
@@ -207,21 +466,23 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	sState, err := startServer(serverBin, relayRoot, serverPort, mState.APIPort)
 	if err != nil {
 		stopMinio(mState)
-		t.Fatalf("start server: %v", err)
+		return stackState{}, fmt.Errorf("start server: %w", err)
 	}
 
 	// Start clients
 	t.Logf("Starting clients...")
 	var clients []clientState
-	for i, email := range emails {
-		port, _ := getFreePort()
-		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
-		if err != nil {
-			t.Fatalf("client bin for %s: %v", email, err)
+		for i, email := range opts.clients {
+			port, _ := getFreePort()
+			binForEmail, err := clientBinaryForEmail(email, i, clientBin)
+			if err != nil {
+				t.Fatalf("client bin for %s: %v", email, err)
 		}
 		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
-			t.Fatalf("start client %s: %v", email, err)
+			_ = killProcess(sState.PID)
+			stopMinio(mState)
+			return stackState{}, fmt.Errorf("start client %s: %w", email, err)
 		}
 		clients = append(clients, cState)
 	}
@@ -236,13 +497,19 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		Created: time.Now().UTC(),
 	}
 	if err := writeState(statePath, &state); err != nil {
-		t.Fatalf("write state: %v", err)
+		return stackState{}, fmt.Errorf("write state: %w", err)
 	}
 
 	// Wait for initial sync
 	time.Sleep(2 * time.Second)
+	return state, nil
+}
 
-	// Create client helpers
+func newHarnessFromState(t *testing.T, state *stackState, ownProcesses bool) *DevstackTestHarness {
+	t.Helper()
+	emails := []string{"alice@example.com", "bob@example.com"}
+	clients := state.Clients
+
 	aliceHelper := &ClientHelper{
 		t:         t,
 		email:     emails[0],
@@ -268,42 +535,108 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 
 	harness := &DevstackTestHarness{
 		t:       t,
-		root:    opts.root,
-		state:   &state,
+		root:    state.Root,
+		state:   state,
 		alice:   aliceHelper,
 		bob:     bobHelper,
 		metrics: metrics,
-		cleanup: []func(){
+	}
+
+	if ownProcesses {
+		sState := state.Server
+		mState := state.Minio
+		harness.cleanup = []func(){
 			func() { _ = killProcess(sState.PID) },
 			func() { stopMinio(mState) },
 			func() { _ = killProcess(clients[0].PID) },
 			func() { _ = killProcess(clients[1].PID) },
 			func() {
-				// Remove sandbox files when not preserving for debugging
 				if os.Getenv("PERF_TEST_SANDBOX") == "" {
-					_ = os.RemoveAll(opts.root)
+					_ = os.RemoveAll(state.Root)
 				}
 			},
-		},
+		}
+
+		t.Cleanup(func() {
+			if err := harness.StopProfiling(); err != nil {
+				t.Logf("Warning: failed to stop profiling: %v", err)
+			}
+			harness.Cleanup()
+		})
+	} else {
+		// Persistent mode: do not stop shared processes per test.
+		t.Cleanup(func() {
+			if err := harness.StopProfiling(); err != nil {
+				t.Logf("Warning: failed to stop profiling: %v", err)
+			}
+		})
 	}
 
-	// Always cleanup processes, but preserve files if using sandbox
-	t.Cleanup(func() {
-		// Stop profiling first
-		if err := harness.StopProfiling(); err != nil {
-			t.Logf("Warning: failed to stop profiling: %v", err)
-		}
+	return harness
+}
 
-		if os.Getenv("PERF_TEST_SANDBOX") != "" {
-			t.Logf("Stopping processes but preserving sandbox at: %s", opts.root)
-		}
-		harness.Cleanup()
+// emptyBucket deletes all objects in the default bucket, leaving MinIO running.
+func emptyBucket(apiPort int) error {
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", apiPort)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(defaultMinioAdminUser, defaultMinioAdminPassword, ""),
+		),
+		config.WithRegion(defaultRegion),
+	)
+	if err != nil {
+		return err
+	}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
 	})
 
-	t.Logf("Devstack ready: server=%s, alice=pid:%d, bob=pid:%d",
-		serverURL, clients[0].PID, clients[1].PID)
+	// Ensure bucket exists.
+	_, err = client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(defaultBucket),
+	})
+	if err != nil && !isBucketExistsError(err) {
+		return err
+	}
 
-	return harness
+	// List + delete in batches.
+	var continuation *string
+	for {
+		out, err := client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
+			Bucket:            aws.String(defaultBucket),
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return err
+		}
+		if len(out.Contents) == 0 {
+			break
+		}
+		var objs []s3types.ObjectIdentifier
+		for _, c := range out.Contents {
+			if c.Key != nil {
+				objs = append(objs, s3types.ObjectIdentifier{Key: c.Key})
+			}
+		}
+		_, err = client.DeleteObjects(context.Background(), &s3.DeleteObjectsInput{
+			Bucket: aws.String(defaultBucket),
+			Delete: &s3types.Delete{Objects: objs, Quiet: aws.Bool(true)},
+		})
+		if err != nil {
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) {
+				return fmt.Errorf("delete objects: %s: %w", apiErr.ErrorCode(), err)
+			}
+			return err
+		}
+		if aws.ToBool(out.IsTruncated) && out.NextContinuationToken != nil {
+			continuation = out.NextContinuationToken
+			continue
+		}
+		break
+	}
+	return nil
 }
 
 // Cleanup stops all processes and cleans up
