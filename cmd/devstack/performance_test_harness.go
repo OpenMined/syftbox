@@ -152,6 +152,8 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 	if err != nil {
 		return fmt.Errorf("resolve root: %w", err)
 	}
+	// Preflight: if another devstack is still running on this root, stop it.
+	preflightCleanup(rootAbs, t)
 	s.root = rootAbs
 	s.relayRoot = filepath.Join(s.root, relayDir)
 	s.binDir = filepath.Join(s.relayRoot, "bin")
@@ -208,6 +210,46 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 
 	s.initialized = true
 	return nil
+}
+
+// preflightCleanup ensures no other tracked devstack is running on the same root.
+// This prevents path/port collisions from leaked local stacks.
+func preflightCleanup(root string, t *testing.T) {
+	t.Helper()
+	// Best effort prune of dead global stacks.
+	_ = pruneDeadStacks()
+
+	state, _, err := readState(root)
+	if err != nil || state == nil {
+		return
+	}
+	absRoot, _ := filepath.Abs(root)
+	if state.Root != "" {
+		stateAbs, _ := filepath.Abs(state.Root)
+		if stateAbs != absRoot {
+			// Hash collision or different root; ignore.
+			return
+		}
+	}
+
+	alive := false
+	if state.Server.PID > 0 && processExists(state.Server.PID) {
+		alive = true
+	}
+	if state.Minio.PID > 0 && processExists(state.Minio.PID) {
+		alive = true
+	}
+	for _, c := range state.Clients {
+		if c.PID > 0 && processExists(c.PID) {
+			alive = true
+			break
+		}
+	}
+	if alive {
+		t.Logf("Found existing devstack for %s; stopping before test run", absRoot)
+		stopStack(absRoot) // best effort
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (s *persistentSuite) resetForTest(t *testing.T) error {
