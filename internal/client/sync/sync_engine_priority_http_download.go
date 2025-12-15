@@ -56,14 +56,18 @@ func (se *SyncEngine) processHttpMessage(msg *syftmsg.Message) {
 	if et, err := calculateETag(rpcLocalAbsPath); err == nil {
 		localETag = et
 	}
-	se.journal.Set(&FileMetadata{
+	if err := se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         httpMsg.Etag,
 		LocalETag:    localETag,
 		Size:         fileSize,
 		LastModified: time.Now(),
 		Version:      "",
-	})
+	}); err != nil {
+		se.syncStatus.SetError(syncRelPath, err)
+		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", httpMsg.SyftURL.ToLocalPath(), "etag", httpMsg.Etag, "error", err)
+		return
+	}
 
 	se.syncStatus.SetCompleted(syncRelPath)
 
