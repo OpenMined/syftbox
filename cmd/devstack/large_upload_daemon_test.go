@@ -29,6 +29,12 @@ func TestLargeUploadViaDaemon(t *testing.T) {
 	authToken := extractAuthToken(t, h.alice.state.LogPath)
 	maybeWriteWatchEnv(t, aliceClientURL, authToken)
 
+	bobClientURL := fmt.Sprintf("http://127.0.0.1:%d", h.bob.state.Port)
+	bobToken := extractAuthToken(t, h.bob.state.LogPath)
+
+	aliceSent0, aliceRecv0 := probeHTTPBytes(t, aliceClientURL, authToken)
+	bobSent0, bobRecv0 := probeHTTPBytes(t, bobClientURL, bobToken)
+
 	// Create large file inside Alice's datasite so daemon sync uploads it.
 	fileSize := int64(256 * 1024 * 1024) // 256MB
 	relName := "daemon-large-upload.bin"
@@ -80,6 +86,18 @@ func TestLargeUploadViaDaemon(t *testing.T) {
 		}
 
 		if err := h.bob.WaitForFile(h.alice.email, relName, "", 2*time.Second); err == nil {
+			aliceSent, aliceRecv := probeHTTPBytes(t, aliceClientURL, authToken)
+			bobSent, bobRecv := probeHTTPBytes(t, bobClientURL, bobToken)
+
+			// Validate deltas (ignores handshake / initial sync chatter).
+			aliceSentDelta := deltaCounter(aliceSent, aliceSent0)
+			bobRecvDelta := deltaCounter(bobRecv, bobRecv0)
+			t.Logf("alice HTTP delta: sent=%d recv=%d", aliceSentDelta, deltaCounter(aliceRecv, aliceRecv0))
+			t.Logf("bob HTTP delta: sent=%d recv=%d", deltaCounter(bobSent, bobSent0), bobRecvDelta)
+
+			// Alice should have uploaded at least the file size; Bob should have downloaded it.
+			assertHTTPSentAtLeast(t, "alice (delta)", aliceSentDelta, fileSize)
+			assertHTTPRecvAtLeast(t, "bob (delta)", bobRecvDelta, fileSize)
 			return
 		}
 		time.Sleep(2 * time.Second)

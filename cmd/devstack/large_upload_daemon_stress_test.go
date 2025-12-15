@@ -41,6 +41,12 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	authToken := extractAuthToken(t, h.alice.state.LogPath)
 	maybeWriteWatchEnv(t, aliceClientURL, authToken)
 
+	bobClientURL := fmt.Sprintf("http://127.0.0.1:%d", h.bob.state.Port)
+	bobToken := extractAuthToken(t, h.bob.state.LogPath)
+
+	aliceSent0, aliceRecv0 := probeHTTPBytes(t, aliceClientURL, authToken)
+	bobSent0, bobRecv0 := probeHTTPBytes(t, bobClientURL, bobToken)
+
 	// Create a large file in Alice's datasite; daemon should use multipart/resume.
 	fileSize := int64(512 * 1024 * 1024) // 512MB for visibly longer multipart uploads
 	relName := "daemon-large-upload-stress.bin"
@@ -66,6 +72,12 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	uploadID := waitForUploadParts(t, aliceClientURL, authToken, relName, 1, 3*time.Minute)
 	t.Logf("upload started with id=%s; killing alice daemon", uploadID)
 
+	aliceSentBeforeKill, aliceRecvBeforeKill := probeHTTPBytes(t, aliceClientURL, authToken)
+	t.Logf("alice HTTP delta before kill: sent=%d recv=%d",
+		deltaCounter(aliceSentBeforeKill, aliceSent0),
+		deltaCounter(aliceRecvBeforeKill, aliceRecv0),
+	)
+
 	// Kill alice mid-upload.
 	if err := killProcess(h.alice.state.PID); err != nil {
 		t.Fatalf("kill alice: %v", err)
@@ -87,6 +99,9 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	authToken = extractAuthToken(t, newState.LogPath)
 	maybeWriteWatchEnv(t, aliceClientURL, authToken)
 
+	aliceSentRestart0, aliceRecvRestart0 := probeHTTPBytes(t, aliceClientURL, authToken)
+	t.Logf("alice HTTP totals after restart baseline: sent=%d recv=%d", aliceSentRestart0, aliceRecvRestart0)
+
 	// Trigger sync repeatedly until bob sees the file.
 	deadline := time.Now().Add(10 * time.Minute)
 	ticker := time.NewTicker(5 * time.Second)
@@ -94,6 +109,23 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	for time.Now().Before(deadline) {
 		demoTriggerSync(t, aliceClientURL, authToken)
 		if err := h.bob.WaitForFile(h.alice.email, relName, "", 2*time.Second); err == nil {
+			// Probe both clients' /v1/status while daemons are alive.
+			aliceSent, aliceRecv := probeHTTPBytes(t, aliceClientURL, authToken)
+			bobSent, bobRecv := probeHTTPBytes(t, bobClientURL, bobToken)
+
+			// Alice was restarted and may start syncing immediately, so we cannot reliably capture a
+			// "zero baseline" for the new process. Use the full post-restart total plus the pre-kill delta.
+			aliceSentDelta := deltaCounter(aliceSentBeforeKill, aliceSent0) + aliceSent
+			bobRecvDelta := deltaCounter(bobRecv, bobRecv0)
+
+			t.Logf("alice HTTP delta combined: sent=%d recv=%d",
+				aliceSentDelta,
+				deltaCounter(aliceRecvBeforeKill, aliceRecv0)+aliceRecv,
+			)
+			t.Logf("bob HTTP delta: sent=%d recv=%d", deltaCounter(bobSent, bobSent0), bobRecvDelta)
+
+			assertHTTPSentAtLeast(t, "alice (delta combined)", aliceSentDelta, fileSize)
+			assertHTTPRecvAtLeast(t, "bob (delta)", bobRecvDelta, fileSize)
 			return
 		}
 		select {
