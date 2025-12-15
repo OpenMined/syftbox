@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ type resumableUploader struct {
 	resumeDir   string
 	fingerprint string
 	session     *uploadSession
+	stats       *httpStats
 }
 
 func newResumableUploader(client *req.Client, params *UploadParams, info os.FileInfo) *resumableUploader {
@@ -61,6 +63,7 @@ func newResumableUploader(client *req.Client, params *UploadParams, info os.File
 		fileInfo:    info,
 		resumeDir:   resumeDir,
 		fingerprint: fp,
+		stats:       getHTTPStats(),
 	}
 }
 
@@ -194,6 +197,10 @@ func (u *resumableUploader) uploadParts(ctx context.Context, file *os.File, urls
 		offset := int64(part-1) * u.session.PartSize
 		chunkSize := u.partSizeFor(part)
 		sectionReader := io.NewSectionReader(file, offset, chunkSize)
+		bodyReader := io.Reader(sectionReader)
+		if u.stats != nil {
+			bodyReader = &countingReader{r: sectionReader, onRead: u.stats.onSend}
+		}
 
 		partCtx := ctx
 		cancel := func() {}
@@ -201,7 +208,7 @@ func (u *resumableUploader) uploadParts(ctx context.Context, file *os.File, urls
 			partCtx, cancel = context.WithTimeout(ctx, u.params.PartUploadTimeout)
 		}
 
-		req, err := http.NewRequestWithContext(partCtx, http.MethodPut, url, sectionReader)
+		req, err := http.NewRequestWithContext(partCtx, http.MethodPut, url, bodyReader)
 		if err != nil {
 			cancel()
 			return fmt.Errorf("create request: %w", err)
@@ -212,7 +219,13 @@ func (u *resumableUploader) uploadParts(ctx context.Context, file *os.File, urls
 		resp, err := http.DefaultClient.Do(req)
 		cancel()
 		if err != nil {
+			if u.stats != nil {
+				u.stats.setLastError(err)
+			}
 			return fmt.Errorf("upload part %d: %w", part, err)
+		}
+		if u.stats != nil && resp.Body != nil {
+			_, _ = io.Copy(io.Discard, &countingReader{r: resp.Body, onRead: u.stats.onRecv})
 		}
 		_ = resp.Body.Close()
 
@@ -230,13 +243,39 @@ func (u *resumableUploader) uploadParts(ctx context.Context, file *os.File, urls
 			return err
 		}
 
+		// Optional artificial slowdown for demos/tests.
+		if v := os.Getenv("SYFTBOX_UPLOAD_PART_SLEEP_MS"); v != "" {
+			if ms, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && ms > 0 {
+				time.Sleep(time.Duration(ms) * time.Millisecond)
+			}
+		}
+
 		uploaded += chunkSize
 		if u.params.Callback != nil {
 			u.params.Callback(uploaded, u.session.Size)
 		}
+		u.emitAdvancedProgress(uploaded)
 	}
 
 	return nil
+}
+
+func (u *resumableUploader) emitAdvancedProgress(uploaded int64) {
+	if u.params.AdvancedCallback == nil || u.session == nil {
+		return
+	}
+	completedParts := make([]int, 0, len(u.session.Completed))
+	for p := range u.session.Completed {
+		completedParts = append(completedParts, p)
+	}
+	sort.Ints(completedParts)
+	u.params.AdvancedCallback(UploadProgress{
+		UploadedBytes:  uploaded,
+		TotalBytes:     u.session.Size,
+		CompletedParts: completedParts,
+		PartSize:       u.session.PartSize,
+		PartCount:      u.session.PartCount,
+	})
 }
 
 func (u *resumableUploader) complete(ctx context.Context) (*UploadResponse, error) {

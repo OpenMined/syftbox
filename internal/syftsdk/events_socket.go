@@ -31,9 +31,10 @@ type wsClient struct {
 	encoding  wsproto.Encoding      // negotiated encoding for this connection
 	closeOnce sync.Once             // closeOnce ensures the connection is closed only once
 	wg        sync.WaitGroup        // waitGroup for the read and write loops
+	stats     *wsStats
 }
 
-func newWSClient(conn *websocket.Conn, enc wsproto.Encoding) *wsClient {
+func newWSClient(conn *websocket.Conn, enc wsproto.Encoding, stats *wsStats) *wsClient {
 	return &wsClient{
 		msgRx:   make(chan *syftmsg.Message, wsClientChannelSize),
 		msgTx:   make(chan *syftmsg.Message, wsClientChannelSize),
@@ -41,6 +42,7 @@ func newWSClient(conn *websocket.Conn, enc wsproto.Encoding) *wsClient {
 		closing: make(chan struct{}),
 		conn:    conn,
 		encoding: enc,
+		stats:   stats,
 	}
 }
 
@@ -92,13 +94,23 @@ func (c *wsClient) readLoop(ctx context.Context) {
 		if err != nil {
 			if !isWSExpectedCloseError(err) {
 				slog.Warn("socket RECV", "error", err)
+				if c.stats != nil {
+					c.stats.setLastError(err)
+				}
 			}
 			return
+		}
+
+		if c.stats != nil {
+			c.stats.onRecv(len(raw))
 		}
 
 		data, _, uerr := wsproto.Unmarshal(typ, raw)
 		if uerr != nil {
 			slog.Warn("socket RECV decode", "error", uerr)
+			if c.stats != nil {
+				c.stats.setLastError(uerr)
+			}
 			continue
 		}
 
@@ -149,7 +161,13 @@ func (c *wsClient) writeLoop(ctx context.Context) {
 
 			if err != nil {
 				slog.Error("socket SEND", "error", err)
+				if c.stats != nil {
+					c.stats.setLastError(err)
+				}
 				return
+			}
+			if c.stats != nil {
+				c.stats.onSend(len(payload))
 			}
 
 		case <-pingTicker.C:
@@ -160,7 +178,13 @@ func (c *wsClient) writeLoop(ctx context.Context) {
 
 			if err != nil {
 				slog.Error("socket PING", "error", err)
+				if c.stats != nil {
+					c.stats.setLastError(err)
+				}
 				return
+			}
+			if c.stats != nil {
+				c.stats.onPing()
 			}
 		}
 	}

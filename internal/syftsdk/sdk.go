@@ -26,6 +26,7 @@ type SyftSDK struct {
 	Datasite *DatasiteAPI
 	Blob     *BlobAPI
 	Events   *EventsAPI
+	httpStats *httpStats
 
 	onAuthTokenUpdate func(refreshToken string)
 }
@@ -53,6 +54,31 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 		SetJsonUnmarshal(jsonUmarshal).
 		SetCommonErrorResult(&APIError{})
 
+	httpStats := newHTTPStats()
+	setGlobalHTTPStats(httpStats)
+	// Instrument all HTTP traffic (uploads/downloads/control) for tx/rx stats.
+	client.WrapRoundTripFunc(func(rt req.RoundTripper) req.RoundTripFunc {
+		return func(r *req.Request) (*req.Response, error) {
+			// Wrap request body to count bytes actually sent.
+			if r.RawRequest != nil && r.RawRequest.Body != nil {
+				r.RawRequest.Body = wrapCounting(r.RawRequest.Body, httpStats.onSend)
+			} else if len(r.Body) > 0 {
+				httpStats.onSend(len(r.Body))
+			}
+
+			resp, err := rt.RoundTrip(r)
+			if err != nil {
+				httpStats.setLastError(err)
+				return resp, err
+			}
+			// Wrap response body so reads count bytes received.
+			if resp != nil && resp.Response != nil && resp.Response.Body != nil {
+				resp.Response.Body = wrapCounting(resp.Response.Body, httpStats.onRecv)
+			}
+			return resp, err
+		}
+	})
+
 	datasiteAPI := newDatasiteAPI(client)
 	blobAPI := newBlobAPI(client)
 	eventsAPI := newEventsAPI(client)
@@ -63,6 +89,7 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 		Datasite: datasiteAPI,
 		Blob:     blobAPI,
 		Events:   eventsAPI,
+		httpStats: httpStats,
 	}, nil
 }
 
@@ -70,6 +97,21 @@ func New(config *SyftSDKConfig) (*SyftSDK, error) {
 func (s *SyftSDK) Close() {
 	if s.Events.IsConnected() {
 		s.Events.Close()
+	}
+}
+
+// HTTPStats returns a point-in-time snapshot of HTTP tx/rx telemetry.
+func (s *SyftSDK) HTTPStats() HTTPStatsSnapshot {
+	if s.httpStats == nil {
+		return HTTPStatsSnapshot{}
+	}
+	lastErr, _ := s.httpStats.lastErrorValue.Load().(string)
+	return HTTPStatsSnapshot{
+		BytesSentTotal: s.httpStats.bytesSent.Load(),
+		BytesRecvTotal: s.httpStats.bytesRecv.Load(),
+		LastSentAtNs:   s.httpStats.lastSentNs.Load(),
+		LastRecvAtNs:   s.httpStats.lastRecvNs.Load(),
+		LastError:      lastErr,
 	}
 }
 

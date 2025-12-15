@@ -77,6 +77,8 @@ func TestProgressAPI(t *testing.T) {
 	// Extract auth token from client log
 	authToken := extractAuthToken(t, h.alice.state.LogPath)
 
+	maybeWriteWatchEnv(t, aliceClientURL, authToken)
+
 	// Test sync status endpoint
 	t.Run("SyncStatus", func(t *testing.T) {
 		resp, err := httpGetWithAuth(aliceClientURL+"/v1/sync/status", authToken)

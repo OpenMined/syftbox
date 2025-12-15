@@ -31,6 +31,15 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 
 	syncRelPath := SyncPath(relPath)
 
+	// If we already have a rejected marker for this path, don't keep retrying until resolved.
+	localAbsPath := se.workspace.DatasiteAbsPath(syncRelPath.String())
+	if RejectedFileExists(localAbsPath) {
+		slog.Warn("sync", "type", SyncPriority, "op", OpSkipped, "reason", "previous rejection (marker present)", "path", relPath)
+		se.syncStatus.SetRejected(syncRelPath)
+		se.journal.Delete(syncRelPath)
+		return
+	}
+
 	// set sync status
 	se.syncStatus.SetSyncing(syncRelPath)
 
@@ -87,6 +96,7 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 	se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         file.ETag,
+		LocalETag:    file.ETag,
 		Size:         file.Size,
 		LastModified: file.LastModified,
 		Version:      "",

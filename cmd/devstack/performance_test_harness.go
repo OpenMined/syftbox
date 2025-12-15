@@ -171,6 +171,20 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 		return fmt.Errorf("find repo root: %w", err)
 	}
 
+	// If a previous devstack for the same sandbox is still running (e.g. from a prior
+	// go test invocation), try to reuse its MinIO instead of starting a second one.
+	if prev, _, rerr := readState(s.root); rerr == nil && prev != nil {
+		if prev.Minio.PID > 0 && processExists(prev.Minio.PID) {
+			if err := waitForMinio(prev.Minio.APIPort); err == nil {
+				t.Logf("Reusing existing MinIO for persistent suite (pid %d port %d)", prev.Minio.PID, prev.Minio.APIPort)
+				s.minio = prev.Minio
+			} else {
+				t.Logf("Previous MinIO not healthy; stopping and restarting: %v", err)
+				stopMinio(prev.Minio)
+			}
+		}
+	}
+
 	t.Logf("Using persistent sandbox: %s", s.root)
 	t.Logf("Building binaries once for persistent suite...")
 	if err := buildBinary(s.serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
@@ -180,31 +194,33 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 		return fmt.Errorf("build client: %w", err)
 	}
 
-	// Allocate ports for MinIO; keep it running across tests.
-	minioAPIPort, _ := getFreePort()
-	minioConsolePort, _ := getFreePort()
-	for minioConsolePort == minioAPIPort {
-		minioConsolePort, _ = getFreePort()
-	}
+	if s.minio.PID == 0 {
+		// Allocate ports for MinIO; keep it running across tests.
+		minioAPIPort, _ := getFreePort()
+		minioConsolePort, _ := getFreePort()
+		for minioConsolePort == minioAPIPort {
+			minioConsolePort, _ = getFreePort()
+		}
 
-	t.Logf("Starting MinIO for persistent suite...")
-	minioBin, err := ensureMinioBinary(s.binDir)
-	if err != nil {
-		return fmt.Errorf("minio binary unavailable: %w", err)
+		t.Logf("Starting MinIO for persistent suite...")
+		minioBin, err := ensureMinioBinary(s.binDir)
+		if err != nil {
+			return fmt.Errorf("minio binary unavailable: %w", err)
+		}
+		mState, err := startMinio("local", minioBin, s.relayRoot, minioAPIPort, minioConsolePort, false)
+		if err != nil {
+			return fmt.Errorf("start minio: %w", err)
+		}
+		if err := setupBucket(mState.APIPort); err != nil {
+			stopMinio(mState)
+			return fmt.Errorf("setup bucket: %w", err)
+		}
+		s.minio = mState
 	}
-	mState, err := startMinio("local", minioBin, s.relayRoot, minioAPIPort, minioConsolePort, false)
-	if err != nil {
-		return fmt.Errorf("start minio: %w", err)
-	}
-	if err := setupBucket(mState.APIPort); err != nil {
-		stopMinio(mState)
-		return fmt.Errorf("setup bucket: %w", err)
-	}
-	s.minio = mState
 
 	// Start server+clients fresh for first test.
 	if err := s.resetForTest(t); err != nil {
-		stopMinio(mState)
+		stopMinio(s.minio)
 		return err
 	}
 

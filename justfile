@@ -235,6 +235,30 @@ sbdev-logs *ARGS:
     GOCACHE=$(pwd)/.gocache go run ./cmd/devstack logs {{ ARGS }}
 
 [group('devstack')]
+sbdev-watch file interval="0.5":
+    #!/bin/bash
+    set -euo pipefail
+
+    if [ ! -f "{{ file }}" ]; then
+        echo "env file not found: {{ file }}" >&2
+        echo "expected format:" >&2
+        echo "  SYFTBOX_CLIENT_URL=http://127.0.0.1:PORT" >&2
+        echo "  SYFTBOX_CLIENT_TOKEN=FULL_TOKEN" >&2
+        exit 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "{{ file }}"
+
+    if [ -z "${SYFTBOX_CLIENT_URL:-}" ] || [ -z "${SYFTBOX_CLIENT_TOKEN:-}" ]; then
+        echo "env file missing SYFTBOX_CLIENT_URL or SYFTBOX_CLIENT_TOKEN" >&2
+        exit 1
+    fi
+
+    echo "Watching ${SYFTBOX_CLIENT_URL}/v1/status every {{ interval }}s"
+    watch -n "{{ interval }}" "curl -s -H 'Authorization: Bearer ${SYFTBOX_CLIENT_TOKEN}' ${SYFTBOX_CLIENT_URL}/v1/status | jq .runtime"
+
+[group('devstack')]
 sbdev-nuke:
     #!/bin/bash
     set -euo pipefail
@@ -267,7 +291,10 @@ sbdev-test-perf *ARGS:
         SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests"
     fi
     echo "Using sandbox: $SANDBOX_DIR"
-    rm -rf "$SANDBOX_DIR"
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+    fi
+    rm -rf "$SANDBOX_DIR" || true
     PERF_TEST_SANDBOX="$SANDBOX_DIR" go test -v -timeout 30m -tags integration {{ ARGS }}
     echo "Test artifacts preserved at: $SANDBOX_DIR"
 
@@ -310,7 +337,15 @@ sbdev-test-perf-profile *ARGS:
         SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests-profile"
     fi
     echo "Using sandbox: $SANDBOX_DIR"
-    rm -rf "$SANDBOX_DIR"
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+        # Retry removal a few times in case devstack processes are still exiting.
+        for _ in 1 2 3; do
+            rm -rf "$SANDBOX_DIR" 2>/dev/null && break
+            sleep 0.5
+        done
+        rm -rf "$SANDBOX_DIR" || true
+    fi
     PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Profiles saved to: cmd/devstack/profiles/"
@@ -599,10 +634,10 @@ sbdev-test-ws-rust:
     echo "Test artifacts preserved at: $SANDBOX_DIR"
 
 [group('devstack')]
-sbdev-test-large:
+sbdev-test-large-sync:
     #!/bin/bash
     set -eou pipefail
-    echo "Running large file transfer test..."
+    echo "Running large file sync test (daemon end-to-end)..."
     cd cmd/devstack
     REPO_ROOT="$(pwd)/../.."
     if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
@@ -617,10 +652,14 @@ sbdev-test-large:
     PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
 
 [group('devstack')]
-sbdev-test-large-upload:
+sbdev-test-large:
+    just sbdev-test-large-sync
+
+[group('devstack')]
+sbdev-test-large-upload-daemon:
     #!/bin/bash
     set -eou pipefail
-    echo "Running resumable large upload test..."
+    echo "Running large upload via daemon test..."
     cd cmd/devstack
     REPO_ROOT="$(pwd)/../.."
     if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
@@ -631,8 +670,44 @@ sbdev-test-large-upload:
     else
         SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload"
     fi
-    rm -rf "$SANDBOX_DIR"
-    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadResume
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+    fi
+    rm -rf "$SANDBOX_DIR" || true
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemon
+
+[group('devstack')]
+sbdev-test-large-upload:
+    just sbdev-test-large-upload-daemon
+
+[group('devstack')]
+sbdev-test-large-upload-daemon-stress:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large upload via daemon stress test (kill/restart/resume)..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload-stress"
+    fi
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+        for _ in 1 2 3; do
+            rm -rf "$SANDBOX_DIR" 2>/dev/null && break
+            sleep 0.5
+        done
+        rm -rf "$SANDBOX_DIR" || true
+    fi
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemonStress
+
+[group('devstack')]
+sbdev-test-large-upload-stress:
+    just sbdev-test-large-upload-daemon-stress
 
 [group('devstack')]
 sbdev-test-large-upload-rust:
@@ -699,6 +774,59 @@ sbdev-test-progress-api-rust:
     fi
     rm -rf "$SANDBOX_DIR"
     SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestProgressAPIDemo
+
+[group('devstack')]
+sbdev-watch-test recipe interval="0.5" env_file="":
+    #!/bin/bash
+    set -euo pipefail
+
+    REPO_ROOT="$(pwd)"
+    if [ -z "{{ env_file }}" ]; then
+        ENV_FILE="$REPO_ROOT/.test-sandbox/watch.env"
+    else
+        ENV_FILE="{{ env_file }}"
+    fi
+    rm -f "$ENV_FILE"
+
+    echo "Starting test recipe: {{ recipe }}"
+    SBDEV_WATCH_ENV="$ENV_FILE" just "{{ recipe }}" &
+    TEST_PID=$!
+
+    # Wait for env file to appear (max ~30s)
+    for i in $(seq 1 120); do
+        if [ -f "$ENV_FILE" ] && grep -q "SYFTBOX_CLIENT_URL=" "$ENV_FILE" && grep -q "SYFTBOX_CLIENT_TOKEN=" "$ENV_FILE"; then
+            break
+        fi
+        sleep 0.25
+    done
+
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "Env file was not created by test; tailing test output only." >&2
+        wait "$TEST_PID"
+        exit 1
+    fi
+
+    echo "Env file ready at $ENV_FILE"
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    echo "Watching runtime status every {{ interval }}s until test exits (Ctrl-C to stop early)..."
+
+    cleanup() {
+        echo ""
+        echo "Stopping test (pid $TEST_PID)"
+        kill "$TEST_PID" 2>/dev/null || true
+        wait "$TEST_PID" 2>/dev/null || true
+        exit 0
+    }
+    trap cleanup INT TERM
+
+    while kill -0 "$TEST_PID" 2>/dev/null; do
+        curl -s -H "Authorization: Bearer ${SYFTBOX_CLIENT_TOKEN}" "${SYFTBOX_CLIENT_URL}/v1/status" | jq .runtime
+        sleep "{{ interval }}"
+    done
+
+    echo "Test finished; stopping watch."
+    wait "$TEST_PID" 2>/dev/null || true
 
 [group('devstack')]
 sbdev-test-large-rust:

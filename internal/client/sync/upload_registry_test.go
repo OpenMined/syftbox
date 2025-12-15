@@ -62,6 +62,50 @@ func TestUploadRegistry_RegisterExisting(t *testing.T) {
 	}
 }
 
+func TestUploadRegistry_TryRegister_AlreadyActive(t *testing.T) {
+	r := NewUploadRegistry(t.TempDir())
+
+	info1, ctx1, cancel1, already1 := r.TryRegister("user@example.com/file.txt", "/local/path/file.txt", 1024)
+	defer cancel1()
+	if already1 {
+		t.Fatal("expected first TryRegister to not be alreadyActive")
+	}
+	if ctx1 == nil {
+		t.Fatal("expected context on first TryRegister")
+	}
+
+	info2, ctx2, cancel2, already2 := r.TryRegister("user@example.com/file.txt", "/local/path/file.txt", 1024)
+	if !already2 {
+		t.Fatal("expected second TryRegister to be alreadyActive")
+	}
+	if info1.ID != info2.ID {
+		t.Fatalf("expected same id, got %s vs %s", info1.ID, info2.ID)
+	}
+	if ctx2 != nil || cancel2 != nil {
+		t.Fatal("expected no ctx/cancel when already active")
+	}
+}
+
+func TestUploadRegistry_TryRegister_AllowsRetryAfterError(t *testing.T) {
+	r := NewUploadRegistry(t.TempDir())
+
+	info1, _, cancel1 := r.Register("user@example.com/file.txt", "/local/path/file.txt", 1024)
+	defer cancel1()
+	r.SetError(info1.ID, context.DeadlineExceeded)
+
+	info2, ctx2, cancel2, already2 := r.TryRegister("user@example.com/file.txt", "/local/path/file.txt", 1024)
+	defer cancel2()
+	if already2 {
+		t.Fatal("expected TryRegister after error to allow retry")
+	}
+	if info1.ID != info2.ID {
+		t.Fatalf("expected same id after retry, got %s vs %s", info1.ID, info2.ID)
+	}
+	if ctx2 == nil {
+		t.Fatal("expected ctx for retry")
+	}
+}
+
 func TestUploadRegistry_UpdateProgress(t *testing.T) {
 	r := NewUploadRegistry(t.TempDir())
 

@@ -133,6 +133,9 @@ func TestProgressAPIDemo(t *testing.T) {
 	authToken := extractDemoAuthToken(t, h.alice.state.LogPath)
 	printSuccess(fmt.Sprintf("Auth token: %s...", authToken[:8]))
 
+	// Optionally write env file for sbdev-watch-test.
+	maybeWriteWatchEnv(t, aliceClientURL, authToken)
+
 	// ========== PART 1: Basic API Endpoints ==========
 	printHeader("Part 1: Basic API Endpoints")
 

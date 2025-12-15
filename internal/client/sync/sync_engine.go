@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -27,6 +30,8 @@ const (
 
 var (
 	ErrSyncAlreadyRunning = errors.New("sync already running")
+	plainMD5ETagRE        = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	multipartETagRE       = regexp.MustCompile(`^[0-9a-f]{32}-\d+$`)
 )
 
 type SyncEngine struct {
@@ -40,6 +45,7 @@ type SyncEngine struct {
 	ignoreList        *SyncIgnoreList
 	priorityList      *SyncPriorityList
 	lastSyncTime      time.Time
+	lastSyncNs        atomic.Int64
 	adaptiveScheduler *AdaptiveSyncScheduler
 	wg                sync.WaitGroup
 	muSync            sync.Mutex
@@ -295,6 +301,7 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 
 	se.lastSyncTime = time.Now()
+	se.lastSyncNs.Store(se.lastSyncTime.UnixNano())
 	return nil
 }
 
@@ -548,10 +555,34 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 		return f1.Version != f2.Version
 	}
 
+	// Option 1.5: Compare stable local hashes when both are present (local vs journal).
+	if f1.LocalETag != "" && f2.LocalETag != "" {
+		return normalizeETag(f1.LocalETag) != normalizeETag(f2.LocalETag)
+	}
+
 	// Option 2: Use ETag/Hash if VersionID isn't reliable or available
 	// Need clarity on whether f1.ETag represents local hash or server ETag
 	if f1.ETag != "" && f2.ETag != "" {
-		return f1.ETag != f2.ETag
+		e1 := normalizeETag(f1.ETag)
+		e2 := normalizeETag(f2.ETag)
+		if e1 != e2 {
+			path := f1.Path
+			if path == "" {
+				path = f2.Path
+			}
+			owner := ""
+			if se.workspace != nil {
+				owner = se.workspace.Owner
+			}
+			// Large files can have multipart-style remote ETags (md5-<parts>) while local ETags
+			// are plain MD5. For non-owner mirror paths, treat mixed-format ETags as unmodified
+			// when sizes match to avoid reupload/conflict loops.
+			if !isOwnerSyncPath(owner, path) && isMixedMultipartETagPair(e1, e2) && f1.Size == f2.Size {
+				return false
+			}
+			return true
+		}
+		return false
 	}
 
 	// Option 3: Fallback to Size (more reliable than ModTime)
@@ -566,6 +597,17 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 
 	// If we reach here, consider them unmodified relative to each other
 	return false
+}
+
+func normalizeETag(etag string) string {
+	etag = strings.TrimSpace(etag)
+	etag = strings.Trim(etag, "\"")
+	return strings.ToLower(etag)
+}
+
+func isMixedMultipartETagPair(e1, e2 string) bool {
+	return (plainMD5ETagRE.MatchString(e1) && multipartETagRE.MatchString(e2)) ||
+		(multipartETagRE.MatchString(e1) && plainMD5ETagRE.MatchString(e2))
 }
 
 func (se *SyncEngine) isSyncing(path SyncPath) bool {

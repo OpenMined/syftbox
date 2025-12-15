@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,10 +48,24 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
+		if skip, reason := shouldSkipUpload(op, se.workspace.Owner); skip {
+			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", reason, "path", op.RelPath)
+			se.syncStatus.SetCompleted(op.RelPath)
+			return
+		}
+
 		localAbsPath := se.workspace.DatasiteAbsPath(op.RelPath.String())
 		if !utils.FileExists(localAbsPath) {
 			slog.Debug("sync", "type", SyncStandard, "op", OpSkipped, "reason", "file no longer exists", "path", op.RelPath)
 			se.syncStatus.SetCompleted(op.RelPath)
+			return
+		}
+
+		// If we already have a rejected marker for this path, don't keep retrying until resolved.
+		if RejectedFileExists(localAbsPath) {
+			slog.Warn("sync", "type", SyncStandard, "op", OpSkipped, "reason", "previous rejection (marker present)", "path", op.RelPath)
+			se.syncStatus.SetRejected(op.RelPath)
+			se.journal.Delete(op.RelPath)
 			return
 		}
 
@@ -70,7 +86,11 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		resumeDir := filepath.Join(se.workspace.MetadataDir, "upload-sessions")
 		cleanupOldUploadSessions(resumeDir, uploadSessionTTL)
 
-		uploadInfo, uploadCtx, cancel := se.uploadRegistry.Register(op.RelPath.String(), localAbsPath, op.Local.Size)
+		uploadInfo, uploadCtx, cancel, alreadyActive := se.uploadRegistry.TryRegister(op.RelPath.String(), localAbsPath, op.Local.Size)
+		if alreadyActive {
+			slog.Debug("sync upload already active", "path", op.RelPath)
+			return
+		}
 		defer cancel()
 
 		res, err := se.sdk.Blob.Upload(uploadCtx, &syftsdk.UploadParams{
@@ -78,17 +98,22 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			FilePath:    localAbsPath,
 			Fingerprint: op.Local.ETag,
 			ResumeDir:   resumeDir,
+			PartSize:          parsePartSizeEnv(),
+			PartUploadTimeout: parsePartUploadTimeoutEnv(),
 			Callback: func(uploadedBytes int64, totalBytes int64) {
 				progress := float64(uploadedBytes) / float64(totalBytes)
 				se.syncStatus.SetProgress(op.RelPath, progress)
+				se.uploadRegistry.UpdateProgress(uploadInfo.ID, uploadedBytes, nil, 0, 0)
+				slog.Debug("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "progress", fmt.Sprintf("%.2f%%", progress*100.0))
+			},
+			AdvancedCallback: func(p syftsdk.UploadProgress) {
 				se.uploadRegistry.UpdateProgress(
 					uploadInfo.ID,
-					uploadedBytes,
-					nil,
-					0,
-					0,
+					p.UploadedBytes,
+					p.CompletedParts,
+					p.PartSize,
+					p.PartCount,
 				)
-				slog.Debug("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "progress", fmt.Sprintf("%.2f%%", progress*100.0))
 			},
 		})
 
@@ -101,13 +126,19 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 					// 1. mark as rejected
 					// 2. delete from journal
 					// 3. need to pull the previous version again
-					if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
-						// Failed to mark as rejected, set error state
-						se.syncStatus.SetError(op.RelPath, markErr)
-						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
+					if isOwnerSyncPath(se.workspace.Owner, op.RelPath) {
+						if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
+							// Failed to mark as rejected, set error state
+							se.syncStatus.SetError(op.RelPath, markErr)
+							slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
+						} else {
+							// Successfully marked as rejected
+							slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
+							se.syncStatus.SetRejected(op.RelPath)
+						}
 					} else {
-						// Successfully marked as rejected
-						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
+						// For non-owner datasites, do not create rejected markers to avoid loops/disk spam.
+						slog.Warn("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "reason", "non-owner rejection (marker suppressed)")
 						se.syncStatus.SetRejected(op.RelPath)
 					}
 					se.journal.Delete(op.RelPath)
@@ -136,6 +167,7 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 		se.journal.Set(&FileMetadata{
 			Path:         op.RelPath,
 			ETag:         res.ETag,
+			LocalETag:    op.Local.ETag,
 			Size:         res.Size,
 			LastModified: lastModified,
 		})
@@ -175,6 +207,65 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 
 	// Wait for all worker goroutines to finish processing
 	wg.Wait()
+}
+
+func parsePartSizeEnv() int64 {
+	if v := os.Getenv("SBDEV_PART_SIZE"); v != "" {
+		// Parse suffixes MB/GB/KB or raw bytes.
+		s := strings.ToUpper(strings.TrimSpace(v))
+		mult := int64(1)
+		switch {
+		case strings.HasSuffix(s, "GB"):
+			mult = 1024 * 1024 * 1024
+			s = strings.TrimSuffix(s, "GB")
+		case strings.HasSuffix(s, "MB"):
+			mult = 1024 * 1024
+			s = strings.TrimSuffix(s, "MB")
+		case strings.HasSuffix(s, "KB"):
+			mult = 1024
+			s = strings.TrimSuffix(s, "KB")
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64); err == nil && n > 0 {
+			return n * mult
+		}
+	}
+	return 0
+}
+
+func parsePartUploadTimeoutEnv() time.Duration {
+	if v := os.Getenv("SBDEV_PART_UPLOAD_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	if v := os.Getenv("SYFTBOX_PART_UPLOAD_TIMEOUT_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 0
+}
+
+func isOwnerSyncPath(owner string, p SyncPath) bool {
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" {
+		return false
+	}
+	raw := strings.ToLower(strings.TrimLeft(p.String(), "/"))
+	return strings.HasPrefix(raw, owner+"/")
+}
+
+// shouldSkipUpload returns true if a WriteRemote should be treated as a no-op
+// based on content identity or ownership rules.
+func shouldSkipUpload(op *SyncOperation, owner string) (bool, string) {
+	if op == nil {
+		return true, "nil operation"
+	}
+	// If remote state matches local content, skip upload even if mtime changed.
+	if op.Remote != nil && op.Local != nil && op.Remote.ETag != "" && op.Remote.ETag == op.Local.ETag {
+		return true, "remote etag matches local"
+	}
+	return false, ""
 }
 
 // cleanupOldUploadSessions trims stale resumable upload state so disk doesn't accumulate abandoned sessions.

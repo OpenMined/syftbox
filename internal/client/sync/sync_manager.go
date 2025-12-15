@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
@@ -57,6 +58,16 @@ func (m *SyncManager) GetSyncStatus() *SyncStatus {
 
 func (m *SyncManager) GetUploadRegistry() *UploadRegistry {
 	return m.engine.uploadRegistry
+}
+
+// LastSyncTime returns the last completed full sync time.
+// This is best-effort and may be zero before first sync.
+func (m *SyncManager) LastSyncTime() time.Time {
+	ns := m.engine.lastSyncNs.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns).UTC()
 }
 
 func (m *SyncManager) TriggerSync() {

@@ -75,6 +75,22 @@ func SetMarker(path string, mtype MarkerType) (string, error) {
 
 	markedPath := asMarkedPath(path, mtype)
 
+	// For rejected markers, avoid unbounded rotation/duplication.
+	// If any rejected marker already exists for this base path, keep the existing one,
+	// delete the new offending file, and do not rotate.
+	if mtype == Rejected && RejectedFileExists(path) {
+		keep := markedPath
+		if !utils.FileExists(keep) {
+			// Fall back to any rotated marker file.
+			if existing, ok := findExistingMarker(path, mtype); ok {
+				keep = existing
+			}
+		}
+		_ = os.Remove(path)
+		slog.Debug("rejected marker already exists, suppressing duplicate", "path", path, "keep", keep)
+		return keep, nil
+	}
+
 	// Check if the target marked path already exists.
 	if utils.FileExists(markedPath) {
 		rotatedPath := asRotatedPath(markedPath, time.Now())
@@ -90,6 +106,23 @@ func SetMarker(path string, mtype MarkerType) (string, error) {
 	}
 
 	return markedPath, nil
+}
+
+// findExistingMarker returns one existing marker file path for the base path/type.
+func findExistingMarker(basePath string, mtype MarkerType) (string, bool) {
+	if IsMarkedPath(basePath) {
+		basePath = GetUnmarkedPath(basePath)
+	}
+	ext := filepath.Ext(basePath)
+	base := strings.TrimSuffix(basePath, ext)
+	globPattern := base + string(mtype) + "*" + ext
+	matches, err := filepath.Glob(globPattern)
+	if err != nil || len(matches) == 0 {
+		return "", false
+	}
+	// Deterministic choice: pick lexicographically smallest (oldest timestamped).
+	slices.Sort(matches)
+	return matches[0], true
 }
 
 // RemoveMarker renames a marked file to its original, unmarked name.
