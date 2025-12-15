@@ -13,6 +13,7 @@ use walkdir::WalkDir;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
 use crate::http::{ApiClient, BlobInfo, PresignedParams};
+use crate::uploader::upload_blob_smart;
 
 #[derive(Debug, Clone)]
 struct LocalFile {
@@ -310,12 +311,9 @@ pub async fn sync_once_with_control(
     // Remote writes (uploads)
     for key in upload_keys {
         if let Some(l) = local.get(&key) {
-            if let Err(err) = api.upload_blob(&l.key, &l.path).await {
+            if let Err(err) = upload_blob_smart(api, control.as_ref(), data_dir, &l.key, &l.path).await {
                 eprintln!("sync upload error for {}: {err:?}", l.key);
                 continue;
-            }
-            if let Some(cp) = &control {
-                cp.record_upload(l.key.clone(), l.size);
             }
             journal.set(
                 l.key.clone(),
@@ -424,6 +422,7 @@ pub async fn download_keys(
         let target = datasites_root.join(&blob.key);
         ensure_parent_dirs(&target)?;
         let bytes = api.http().get(&blob.url).send().await?.bytes().await?;
+        api.stats().on_recv(bytes.len() as i64);
         write_file_resolving_conflicts(&target, &bytes)?;
     }
     Ok(())

@@ -713,7 +713,7 @@ sbdev-test-large-upload-stress:
 sbdev-test-large-upload-rust:
     #!/bin/bash
     set -eou pipefail
-    echo "Running resumable large upload test with Rust client..."
+    echo "Running large upload via daemon test with Rust client..."
     root_dir="$(pwd)"
     rust_bin="$root_dir/rust/target/release/syftbox-rs"
     cd rust && cargo build --release && cd "$root_dir"
@@ -728,7 +728,35 @@ sbdev-test-large-upload-rust:
         SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload"
     fi
     rm -rf "$SANDBOX_DIR"
-    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadResume
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemon
+
+[group('devstack')]
+sbdev-test-large-upload-daemon-stress-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large upload via daemon stress test with Rust client (kill/restart/resume)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload-stress"
+    fi
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+        for _ in 1 2 3; do
+            rm -rf "$SANDBOX_DIR" 2>/dev/null && break
+            sleep 0.5
+        done
+        rm -rf "$SANDBOX_DIR" || true
+    fi
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemonStress
 
 [group('devstack')]
 sbdev-test-progress-api:

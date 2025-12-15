@@ -5,6 +5,8 @@ mod events;
 mod filters;
 mod http;
 mod sync;
+mod telemetry;
+mod uploader;
 
 use std::path::PathBuf;
 
@@ -14,6 +16,7 @@ use config::Config;
 use control::ControlPlane;
 use filters::SyncFilters;
 use http::ApiClient;
+use telemetry::HttpStats;
 
 #[derive(Parser, Debug)]
 #[command(name = "syftbox", version)]
@@ -51,7 +54,13 @@ async fn main() -> Result<()> {
 }
 
 async fn run_daemon(cfg: Config) -> Result<()> {
-    let api = ApiClient::new(&cfg.server_url, &cfg.email, cfg.access_token.as_deref())?;
+    let http_stats = std::sync::Arc::new(HttpStats::default());
+    let api = ApiClient::new(
+        &cfg.server_url,
+        &cfg.email,
+        cfg.access_token.as_deref(),
+        http_stats.clone(),
+    )?;
 
     let client_addr = cfg
         .client_url
@@ -59,7 +68,7 @@ async fn run_daemon(cfg: Config) -> Result<()> {
         .unwrap_or("http://127.0.0.1:0")
         .replace("http://", "")
         .replace("https://", "");
-    let control = ControlPlane::start(&client_addr)?;
+    let control = ControlPlane::start(&client_addr, http_stats)?;
 
     // TODO: wire websocket events; keep None until implemented.
     let datasites_root = cfg.data_dir.join("datasites");

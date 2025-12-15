@@ -6,17 +6,25 @@ use reqwest::{Client as HttpClient, ClientBuilder, RequestBuilder, Response, Sta
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::telemetry::HttpStats;
+
 #[derive(Clone)]
 pub struct ApiClient {
     base: String,
     http: HttpClient,
     user: String,
+    stats: std::sync::Arc<HttpStats>,
 }
 
 impl ApiClient {
-    pub fn new(base: &str, user: &str, auth_token: Option<&str>) -> Result<Self> {
+    pub fn new(
+        base: &str,
+        user: &str,
+        auth_token: Option<&str>,
+        stats: std::sync::Arc<HttpStats>,
+    ) -> Result<Self> {
         let mut builder = ClientBuilder::new()
-            .timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(10 * 60))
             .connect_timeout(Duration::from_secs(5))
             .user_agent("syftbox-rs/0.1")
             .no_proxy();
@@ -38,6 +46,7 @@ impl ApiClient {
             base: base.trim_end_matches('/').to_string(),
             http,
             user: user.to_string(),
+            stats,
         })
     }
 
@@ -66,7 +75,46 @@ impl ApiClient {
             .multipart(form)
             .send()
             .await?;
+        if let Ok(meta) = std::fs::metadata(path) {
+            self.stats.on_send(meta.len() as i64);
+        }
         map_status(resp, "blob upload").await
+    }
+
+    pub async fn upload_multipart_urls(
+        &self,
+        body: &MultipartUploadRequest,
+    ) -> Result<MultipartUploadResponse> {
+        let url = format!("{}/api/v1/blob/upload/multipart", self.base);
+        let resp = self
+            .with_user(self.http.post(url))
+            .json(body)
+            .send()
+            .await?;
+        map_error(resp, "blob multipart upload").await
+    }
+
+    pub async fn upload_multipart_complete(
+        &self,
+        body: &CompleteMultipartUploadRequest,
+    ) -> Result<UploadResponse> {
+        let url = format!("{}/api/v1/blob/upload/complete", self.base);
+        let resp = self
+            .with_user(self.http.post(url))
+            .json(body)
+            .send()
+            .await?;
+        map_error(resp, "blob multipart upload complete").await
+    }
+
+    pub async fn upload_multipart_abort(&self, body: &AbortMultipartUploadRequest) -> Result<()> {
+        let url = format!("{}/api/v1/blob/upload/abort", self.base);
+        let resp = self
+            .with_user(self.http.post(url))
+            .json(body)
+            .send()
+            .await?;
+        map_status(resp, "blob multipart upload abort").await
     }
 
     pub async fn delete_blobs(&self, keys: &[String]) -> Result<()> {
@@ -85,6 +133,10 @@ impl ApiClient {
 
     pub fn http(&self) -> &HttpClient {
         &self.http
+    }
+
+    pub fn stats(&self) -> std::sync::Arc<HttpStats> {
+        self.stats.clone()
     }
 
     pub async fn datasite_view(&self) -> Result<DatasiteViewResponse> {
@@ -161,4 +213,62 @@ pub struct PresignedParams {
 #[derive(Debug, Serialize)]
 struct DeleteParams<'a> {
     keys: &'a [String],
+}
+
+#[derive(Debug, Serialize)]
+pub struct MultipartUploadRequest {
+    pub key: String,
+    pub size: i64,
+    #[serde(rename = "partSize")]
+    pub part_size: i64,
+    #[serde(rename = "uploadId", skip_serializing_if = "Option::is_none")]
+    pub upload_id: Option<String>,
+    #[serde(rename = "partNumbers", skip_serializing_if = "Vec::is_empty", default)]
+    pub part_numbers: Vec<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MultipartUploadResponse {
+    pub key: String,
+    #[serde(rename = "uploadId")]
+    pub upload_id: String,
+    #[serde(rename = "partSize")]
+    pub part_size: i64,
+    pub urls: std::collections::HashMap<i64, String>,
+    #[serde(rename = "partCount")]
+    pub part_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompletedPart {
+    #[serde(rename = "partNumber")]
+    pub part_number: i64,
+    #[serde(rename = "etag")]
+    pub etag: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CompleteMultipartUploadRequest {
+    pub key: String,
+    #[serde(rename = "uploadId")]
+    pub upload_id: String,
+    pub parts: Vec<CompletedPart>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AbortMultipartUploadRequest {
+    pub key: String,
+    #[serde(rename = "uploadId")]
+    pub upload_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UploadResponse {
+    pub key: String,
+    pub etag: String,
+    pub size: i64,
+    #[serde(rename = "lastModified")]
+    pub last_modified: String,
+    #[serde(default)]
+    pub version: String,
 }

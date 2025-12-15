@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
+use crate::telemetry::HttpStats;
+
 #[derive(Clone)]
 pub struct ControlPlane {
     state: Arc<ControlState>,
@@ -21,19 +23,26 @@ struct ControlState {
     token: String,
     uploads: Mutex<HashMap<String, UploadEntry>>,
     sync_now: Notify,
+    http_stats: Arc<HttpStats>,
+    started_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct UploadEntry {
     id: String,
     key: String,
     state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    local_path: Option<String>,
     size: i64,
     uploaded_bytes: i64,
     part_size: Option<i64>,
     part_count: Option<i64>,
     completed_parts: Vec<i64>,
     progress: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     #[serde(with = "chrono::serde::ts_seconds")]
     started_at: DateTime<Utc>,
     #[serde(with = "chrono::serde::ts_seconds")]
@@ -74,7 +83,7 @@ struct UploadListResponse {
 }
 
 impl ControlPlane {
-    pub fn start(addr: &str) -> anyhow::Result<Self> {
+    pub fn start(addr: &str, http_stats: Arc<HttpStats>) -> anyhow::Result<Self> {
         let token = Uuid::new_v4().as_simple().to_string();
         println!("control plane start token={}", token);
         use std::io::Write;
@@ -84,9 +93,12 @@ impl ControlPlane {
             token,
             uploads: Mutex::new(HashMap::new()),
             sync_now: Notify::new(),
+            http_stats,
+            started_at: Utc::now(),
         });
 
         let app = Router::new()
+            .route("/v1/status", get(status))
             .route("/v1/sync/status", get(sync_status))
             .route("/v1/sync/now", post(sync_now))
             .route("/v1/uploads/", get(list_uploads))
@@ -114,23 +126,98 @@ impl ControlPlane {
         self.state.sync_now.notified().await;
     }
 
-    pub fn record_upload(&self, key: String, size: i64) {
+    pub fn upsert_upload(
+        &self,
+        key: String,
+        local_path: Option<String>,
+        size: i64,
+        part_size: Option<i64>,
+        part_count: Option<i64>,
+    ) -> String {
         let mut uploads = self.state.uploads.lock().unwrap();
         let now = Utc::now();
-        let entry = UploadEntry {
-            id: Uuid::new_v4().to_string(),
-            key,
-            state: "completed".to_string(),
-            size,
-            uploaded_bytes: size,
-            part_size: None,
-            part_count: None,
-            completed_parts: Vec::new(),
-            progress: 100.0,
-            started_at: now,
-            updated_at: now,
-        };
-        uploads.insert(entry.id.clone(), entry);
+
+        // Prefer reusing an existing non-completed entry for this key.
+        for (id, u) in uploads.iter_mut() {
+            if u.key == key && u.state != "completed" {
+                u.size = size;
+                if local_path.is_some() {
+                    u.local_path = local_path.clone();
+                }
+                u.part_size = part_size;
+                u.part_count = part_count;
+                u.updated_at = now;
+                return id.clone();
+            }
+        }
+
+        let id = Uuid::new_v4().to_string();
+        uploads.insert(
+            id.clone(),
+            UploadEntry {
+                id: id.clone(),
+                key,
+                state: "uploading".to_string(),
+                local_path,
+                size,
+                uploaded_bytes: 0,
+                part_size,
+                part_count,
+                completed_parts: Vec::new(),
+                progress: 0.0,
+                error: None,
+                started_at: now,
+                updated_at: now,
+            },
+        );
+        id
+    }
+
+    pub fn update_upload_progress(&self, id: &str, uploaded_bytes: i64, completed_parts: Vec<i64>) {
+        let mut uploads = self.state.uploads.lock().unwrap();
+        if let Some(u) = uploads.get_mut(id) {
+            u.uploaded_bytes = uploaded_bytes.max(0);
+            u.completed_parts = completed_parts;
+            if u.size > 0 {
+                u.progress = (u.uploaded_bytes as f64) * 100.0 / (u.size as f64);
+                if u.progress > 100.0 {
+                    u.progress = 100.0;
+                }
+            }
+            u.updated_at = Utc::now();
+        }
+    }
+
+    pub fn set_upload_state(&self, id: &str, state: String, error: Option<String>) {
+        let mut uploads = self.state.uploads.lock().unwrap();
+        if let Some(u) = uploads.get_mut(id) {
+            u.state = state;
+            u.error = error;
+            u.updated_at = Utc::now();
+        }
+    }
+
+    pub fn set_upload_error(&self, id: &str, err: String) {
+        self.set_upload_state(id, "error".to_string(), Some(err));
+    }
+
+    pub fn set_upload_completed(&self, id: &str, uploaded_bytes: i64) {
+        let mut uploads = self.state.uploads.lock().unwrap();
+        if let Some(u) = uploads.get_mut(id) {
+            u.state = "completed".to_string();
+            u.error = None;
+            u.uploaded_bytes = uploaded_bytes.max(0);
+            u.progress = 100.0;
+            u.updated_at = Utc::now();
+        }
+    }
+
+    pub fn get_upload_state(&self, id: &str) -> String {
+        let uploads = self.state.uploads.lock().unwrap();
+        uploads
+            .get(id)
+            .map(|u| u.state.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -149,6 +236,49 @@ async fn auth_middleware(
     (StatusCode::UNAUTHORIZED, "unauthorized").into_response()
 }
 
+#[derive(Serialize)]
+struct StatusResponse {
+    status: String,
+    #[serde(rename = "ts")]
+    timestamp: String,
+    version: String,
+    revision: String,
+    #[serde(rename = "buildDate")]
+    build_date: String,
+    runtime: RuntimeInfo,
+}
+
+#[derive(Serialize)]
+struct RuntimeInfo {
+    http: HttpInfo,
+}
+
+#[derive(Serialize)]
+struct HttpInfo {
+    bytes_sent_total: i64,
+    bytes_recv_total: i64,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    last_error: String,
+}
+
+async fn status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let snap = state.http_stats.snapshot();
+    Json(StatusResponse {
+        status: "ok".to_string(),
+        timestamp: Utc::now().to_rfc3339(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        revision: String::new(),
+        build_date: String::new(),
+        runtime: RuntimeInfo {
+            http: HttpInfo {
+                bytes_sent_total: snap.bytes_sent_total,
+                bytes_recv_total: snap.bytes_recv_total,
+                last_error: snap.last_error,
+            },
+        },
+    })
+}
+
 async fn sync_status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
     let uploads = state.uploads.lock().unwrap();
     let mut files = Vec::new();
@@ -161,13 +291,19 @@ async fn sync_status(State(state): State<Arc<ControlState>>) -> impl IntoRespons
     for u in uploads.values() {
         files.push(SyncFileStatus {
             path: u.key.clone(),
-            state: "completed".to_string(),
+            state: u.state.clone(),
             conflict_state: None,
             progress: u.progress,
-            error: None,
+            error: u.error.clone(),
             updated_at: u.updated_at,
         });
-        summary.completed += 1;
+        match u.state.as_str() {
+            "completed" => summary.completed += 1,
+            "error" => summary.error += 1,
+            "uploading" => summary.syncing += 1,
+            "paused" => summary.pending += 1,
+            _ => summary.pending += 1,
+        }
     }
     Json(SyncStatusResponse { files, summary })
 }
@@ -229,7 +365,7 @@ async fn resume_upload(
 ) -> impl IntoResponse {
     let mut uploads = state.uploads.lock().unwrap();
     if let Some(u) = uploads.get_mut(&id) {
-        u.state = "resumed".to_string();
+        u.state = "uploading".to_string();
         u.updated_at = Utc::now();
         return StatusCode::OK;
     }
@@ -258,15 +394,19 @@ mod tests {
 
     #[tokio::test]
     async fn uploads_are_listed_and_sync_status_completed() {
+        let stats = Arc::new(HttpStats::default());
         let state = Arc::new(ControlState {
             token: "secret".into(),
             uploads: Mutex::new(HashMap::new()),
             sync_now: Notify::new(),
+            http_stats: stats,
+            started_at: Utc::now(),
         });
         let cp = ControlPlane {
             state: state.clone(),
         };
-        cp.record_upload("alice@example.com/public/demo.bin".into(), 1024);
+        let id = cp.upsert_upload("alice@example.com/public/demo.bin".into(), None, 1024, None, None);
+        cp.set_upload_completed(&id, 1024);
         let list_resp = list_uploads(State(state.clone())).await;
         let list_bytes = to_bytes(list_resp.into_response().into_body(), usize::MAX)
             .await
