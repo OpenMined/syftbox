@@ -6,10 +6,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use crate::control::ControlPlane;
+use crate::filters::SyncFilters;
 use crate::http::{ApiClient, BlobInfo, PresignedParams};
 
 #[derive(Debug, Clone)]
@@ -38,31 +40,96 @@ struct JournalState {
     files: HashMap<String, FileMetadata>,
 }
 
+const SYNC_JOURNAL_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS sync_journal (
+    path TEXT PRIMARY KEY,
+    etag TEXT NOT NULL,
+    version TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    last_modified TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_journal_path ON sync_journal(path);
+CREATE INDEX IF NOT EXISTS idx_journal_etag ON sync_journal(etag);
+CREATE INDEX IF NOT EXISTS idx_journal_last_modified ON sync_journal(last_modified);
+"#;
+
 pub(crate) struct SyncJournal {
-    path: PathBuf,
+    db_path: PathBuf,
     state: JournalState,
 }
 
 impl SyncJournal {
     pub(crate) fn load(data_dir: &Path) -> Result<Self> {
-        let path = data_dir.join(".data").join("sync.json");
-        let state = if path.exists() {
-            let bytes =
-                fs::read(&path).with_context(|| format!("read journal {}", path.display()))?;
-            serde_json::from_slice::<JournalState>(&bytes)
-                .with_context(|| format!("parse journal {}", path.display()))?
-        } else {
-            JournalState::default()
-        };
-        Ok(SyncJournal { path, state })
+        let db_path = data_dir.join(".data").join("sync.db");
+        if let Some(parent) = db_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let conn = rusqlite::Connection::open(&db_path)
+            .with_context(|| format!("open journal {}", db_path.display()))?;
+        conn.execute_batch(SYNC_JOURNAL_SCHEMA)
+            .context("init sync journal schema")?;
+
+        let mut state = JournalState::default();
+        let mut stmt =
+            conn.prepare("SELECT path, size, etag, version, last_modified FROM sync_journal")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
+            let size: i64 = row.get(1)?;
+            let etag: String = row.get(2)?;
+            let version: String = row.get(3)?;
+            let last_modified: String = row.get(4)?;
+
+            let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
+            state.files.insert(
+                path,
+                FileMetadata {
+                    etag,
+                    size,
+                    last_modified: lm_epoch,
+                    version,
+                    completed_at: 0,
+                },
+            );
+        }
+
+        Ok(SyncJournal { db_path, state })
     }
 
     fn save(&self) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
+        if let Some(parent) = self.db_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let bytes = serde_json::to_vec_pretty(&self.state)?;
-        fs::write(&self.path, bytes)?;
+
+        let mut conn = rusqlite::Connection::open(&self.db_path)
+            .with_context(|| format!("open journal {}", self.db_path.display()))?;
+        conn.execute_batch(SYNC_JOURNAL_SCHEMA)
+            .context("init sync journal schema")?;
+
+        let tx = conn.transaction().context("begin sync journal tx")?;
+        tx.execute("DELETE FROM sync_journal", [])
+            .context("truncate sync journal")?;
+
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+
+            for (path, meta) in &self.state.files {
+                let last_modified = epoch_to_rfc3339(meta.last_modified);
+                stmt.execute(params![
+                    path,
+                    meta.size,
+                    meta.etag,
+                    meta.version,
+                    last_modified
+                ])?;
+            }
+        }
+
+        tx.commit().context("commit sync journal tx")?;
         Ok(())
     }
 
@@ -109,15 +176,27 @@ impl SyncJournal {
     }
 }
 
+fn epoch_to_rfc3339(epoch_seconds: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(epoch_seconds, 0)
+        .unwrap_or_else(chrono::Utc::now)
+        .to_rfc3339()
+}
+
+fn parse_rfc3339_epoch(raw: &str) -> Option<i64> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(raw).ok()?;
+    Some(parsed.with_timezone(&chrono::Utc).timestamp())
+}
+
 pub async fn sync_once_with_control(
     api: &ApiClient,
     data_dir: &Path,
     control: Option<ControlPlane>,
+    filters: &SyncFilters,
     journal: &mut SyncJournal,
 ) -> Result<()> {
     let datasites_root = data_dir.join("datasites");
-    let local = scan_local(&datasites_root)?;
-    let remote = scan_remote(api).await?;
+    let local = scan_local(&datasites_root, filters)?;
+    let remote = scan_remote(api, filters).await?;
 
     journal.rebuild_if_empty(&local, &remote);
 
@@ -133,7 +212,13 @@ pub async fn sync_once_with_control(
     let mut conflicts = Vec::new();
 
     for key in all_keys {
-        if !is_priority_key(&key) {
+        if !is_synced_key(&key) {
+            continue;
+        }
+        if filters.ignore.should_ignore_rel(Path::new(&key), false) {
+            continue;
+        }
+        if SyncFilters::is_marked_rel_path(&key) {
             continue;
         }
         let local_meta = local.get(&key);
@@ -171,19 +256,29 @@ pub async fn sync_once_with_control(
         }
 
         if (local_modified && remote_modified) || (local_created && remote_created) {
-            // Timestamp-based resolution (last-write-wins) to match Go behavior for
-            // simultaneous or offline divergent edits.
+            // Both diverged from the common ancestor (journal). Mirror Go's "consistent history
+            // wins" behavior by treating the server as authoritative and preserving the local
+            // divergent edits as a `.conflict` marker.
             if local_exists && remote_exists {
                 let l = local_meta.unwrap();
                 let r = remote_meta.unwrap();
-                let r_lm = r.last_modified.timestamp();
-                if l.last_modified >= r_lm {
-                    upload_keys.push(key);
-                } else {
-                    download_keys_list.push(key);
+                // If both sides converge to the same content and only the journal is behind,
+                // just advance the journal and avoid creating a spurious conflict marker.
+                if !l.etag.is_empty() && l.etag == r.etag {
+                    journal.set(
+                        key.clone(),
+                        FileMetadata {
+                            etag: r.etag.clone(),
+                            size: r.size,
+                            last_modified: r.last_modified.timestamp(),
+                            version: String::new(),
+                            completed_at: chrono::Utc::now().timestamp(),
+                        },
+                    );
+                    continue;
                 }
-                continue;
             }
+
             conflicts.push(key);
             continue;
         }
@@ -206,8 +301,10 @@ pub async fn sync_once_with_control(
             let _ = mark_conflict(&abs);
         }
         // Mirror Go behavior: remove journal entry so the remote winner
-        // is pulled on the next cycle, and avoid treating this as a delete.
+        // is pulled and avoid treating this as a delete.
         journal.delete(&key);
+        // Pull the server's version immediately so the main path is restored.
+        download_keys_list.push(key);
     }
 
     // Remote writes (uploads)
@@ -382,7 +479,25 @@ pub(crate) fn write_file_resolving_conflicts(target: &std::path::Path, bytes: &[
     }
 }
 
-fn scan_local(datasites_root: &Path) -> Result<HashMap<String, LocalFile>> {
+fn is_marked_key(key: &str) -> bool {
+    // Equivalent to Go IsMarkedPath checks on filenames.
+    key.contains(".conflict") || key.contains(".rejected")
+}
+
+fn is_synced_key(key: &str) -> bool {
+    // Devstack-focused scope (still not full Go parity): public datasite contents,
+    // ACL files, and RPC request/response files.
+    key.contains("/public/")
+        || key.ends_with("syft.pub.yaml")
+        || key.ends_with(".request")
+        || key.ends_with(".response")
+}
+
+fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {
+    filters.ignore.should_ignore_rel(Path::new(key), false) || SyncFilters::is_marked_rel_path(key)
+}
+
+fn scan_local(datasites_root: &Path, filters: &SyncFilters) -> Result<HashMap<String, LocalFile>> {
     let mut out = HashMap::new();
     if !datasites_root.exists() {
         return Ok(out);
@@ -400,8 +515,11 @@ fn scan_local(datasites_root: &Path) -> Result<HashMap<String, LocalFile>> {
         let rel = path
             .strip_prefix(datasites_root)
             .with_context(|| format!("strip prefix {}", path.display()))?;
+        if filters.ignore.should_ignore_rel(rel, false) {
+            continue;
+        }
         let key = rel.to_string_lossy().to_string();
-        if !is_priority_key(&key) {
+        if !is_synced_key(&key) {
             continue;
         }
         if is_marked_key(&key) {
@@ -425,23 +543,14 @@ fn scan_local(datasites_root: &Path) -> Result<HashMap<String, LocalFile>> {
     Ok(out)
 }
 
-fn is_marked_key(key: &str) -> bool {
-    // Equivalent to Go IsMarkedPath checks on filenames.
-    key.contains(".conflict") || key.contains(".rejected")
-}
-
-fn is_priority_key(key: &str) -> bool {
-    // Mirror Go priority list at a high level:
-    // - ACL metadata files
-    // - Public datasite contents
-    key.ends_with("syft.pub.yaml") || key.contains("/public/")
-}
-
-async fn scan_remote(api: &ApiClient) -> Result<HashMap<String, BlobInfo>> {
+async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<String, BlobInfo>> {
     let mut out = HashMap::new();
     let view = api.datasite_view().await?;
     for file in view.files {
-        if is_priority_key(&file.key) && !is_marked_key(&file.key) {
+        if should_ignore_key(filters, &file.key) {
+            continue;
+        }
+        if is_synced_key(&file.key) && !is_marked_key(&file.key) {
             out.insert(file.key.clone(), file);
         }
     }
@@ -493,13 +602,15 @@ fn mark_conflict(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filters::SyncFilters;
     use std::io::Write;
     use std::time::SystemTime;
 
     #[test]
     fn scan_local_empty_dir() {
         let root = make_temp_dir();
-        let state = scan_local(&root).unwrap();
+        let filters = SyncFilters::load(&root).unwrap();
+        let state = scan_local(&root, &filters).unwrap();
         assert!(state.is_empty());
     }
 
@@ -511,7 +622,8 @@ mod tests {
         let mut file = fs::File::create(&f1).unwrap();
         writeln!(file, "hello").unwrap();
 
-        let state = scan_local(&root).unwrap();
+        let filters = SyncFilters::load(&root).unwrap();
+        let state = scan_local(&root, &filters).unwrap();
         let key = "alice@example.com/public/a.txt".to_string();
         assert!(state.contains_key(&key));
         let meta = state.get(&key).unwrap();

@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
@@ -21,6 +22,7 @@ use walkdir::WalkDir;
 
 use crate::config::Config;
 use crate::control::ControlPlane;
+use crate::filters::SyncFilters;
 use crate::http::ApiClient;
 use crate::sync::{
     download_keys, ensure_parent_dirs, sync_once_with_control, write_file_resolving_conflicts,
@@ -31,6 +33,7 @@ static ACL_READY: AtomicBool = AtomicBool::new(false);
 pub struct Client {
     cfg: Config,
     api: ApiClient,
+    filters: std::sync::Arc<SyncFilters>,
     control: Option<ControlPlane>,
     #[allow(dead_code)]
     events_rx: Option<Receiver<Message>>,
@@ -40,12 +43,14 @@ impl Client {
     pub fn new(
         cfg: Config,
         api: ApiClient,
+        filters: std::sync::Arc<SyncFilters>,
         events_rx: Option<Receiver<Message>>,
         control: Option<ControlPlane>,
     ) -> Self {
         Self {
             cfg,
             api,
+            filters,
             control,
             events_rx,
         }
@@ -59,6 +64,8 @@ impl Client {
         let email = self.cfg.email.clone();
         let server_url = self.cfg.server_url.clone();
         let control = self.control.clone();
+        let filters = self.filters.clone();
+        let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
 
         ensure_default_acls(&data_dir, &email)?;
         // Ensure any existing ACLs are present on the server before normal sync begins.
@@ -66,12 +73,12 @@ impl Client {
         ACL_READY.store(true, Ordering::SeqCst);
 
         tokio::select! {
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
                 if let Err(err) = res {
                     eprintln!("ws listener crashed: {err:?}");
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
                 if let Err(err) = res {
                     eprintln!("sync loop crashed: {err:?}");
                 }
@@ -105,15 +112,29 @@ async fn run_sync_loop(
     data_dir: PathBuf,
     _email: String,
     control: Option<ControlPlane>,
+    filters: std::sync::Arc<SyncFilters>,
+    sync_kick: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
     loop {
         if let Err(err) =
-            sync_once_with_control(&api, &data_dir, control.clone(), &mut journal).await
+            sync_once_with_control(&api, &data_dir, control.clone(), &filters, &mut journal).await
         {
             eprintln!("sync error: {err:?}");
         }
-        sleep(Duration::from_secs(5)).await;
+
+        if let Some(cp) = &control {
+            tokio::select! {
+                _ = sleep(Duration::from_secs(5)) => {}
+                _ = cp.wait_sync_now() => {}
+                _ = sync_kick.notified() => {}
+            }
+        } else {
+            tokio::select! {
+                _ = sleep(Duration::from_secs(5)) => {}
+                _ = sync_kick.notified() => {}
+            }
+        }
     }
 }
 
@@ -148,6 +169,8 @@ async fn run_ws_listener(
     server_url: String,
     data_dir: PathBuf,
     email: String,
+    filters: std::sync::Arc<SyncFilters>,
+    sync_kick: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let datasites_root = data_dir.join("datasites");
     if !datasites_root.exists() {
@@ -168,8 +191,12 @@ async fn run_ws_listener(
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
     let watch_root = datasites_root.clone();
     let watcher_api = api.clone();
+    let watcher_filters = filters.clone();
+    let watcher_kick = sync_kick.clone();
     tokio::spawn(async move {
-        if let Err(err) = watch_priority_files(&watch_root, watcher_api, tx).await {
+        if let Err(err) =
+            watch_priority_files(&watch_root, watcher_api, watcher_filters, watcher_kick, tx).await
+        {
             eprintln!("watcher error: {err:?}");
         }
     });
@@ -325,6 +352,8 @@ fn ensure_default_acls(data_dir: &Path, email: &str) -> Result<()> {
 async fn watch_priority_files(
     root: &Path,
     api: ApiClient,
+    filters: std::sync::Arc<SyncFilters>,
+    sync_kick: std::sync::Arc<tokio::sync::Notify>,
     tx: tokio::sync::mpsc::Sender<String>,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
@@ -336,42 +365,72 @@ async fn watch_priority_files(
     )?;
     watcher.watch(root, RecursiveMode::Recursive)?;
 
+    let debounce = Duration::from_millis(50);
+    let mut pending: HashSet<PathBuf> = HashSet::new();
+
     while let Some(res) = event_rx.recv().await {
-        let event = match res {
-            Ok(ev) => ev,
-            Err(err) => {
-                eprintln!("notify error: {err:?}");
-                continue;
-            }
-        };
-        match event.kind {
-            EventKind::Modify(_) | EventKind::Create(_) => {
-                for path in event.paths {
-                    if let Err(err) = send_priority_if_small(root, &api, &path, &tx).await {
-                        eprintln!("priority send error: {err:?}");
+        ingest_event_paths(&mut pending, res);
+
+        // Debounce/burst buffering: coalesce events for a short window.
+        let timer = tokio::time::sleep(debounce);
+        tokio::pin!(timer);
+        loop {
+            tokio::select! {
+                _ = &mut timer => break,
+                next = event_rx.recv() => {
+                    match next {
+                        None => break,
+                        Some(res) => ingest_event_paths(&mut pending, res),
                     }
                 }
             }
-            _ => {}
+        }
+
+        let paths: Vec<PathBuf> = pending.drain().collect();
+        for path in paths {
+            match send_priority_if_small(root, &api, &filters, &path, &tx).await {
+                Ok(did_trigger) => {
+                    if did_trigger {
+                        sync_kick.notify_one();
+                    }
+                }
+                Err(err) => eprintln!("priority send error: {err:?}"),
+            }
         }
     }
 
     Ok(())
 }
 
+fn ingest_event_paths(pending: &mut HashSet<PathBuf>, res: notify::Result<notify::Event>) {
+    let event = match res {
+        Ok(ev) => ev,
+        Err(err) => {
+            eprintln!("notify error: {err:?}");
+            return;
+        }
+    };
+
+    match event.kind {
+        EventKind::Modify(_) | EventKind::Create(_) => {
+            for path in event.paths {
+                pending.insert(path);
+            }
+        }
+        _ => {}
+    }
+}
+
 async fn send_priority_if_small(
     root: &Path,
     api: &ApiClient,
+    filters: &SyncFilters,
     path: &Path,
     tx: &tokio::sync::mpsc::Sender<String>,
-) -> Result<()> {
+) -> Result<bool> {
     let meta = tokio::fs::metadata(path).await?;
     if !meta.is_file() {
-        return Ok(());
-    }
-    let size = meta.len();
-    if size > 4 * 1024 * 1024 {
-        return Ok(());
+        return Ok(false);
     }
 
     let rel = path
@@ -379,13 +438,31 @@ async fn send_priority_if_small(
         .with_context(|| format!("strip prefix {}", path.display()))?;
     let rel_str = rel.to_string_lossy().to_string();
 
+    if filters.ignore.should_ignore_rel(rel, false) {
+        return Ok(false);
+    }
+    if SyncFilters::is_marked_rel_path(&rel_str) {
+        return Ok(false);
+    }
+
+    let is_priority = filters.priority.should_prioritize_rel(rel, false);
+    if !is_priority {
+        return Ok(false);
+    }
+
+    let size = meta.len();
+    if size > 4 * 1024 * 1024 {
+        // Still kick the sync loop so large priority files can be handled via normal sync.
+        return Ok(true);
+    }
+
     if rel_str.ends_with("syft.pub.yaml") {
         // Ensure ACLs land on the server immediately for permission checks.
         api.upload_blob(&rel_str, path).await?;
         ACL_READY.store(true, Ordering::SeqCst);
     } else if !ACL_READY.load(Ordering::SeqCst) {
         // Skip priority send until ACLs are established to avoid permission rejections.
-        return Ok(());
+        return Ok(false);
     }
 
     let bytes = tokio::fs::read(path).await?;
@@ -402,7 +479,7 @@ async fn send_priority_if_small(
     });
     let text = serde_json::to_string(&payload)?;
     tx.send(text).await.ok();
-    Ok(())
+    Ok(true)
 }
 
 fn deserialize_base64_opt<'de, D>(deserializer: D) -> std::result::Result<Option<Vec<u8>>, D::Error>

@@ -24,3 +24,5 @@ uuid = { version = "1", features = ["v4"] }
 axum = { version = "0.7", features = ["macros", "json"] }
 chrono = { version = "0.4", features = ["serde"] }
 tower = { version = "0.5", features = ["util", "make"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+ignore = "0.4"

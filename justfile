@@ -405,18 +405,31 @@ sbdev-test-cleanup:
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
 [group('devstack')]
-sbdev-test-all:
+sbdev-test-all mode="go":
     #!/bin/bash
     set -eou pipefail
-    REPO_ROOT="$(pwd)"
-    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$REPO_ROOT/.test-sandbox/all-tests}"
-    echo "Running selected performance tests in one persistent stack..."
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+
+    echo "Running all performance tests (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/all-tests}"
     echo "Sandbox: $SANDBOX_DIR"
     rm -rf "$SANDBOX_DIR"
     cd cmd/devstack
     PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 30m -tags integration -run "TestACLRaceCondition|TestWebSocketLatency|TestLargeFileTransfer|TestConcurrentUploads|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestManySmallFiles|TestACKNACKMechanism"
     echo ""
-    echo "✅ All performance tests completed! Sandbox preserved at: $SANDBOX_DIR"
+    echo "✅ All performance tests completed (mode=$MODE)! Sandbox preserved at: $SANDBOX_DIR"
 sbdev-test-acl:
     #!/bin/bash
     set -eou pipefail
@@ -543,48 +556,6 @@ sbdev-test-cleanup-rust:
     echo "Cleaning up test sandbox..."
     cd cmd/devstack
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
-
-[group('devstack')]
-sbdev-test-all:
-    #!/bin/bash
-    set -eou pipefail
-    echo "Running all performance tests..."
-    echo ""
-    just sbdev-test-acl
-    echo ""
-    just sbdev-test-ws
-    echo ""
-    just sbdev-test-large
-    echo ""
-    just sbdev-test-concurrent
-    echo ""
-    just sbdev-test-many
-    echo ""
-    just sbdev-test-perf
-    echo ""
-    echo "✅ All performance tests completed!"
-
-[group('devstack')]
-sbdev-test-all-rust:
-    #!/bin/bash
-    set -eou pipefail
-    echo "Running all performance tests (Rust client)..."
-    root_dir="$(pwd)"
-    rust_bin="$root_dir/rust/target/release/syftbox-rs"
-    cd rust && cargo build --release && cd "$root_dir"
-    SBDEV_CLIENT_BIN="$rust_bin" just sbdev-test-acl
-    echo ""
-    SBDEV_CLIENT_BIN="$rust_bin" just sbdev-test-ws
-    echo ""
-    SBDEV_CLIENT_BIN="$rust_bin" just sbdev-test-large
-    echo ""
-    SBDEV_CLIENT_BIN="$rust_bin" just sbdev-test-concurrent
-    echo ""
-    SBDEV_CLIENT_BIN="$rust_bin" just sbdev-test-many
-    echo ""
-    SBDEV_CLIENT_BIN="$rust_bin" just sbdev-test-perf
-    echo ""
-    echo "✅ All performance tests completed (Rust client)!"
 
 [group('devstack')]
 sbdev-test-ws:

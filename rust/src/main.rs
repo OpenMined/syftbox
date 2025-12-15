@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod control;
 mod events;
+mod filters;
 mod http;
 mod sync;
 
@@ -11,6 +12,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use config::Config;
 use control::ControlPlane;
+use filters::SyncFilters;
 use http::ApiClient;
 
 #[derive(Parser, Debug)]
@@ -60,7 +62,10 @@ async fn run_daemon(cfg: Config) -> Result<()> {
     let control = ControlPlane::start(&client_addr)?;
 
     // TODO: wire websocket events; keep None until implemented.
-    let mut client = client::Client::new(cfg, api, None, Some(control));
+    let datasites_root = cfg.data_dir.join("datasites");
+    let filters = std::sync::Arc::new(SyncFilters::load(&datasites_root)?);
+
+    let mut client = client::Client::new(cfg, api, filters, None, Some(control));
     client.start().await?;
     Ok(())
 }

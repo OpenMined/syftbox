@@ -9,6 +9,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -19,6 +20,7 @@ pub struct ControlPlane {
 struct ControlState {
     token: String,
     uploads: Mutex<HashMap<String, UploadEntry>>,
+    sync_now: Notify,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -81,6 +83,7 @@ impl ControlPlane {
         let state = Arc::new(ControlState {
             token,
             uploads: Mutex::new(HashMap::new()),
+            sync_now: Notify::new(),
         });
 
         let app = Router::new()
@@ -105,6 +108,10 @@ impl ControlPlane {
         });
 
         Ok(ControlPlane { state })
+    }
+
+    pub async fn wait_sync_now(&self) {
+        self.state.sync_now.notified().await;
     }
 
     pub fn record_upload(&self, key: String, size: i64) {
@@ -165,8 +172,12 @@ async fn sync_status(State(state): State<Arc<ControlState>>) -> impl IntoRespons
     Json(SyncStatusResponse { files, summary })
 }
 
-async fn sync_now() -> impl IntoResponse {
-    (StatusCode::OK, "ok")
+async fn sync_now(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    state.sync_now.notify_one();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "status": "sync triggered" })),
+    )
 }
 
 async fn list_uploads(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
@@ -250,6 +261,7 @@ mod tests {
         let state = Arc::new(ControlState {
             token: "secret".into(),
             uploads: Mutex::new(HashMap::new()),
+            sync_now: Notify::new(),
         });
         let cp = ControlPlane {
             state: state.clone(),
