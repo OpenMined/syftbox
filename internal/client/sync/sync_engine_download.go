@@ -84,15 +84,15 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 				res.Metadata.LocalETag = et
 			}
 		}
-			if err := se.journal.Set(res.Metadata); err != nil {
-				slog.Error("sync error", "type", SyncStandard, "op", OpWriteLocal, "status", "Error", "path", res.Path, "error", err)
-				se.syncStatus.SetError(syncRelPath, err)
-				continue
-			}
-			se.syncStatus.SetCompleted(syncRelPath)
-			slog.Info("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Completed", "path", res.Path, "size", humanize.Bytes(uint64(res.Metadata.Size)))
+		if err := se.journal.Set(res.Metadata); err != nil {
+			slog.Error("sync error", "type", SyncStandard, "op", OpWriteLocal, "status", "Error", "path", res.Path, "error", err)
+			se.syncStatus.SetError(syncRelPath, err)
+			continue
 		}
+		se.syncStatus.SetCompleted(syncRelPath)
+		slog.Info("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Completed", "path", res.Path, "size", humanize.Bytes(uint64(res.Metadata.Size)))
 	}
+}
 
 // downloadBatchUnique handles the core logic of downloading a batch of files.
 // It deduplicates files by ETag, fetches presigned URLs in chunks of 100, prioritizes downloads,
