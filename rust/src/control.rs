@@ -24,7 +24,6 @@ struct ControlState {
     uploads: Mutex<HashMap<String, UploadEntry>>,
     sync_now: Notify,
     http_stats: Arc<HttpStats>,
-    started_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,7 +93,6 @@ impl ControlPlane {
             uploads: Mutex::new(HashMap::new()),
             sync_now: Notify::new(),
             http_stats,
-            started_at: Utc::now(),
         });
 
         let app = Router::new()
@@ -214,10 +212,7 @@ impl ControlPlane {
 
     pub fn get_upload_state(&self, id: &str) -> String {
         let uploads = self.state.uploads.lock().unwrap();
-        uploads
-            .get(id)
-            .map(|u| u.state.clone())
-            .unwrap_or_default()
+        uploads.get(id).map(|u| u.state.clone()).unwrap_or_default()
     }
 }
 
@@ -400,12 +395,17 @@ mod tests {
             uploads: Mutex::new(HashMap::new()),
             sync_now: Notify::new(),
             http_stats: stats,
-            started_at: Utc::now(),
         });
         let cp = ControlPlane {
             state: state.clone(),
         };
-        let id = cp.upsert_upload("alice@example.com/public/demo.bin".into(), None, 1024, None, None);
+        let id = cp.upsert_upload(
+            "alice@example.com/public/demo.bin".into(),
+            None,
+            1024,
+            None,
+            None,
+        );
         cp.set_upload_completed(&id, 1024);
         let list_resp = list_uploads(State(state.clone())).await;
         let list_bytes = to_bytes(list_resp.into_response().into_body(), usize::MAX)

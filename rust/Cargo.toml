@@ -26,3 +26,4 @@ chrono = { version = "0.4", features = ["serde"] }
 tower = { version = "0.5", features = ["util", "make"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 ignore = "0.4"
+rmp-serde = "1"

@@ -6,8 +6,10 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
 use crate::control::ControlPlane;
@@ -311,7 +313,9 @@ pub async fn sync_once_with_control(
     // Remote writes (uploads)
     for key in upload_keys {
         if let Some(l) = local.get(&key) {
-            if let Err(err) = upload_blob_smart(api, control.as_ref(), data_dir, &l.key, &l.path).await {
+            if let Err(err) =
+                upload_blob_smart(api, control.as_ref(), data_dir, &l.key, &l.path).await
+            {
                 eprintln!("sync upload error for {}: {err:?}", l.key);
                 continue;
             }
@@ -421,10 +425,63 @@ pub async fn download_keys(
     for blob in presigned.urls {
         let target = datasites_root.join(&blob.key);
         ensure_parent_dirs(&target)?;
-        let bytes = api.http().get(&blob.url).send().await?.bytes().await?;
-        api.stats().on_recv(bytes.len() as i64);
-        write_file_resolving_conflicts(&target, &bytes)?;
+        download_to_path(api, &blob.url, &target).await?;
     }
+    Ok(())
+}
+
+async fn download_to_path(api: &ApiClient, url: &str, target: &Path) -> Result<()> {
+    let resp = api.http().get(url).send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("download failed: {status} {text}");
+    }
+
+    if target.exists() {
+        let meta = fs::metadata(target)?;
+        if meta.is_dir() {
+            fs::remove_dir_all(target)?;
+        }
+    }
+
+    let Some(parent) = target.parent() else {
+        anyhow::bail!("target has no parent: {}", target.display());
+    };
+    let fname = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("download");
+    let tmp = parent.join(format!(".{}.tmp", fname));
+
+    if tmp.exists() {
+        let _ = fs::remove_file(&tmp);
+    }
+
+    let mut f = tokio::fs::File::create(&tmp)
+        .await
+        .with_context(|| format!("create {}", tmp.display()))?;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk?;
+        api.stats().on_recv(bytes.len() as i64);
+        f.write_all(&bytes).await?;
+    }
+    f.flush().await?;
+    drop(f);
+
+    // Replace target atomically-ish (portable): remove existing file first.
+    if target.exists() {
+        let meta = fs::metadata(target)?;
+        if meta.is_dir() {
+            fs::remove_dir_all(target)?;
+        } else {
+            let _ = fs::remove_file(target);
+        }
+    }
+    tokio::fs::rename(&tmp, target)
+        .await
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
     Ok(())
 }
 

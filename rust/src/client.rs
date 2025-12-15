@@ -11,11 +11,19 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use md5::compute as md5_compute;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use serde::Deserialize;
-use serde_json::Value;
-use tokio::{sync::broadcast::Receiver, time::sleep};
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::protocol::Message;
+use tokio::{
+    sync::{broadcast::Receiver, mpsc, oneshot},
+    time::{sleep, timeout},
+};
+use tokio_tungstenite::{
+    connect_async_with_config,
+    tungstenite::{
+        client::IntoClientRequest,
+        http::header::AUTHORIZATION,
+        http::HeaderValue,
+        protocol::{Message, WebSocketConfig},
+    },
+};
 use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -27,8 +35,15 @@ use crate::http::ApiClient;
 use crate::sync::{
     download_keys, ensure_parent_dirs, sync_once_with_control, write_file_resolving_conflicts,
 };
+use crate::wsproto::{
+    Decoded, Encoding, FileWrite, HttpMsg, MsgpackFileWrite, WS_MAX_MESSAGE_BYTES,
+};
 
 static ACL_READY: AtomicBool = AtomicBool::new(false);
+
+type PendingAcks = std::sync::Arc<
+    tokio::sync::Mutex<std::collections::HashMap<String, oneshot::Sender<Result<()>>>>,
+>;
 
 pub struct Client {
     cfg: Config,
@@ -63,6 +78,7 @@ impl Client {
         let data_dir = self.cfg.data_dir.clone();
         let email = self.cfg.email.clone();
         let server_url = self.cfg.server_url.clone();
+        let auth_token = self.cfg.access_token.clone();
         let control = self.control.clone();
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -73,7 +89,7 @@ impl Client {
         ACL_READY.store(true, Ordering::SeqCst);
 
         tokio::select! {
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, auth_token, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
                 if let Err(err) = res {
                     eprintln!("ws listener crashed: {err:?}");
                 }
@@ -138,35 +154,86 @@ async fn run_sync_loop(
     }
 }
 
-#[derive(Deserialize)]
-struct WsMessage {
-    #[serde(rename = "typ")]
-    typ: u16,
-    #[serde(rename = "dat")]
-    dat: Value,
+#[derive(Clone)]
+struct WsHandle {
+    encoding: Encoding,
+    tx: mpsc::Sender<WsOutbound>,
+    pending: PendingAcks,
 }
 
-#[derive(Deserialize)]
-struct FileWrite {
-    #[serde(rename = "pth")]
-    path: String,
-    #[serde(rename = "con", default, deserialize_with = "deserialize_base64_opt")]
-    content: Option<Vec<u8>>,
+struct WsOutbound {
+    message: Message,
+    ack_key: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct HttpMsg {
-    #[serde(rename = "id")]
-    id: String,
-    #[serde(rename = "syft_url")]
-    syft_url: String,
-    #[serde(rename = "body", default, deserialize_with = "deserialize_base64_opt")]
-    body: Option<Vec<u8>>,
+impl WsHandle {
+    async fn send_filewrite_with_ack(
+        &self,
+        rel_path: String,
+        etag: String,
+        size: i64,
+        content: Vec<u8>,
+        ack_timeout: Duration,
+    ) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let msg = match self.encoding {
+            Encoding::Json => {
+                let payload = serde_json::json!({
+                    "id": id.clone(),
+                    "typ": 2,
+                    "dat": {
+                        "pth": rel_path,
+                        "etg": etag,
+                        "len": size,
+                        "con": base64::engine::general_purpose::STANDARD.encode(content),
+                    }
+                });
+                Message::Text(serde_json::to_string(&payload)?)
+            }
+            Encoding::MsgPack => {
+                let fw = MsgpackFileWrite {
+                    path: rel_path,
+                    etag,
+                    length: size,
+                    content: Some(content),
+                };
+                let bin = crate::wsproto::encode_msgpack(&id, 2, &fw)?;
+                Message::Binary(bin)
+            }
+        };
+
+        let (ack_tx, ack_rx) = oneshot::channel::<Result<()>>();
+        self.pending.lock().await.insert(id.clone(), ack_tx);
+        if let Err(err) = self
+            .tx
+            .send(WsOutbound {
+                message: msg,
+                ack_key: Some(id.clone()),
+            })
+            .await
+        {
+            let _ = self.pending.lock().await.remove(&id);
+            return Err(anyhow::anyhow!(err)).context("ws send queue closed");
+        }
+
+        match timeout(ack_timeout, ack_rx).await {
+            Err(_) => {
+                let _ = self.pending.lock().await.remove(&id);
+                anyhow::bail!("ACK timeout after {ack_timeout:?}")
+            }
+            Ok(Err(_)) => {
+                let _ = self.pending.lock().await.remove(&id);
+                anyhow::bail!("ACK channel closed")
+            }
+            Ok(Ok(res)) => res,
+        }
+    }
 }
 
 async fn run_ws_listener(
     api: ApiClient,
     server_url: String,
+    auth_token: Option<String>,
     data_dir: PathBuf,
     email: String,
     filters: std::sync::Arc<SyncFilters>,
@@ -185,27 +252,75 @@ async fn run_ws_listener(
     ws_url.set_path("/api/v1/events");
     ws_url.query_pairs_mut().append_pair("user", &email);
 
-    let (ws_stream, _) = connect_async(ws_url.as_str()).await?;
+    let mut req = ws_url.as_str().into_client_request()?;
+    req.headers_mut().insert(
+        "X-Syft-WS-Encodings",
+        HeaderValue::from_static("msgpack,json"),
+    );
+    if let Some(token) = auth_token {
+        let value = format!("Bearer {token}");
+        req.headers_mut()
+            .insert(AUTHORIZATION, HeaderValue::from_str(&value)?);
+    }
+
+    let config = WebSocketConfig {
+        max_message_size: Some(WS_MAX_MESSAGE_BYTES),
+        max_frame_size: Some(WS_MAX_MESSAGE_BYTES),
+        ..Default::default()
+    };
+
+    let (ws_stream, resp) = connect_async_with_config(req, Some(config), false).await?;
+    let enc_header = resp
+        .headers()
+        .get("X-Syft-WS-Encoding")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let encoding = crate::wsproto::preferred_encoding(enc_header);
     let (mut write, mut read) = ws_stream.split();
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
+    let pending: PendingAcks =
+        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            oneshot::Sender<Result<()>>,
+        >::new()));
+
+    let (tx, mut rx) = mpsc::channel::<WsOutbound>(256);
+    let ws_handle = WsHandle {
+        encoding,
+        tx,
+        pending: pending.clone(),
+    };
+
     let watch_root = datasites_root.clone();
-    let watcher_api = api.clone();
     let watcher_filters = filters.clone();
     let watcher_kick = sync_kick.clone();
+    let watcher_ws = ws_handle.clone();
+    let watcher_email = email.clone();
     tokio::spawn(async move {
-        if let Err(err) =
-            watch_priority_files(&watch_root, watcher_api, watcher_filters, watcher_kick, tx).await
+        if let Err(err) = watch_priority_files(
+            &watch_root,
+            &watcher_email,
+            watcher_filters,
+            watcher_kick,
+            watcher_ws,
+        )
+        .await
         {
             eprintln!("watcher error: {err:?}");
         }
     });
 
     // writer
+    let pending_writer = pending.clone();
     let write_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if let Err(err) = write.send(Message::Text(msg)).await {
+        while let Some(out) = rx.recv().await {
+            if let Err(err) = write.send(out.message).await {
                 eprintln!("ws send error: {err}");
+                if let Some(key) = out.ack_key {
+                    if let Some(sender) = pending_writer.lock().await.remove(&key) {
+                        let _ = sender.send(Err(anyhow::anyhow!("ws send error: {err}")));
+                    }
+                }
                 break;
             }
         }
@@ -215,12 +330,10 @@ async fn run_ws_listener(
     while let Some(msg) = read.next().await {
         match msg {
             Ok(Message::Text(txt)) => {
-                handle_ws_message(&api, &datasites_root, &txt).await;
+                handle_ws_message(&api, &datasites_root, &txt, None, &pending).await;
             }
             Ok(Message::Binary(bin)) => {
-                if let Ok(txt) = String::from_utf8(bin) {
-                    handle_ws_message(&api, &datasites_root, &txt).await;
-                }
+                handle_ws_message(&api, &datasites_root, "", Some(&bin), &pending).await;
             }
             _ => {}
         }
@@ -231,41 +344,67 @@ async fn run_ws_listener(
     Ok(())
 }
 
-async fn handle_ws_message(api: &ApiClient, datasites_root: &Path, raw: &str) {
-    let parsed = match serde_json::from_str::<WsMessage>(raw) {
-        Ok(msg) => msg,
+async fn handle_ws_message(
+    api: &ApiClient,
+    datasites_root: &Path,
+    raw_text: &str,
+    raw_bin: Option<&[u8]>,
+    pending: &std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, oneshot::Sender<Result<()>>>>,
+    >,
+) {
+    let decoded = match raw_bin {
+        Some(bin) => crate::wsproto::decode_binary(bin),
+        None => crate::wsproto::decode_text_json(raw_text),
+    };
+    let decoded = match decoded {
+        Ok(d) => d,
         Err(_) => return,
     };
 
-    match parsed.typ {
-        // MsgFileWrite
-        2 | 7 => {
-            if let Ok(file) = serde_json::from_value::<FileWrite>(parsed.dat.clone()) {
-                if let Some(content) = file.content {
-                    if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
-                        eprintln!("ws write error: {err:?}");
-                    }
-                } else {
-                    let _ = download_keys(api, datasites_root, vec![file.path]).await;
-                }
+    match decoded {
+        Decoded::Ack(ack) => {
+            if let Some(sender) = pending.lock().await.remove(&ack.original_id) {
+                let _ = sender.send(Ok(()));
             }
         }
-        // MsgHttp
-        6 => {
-            if let Ok(http_msg) = serde_json::from_value::<HttpMsg>(parsed.dat.clone()) {
-                if let Some(rel) = syft_url_to_rel_path(&http_msg.syft_url) {
-                    let file_key = format!("{rel}/{}.request", http_msg.id);
-                    if let Some(body) = http_msg.body {
-                        if let Err(err) = write_bytes(datasites_root, &file_key, &body) {
-                            eprintln!("ws http write error: {err:?}");
-                        }
-                    } else {
-                        let _ = download_keys(api, datasites_root, vec![file_key]).await;
-                    }
-                }
+        Decoded::Nack(nack) => {
+            if let Some(sender) = pending.lock().await.remove(&nack.original_id) {
+                let _ = sender.send(Err(anyhow::anyhow!("NACK received: {}", nack.error)));
             }
         }
-        _ => {}
+        Decoded::FileWrite(file) => handle_ws_file_write(api, datasites_root, file).await,
+        Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
+        Decoded::Other { .. } => {}
+    }
+}
+
+async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: FileWrite) {
+    if let Some(content) = file.content {
+        if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
+            eprintln!("ws write error: {err:?}");
+        }
+        return;
+    }
+    if file.length == 0 {
+        if let Err(err) = write_bytes(datasites_root, &file.path, &[]) {
+            eprintln!("ws write error: {err:?}");
+        }
+        return;
+    }
+    let _ = download_keys(api, datasites_root, vec![file.path]).await;
+}
+
+async fn handle_ws_http(api: &ApiClient, datasites_root: &Path, http_msg: HttpMsg) {
+    if let Some(rel) = syft_url_to_rel_path(&http_msg.syft_url) {
+        let file_key = format!("{rel}/{}.request", http_msg.id);
+        if let Some(body) = http_msg.body {
+            if let Err(err) = write_bytes(datasites_root, &file_key, &body) {
+                eprintln!("ws http write error: {err:?}");
+            }
+        } else {
+            let _ = download_keys(api, datasites_root, vec![file_key]).await;
+        }
     }
 }
 
@@ -351,10 +490,10 @@ fn ensure_default_acls(data_dir: &Path, email: &str) -> Result<()> {
 
 async fn watch_priority_files(
     root: &Path,
-    api: ApiClient,
+    my_email: &str,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
-    tx: tokio::sync::mpsc::Sender<String>,
+    ws: WsHandle,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
     let mut watcher = RecommendedWatcher::new(
@@ -365,41 +504,141 @@ async fn watch_priority_files(
     )?;
     watcher.watch(root, RecursiveMode::Recursive)?;
 
-    let debounce = Duration::from_millis(50);
-    let mut pending: HashSet<PathBuf> = HashSet::new();
-
-    while let Some(res) = event_rx.recv().await {
-        ingest_event_paths(&mut pending, res);
-
-        // Debounce/burst buffering: coalesce events for a short window.
-        let timer = tokio::time::sleep(debounce);
-        tokio::pin!(timer);
-        loop {
-            tokio::select! {
-                _ = &mut timer => break,
-                next = event_rx.recv() => {
-                    match next {
-                        None => break,
-                        Some(res) => ingest_event_paths(&mut pending, res),
-                    }
-                }
-            }
+    // Startup backstop: if the harness creates ACLs/requests immediately after spawning the
+    // daemon, we can miss the fs event before the watcher is fully online. Scan the local
+    // datasite once and eagerly publish any priority files (ACL first).
+    let mut initial: Vec<PathBuf> = Vec::new();
+    let my_root = root.join(my_email);
+    if my_root.exists() {
+        for entry in WalkDir::new(&my_root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            initial.push(entry.path().to_path_buf());
         }
-
-        let paths: Vec<PathBuf> = pending.drain().collect();
-        for path in paths {
-            match send_priority_if_small(root, &api, &filters, &path, &tx).await {
+        initial.sort_by_key(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name == "syft.pub.yaml" {
+                0
+            } else {
+                1
+            }
+        });
+        for path in initial {
+            match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
                 Ok(did_trigger) => {
                     if did_trigger {
                         sync_kick.notify_one();
                     }
                 }
-                Err(err) => eprintln!("priority send error: {err:?}"),
+                Err(err) => eprintln!("priority send error (startup scan): {err:?}"),
+            }
+        }
+    }
+
+    let debounce = Duration::from_millis(50);
+    let mut pending: HashSet<PathBuf> = HashSet::new();
+
+    let poll_interval = Duration::from_millis(250);
+    let poll_until = std::time::Instant::now() + Duration::from_secs(10);
+    let mut poll = tokio::time::interval(poll_interval);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut seen_mtime_ns: std::collections::HashMap<PathBuf, i64> =
+        std::collections::HashMap::new();
+
+    loop {
+        tokio::select! {
+            maybe = event_rx.recv() => {
+                let Some(res) = maybe else { break };
+                ingest_event_paths(&mut pending, res);
+
+                // Debounce/burst buffering: coalesce events for a short window.
+                let timer = tokio::time::sleep(debounce);
+                tokio::pin!(timer);
+                loop {
+                    tokio::select! {
+                        _ = &mut timer => break,
+                        next = event_rx.recv() => {
+                            match next {
+                                None => break,
+                                Some(res) => ingest_event_paths(&mut pending, res),
+                            }
+                        }
+                    }
+                }
+
+                let paths: Vec<PathBuf> = pending.drain().collect();
+                for path in paths {
+                    match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
+                        Ok(did_trigger) => {
+                            if did_trigger {
+                                sync_kick.notify_one();
+                            }
+                        }
+                        Err(err) => eprintln!("priority send error: {err:?}"),
+                    }
+                }
+            }
+            _ = poll.tick(), if std::time::Instant::now() < poll_until => {
+                match poll_priority_changes(root, my_email, &filters, &ws, &mut seen_mtime_ns).await {
+                    Ok(did_trigger) => {
+                        if did_trigger {
+                            sync_kick.notify_one();
+                        }
+                    }
+                    Err(err) => eprintln!("priority poll error: {err:?}"),
+                }
             }
         }
     }
 
     Ok(())
+}
+
+async fn poll_priority_changes(
+    root: &Path,
+    my_email: &str,
+    filters: &SyncFilters,
+    ws: &WsHandle,
+    seen_mtime_ns: &mut std::collections::HashMap<PathBuf, i64>,
+) -> Result<bool> {
+    let my_root = root.join(my_email);
+    if !my_root.exists() {
+        return Ok(false);
+    }
+
+    let mut did_trigger = false;
+    for entry in WalkDir::new(&my_root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path().to_path_buf();
+        let meta = match tokio::fs::metadata(&path).await {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let modified = match meta.modified() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let ns = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        let prev = seen_mtime_ns.get(&path).copied().unwrap_or(-1);
+        if prev == ns {
+            continue;
+        }
+        seen_mtime_ns.insert(path.clone(), ns);
+
+        if send_priority_if_small(root, my_email, filters, &path, ws).await? {
+            did_trigger = true;
+        }
+    }
+    Ok(did_trigger)
 }
 
 fn ingest_event_paths(pending: &mut HashSet<PathBuf>, res: notify::Result<notify::Event>) {
@@ -423,10 +662,10 @@ fn ingest_event_paths(pending: &mut HashSet<PathBuf>, res: notify::Result<notify
 
 async fn send_priority_if_small(
     root: &Path,
-    api: &ApiClient,
+    my_email: &str,
     filters: &SyncFilters,
     path: &Path,
-    tx: &tokio::sync::mpsc::Sender<String>,
+    ws: &WsHandle,
 ) -> Result<bool> {
     let meta = tokio::fs::metadata(path).await?;
     if !meta.is_file() {
@@ -439,6 +678,10 @@ async fn send_priority_if_small(
     let rel_str = rel.to_string_lossy().to_string();
 
     if filters.ignore.should_ignore_rel(rel, false) {
+        return Ok(false);
+    }
+    if !rel_str.starts_with(&format!("{my_email}/")) {
+        // Never priority-upload files that belong to other datasites (prevents echo loops).
         return Ok(false);
     }
     if SyncFilters::is_marked_rel_path(&rel_str) {
@@ -456,58 +699,30 @@ async fn send_priority_if_small(
         return Ok(true);
     }
 
-    if rel_str.ends_with("syft.pub.yaml") {
-        // Ensure ACLs land on the server immediately for permission checks.
-        api.upload_blob(&rel_str, path).await?;
-        ACL_READY.store(true, Ordering::SeqCst);
-    } else if !ACL_READY.load(Ordering::SeqCst) {
+    let is_acl = rel_str.ends_with("syft.pub.yaml");
+    if !is_acl && !ACL_READY.load(Ordering::SeqCst) {
         // Skip priority send until ACLs are established to avoid permission rejections.
         return Ok(false);
     }
 
     let bytes = tokio::fs::read(path).await?;
     let etag = format!("{:x}", md5_compute(&bytes));
-    let payload = serde_json::json!({
-        "id": Uuid::new_v4().to_string(),
-        "typ": 2,
-        "dat": {
-            "pth": rel_str,
-            "etg": etag,
-            "len": size as i64,
-            "con": base64::engine::general_purpose::STANDARD.encode(bytes),
-        }
-    });
-    let text = serde_json::to_string(&payload)?;
-    tx.send(text).await.ok();
-    Ok(true)
-}
-
-fn deserialize_base64_opt<'de, D>(deserializer: D) -> std::result::Result<Option<Vec<u8>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt = Option::<serde_json::Value>::deserialize(deserializer)?;
-    match opt {
-        None => Ok(None),
-        Some(serde_json::Value::String(s)) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(s.as_bytes())
-                .map_err(serde::de::Error::custom)?;
-            Ok(Some(bytes))
-        }
-        Some(serde_json::Value::Array(arr)) => {
-            let mut out = Vec::with_capacity(arr.len());
-            for v in arr {
-                let n = v
-                    .as_u64()
-                    .ok_or_else(|| serde::de::Error::custom("expected byte"))?;
-                out.push(n as u8);
+    let ack_timeout = Duration::from_secs(5);
+    match ws
+        .send_filewrite_with_ack(rel_str.clone(), etag, size as i64, bytes, ack_timeout)
+        .await
+    {
+        Ok(()) => {
+            if is_acl {
+                ACL_READY.store(true, Ordering::SeqCst);
             }
-            Ok(Some(out))
+            Ok(true)
         }
-        _ => Err(serde::de::Error::custom(
-            "expected base64 string or array for bytes",
-        )),
+        Err(err) => {
+            eprintln!("priority send ack error: {err:?}");
+            // Fallback: let normal sync handle it ASAP.
+            Ok(true)
+        }
     }
 }
 

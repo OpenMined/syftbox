@@ -7,6 +7,7 @@ mod http;
 mod sync;
 mod telemetry;
 mod uploader;
+mod wsproto;
 
 use std::path::PathBuf;
 

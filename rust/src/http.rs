@@ -229,7 +229,6 @@ pub struct MultipartUploadRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct MultipartUploadResponse {
-    pub key: String,
     #[serde(rename = "uploadId")]
     pub upload_id: String,
     #[serde(rename = "partSize")]
@@ -263,12 +262,4 @@ pub struct AbortMultipartUploadRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UploadResponse {
-    pub key: String,
-    pub etag: String,
-    pub size: i64,
-    #[serde(rename = "lastModified")]
-    pub last_modified: String,
-    #[serde(default)]
-    pub version: String,
-}
+pub struct UploadResponse {}
