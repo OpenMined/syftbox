@@ -261,6 +261,14 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 	}
 	tJournalState := time.Since(tjournalStart)
 
+	// Heal missing journal entries for paths that exist both locally and remotely and appear identical.
+	// This avoids spurious conflicts when the journal is missing per-path entries.
+	if v, ok := os.LookupEnv("SYFTBOX_SYNC_HEAL_JOURNAL_GAPS"); !ok || (strings.TrimSpace(strings.ToLower(v)) != "0" && strings.TrimSpace(strings.ToLower(v)) != "false") {
+		if healed := se.healJournalGaps(localState, remoteState, journalState); healed > 0 {
+			slog.Info("healed missing journal entries", "count", healed)
+		}
+	}
+
 	// reconcile trees
 	tReconcileStart := time.Now()
 	result := se.reconcile(localState, remoteState, journalState)
@@ -420,6 +428,27 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 		if (isSyncing && !remoteChanged) || isIgnored || isEmpty || errorCount >= maxRetryCount {
 			reconcileOps.Ignored[path] = struct{}{}
 			continue
+		}
+
+		// Special case: both local and remote exist but journal is missing.
+		//
+		// When journal entries are missing, the default hasModified(local, nil) and
+		// hasModified(nil, remote) both evaluate to true, which can lead to conflict
+		// markers even for non-owner (mirrored) paths where remote should always win.
+		//
+		// - If content appears identical, treat as unchanged (healJournalGaps will
+		//   normally repopulate the journal).
+		// - If content differs and this is a mirrored path, prefer a download (server-wins)
+		//   and avoid creating conflict markers.
+		if localExists && remoteExists && !journalExists {
+			if !se.hasModified(local, remote) {
+				reconcileOps.UnchangedPaths[path] = struct{}{}
+				continue
+			}
+			if !isOwnerSyncPath(se.workspace.Owner, path) {
+				reconcileOps.LocalWrites[path] = &SyncOperation{Type: OpWriteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
+				continue
+			}
 		}
 
 		localCreated := localExists && !journalExists && !remoteExists
@@ -678,6 +707,46 @@ func (se *SyncEngine) rebuildJournal(localState, remoteState map[SyncPath]*FileM
 			se.journal.Set(local)
 		}
 	}
+}
+
+// healJournalGaps populates missing journal entries for paths that exist both locally and remotely
+// and appear identical. This prevents spurious conflict detection when journal entries are missing
+// (e.g. after missed journal updates, interrupted sync cycles, or other transient issues).
+func (se *SyncEngine) healJournalGaps(localState, remoteState, journalState map[SyncPath]*FileMetadata) int {
+	healed := 0
+	for path, local := range localState {
+		remote, remoteExists := remoteState[path]
+		if !remoteExists {
+			continue
+		}
+		if _, journalExists := journalState[path]; journalExists {
+			continue
+		}
+
+		// Only heal when local and remote appear identical; otherwise leave it to conflict resolution.
+		if se.hasModified(local, remote) {
+			continue
+		}
+
+		localAbs := se.workspace.DatasiteAbsPath(path.String())
+		localETag, err := calculateETag(localAbs)
+		if err != nil {
+			slog.Warn("journal heal: failed to hash local file", "path", path, "error", err)
+			continue
+		}
+
+		meta := *remote
+		meta.Path = path
+		meta.LocalETag = localETag
+
+		if err := se.journal.Set(&meta); err != nil {
+			slog.Warn("journal heal: failed to set journal entry", "path", path, "error", err)
+			continue
+		}
+		journalState[path] = &meta
+		healed++
+	}
+	return healed
 }
 
 func (se *SyncEngine) handleSocketEvents(ctx context.Context) {

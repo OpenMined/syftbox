@@ -989,6 +989,42 @@ sbdev-test-concurrent-rust:
     just sbdev-test-concurrent mode="rust"
 
 [group('devstack')]
+sbdev-test-nested-loop RUNS='10' *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS_RAW="{{RUNS}}"
+    if [[ "$RUNS_RAW" == RUNS=* ]]; then
+        RUNS_RAW="${RUNS_RAW#RUNS=}"
+    fi
+    if ! [[ "$RUNS_RAW" =~ ^[0-9]+$ ]] || [ "$RUNS_RAW" -lt 1 ]; then
+        echo "Usage: just sbdev-test-nested-loop [RUNS] [go test args...]"
+        echo "RUNS must be a positive integer (got: '$RUNS_RAW')"
+        exit 2
+    fi
+    RUNS="$RUNS_RAW"
+    echo "Running all integration tests up to $RUNS times (stop on first failure)..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/all-tests-loop"
+    fi
+    RUN_REGEX="TestACLRaceCondition|TestWebSocketLatency|TestLargeFileTransfer|TestConcurrentUploads|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestManySmallFiles|TestACKNACKMechanism"
+    for ((i = 1; i <= RUNS; i++)); do
+        echo "=== Run $i/$RUNS (sandbox: $SANDBOX_DIR) ==="
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run "^(${RUN_REGEX})$" {{ ARGS }} || {
+            echo "FAILED on run $i (sandbox preserved at $SANDBOX_DIR)"
+            exit 1
+        }
+    done
+    echo "PASSED all $RUNS runs"
+
+[group('devstack')]
 sbdev-test-many:
     #!/bin/bash
     set -eou pipefail

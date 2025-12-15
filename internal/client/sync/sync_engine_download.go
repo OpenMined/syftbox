@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/openmined/syftbox/internal/queue"
@@ -85,7 +84,11 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 				res.Metadata.LocalETag = et
 			}
 		}
-		se.journal.Set(res.Metadata)
+		if err := se.journal.Set(res.Metadata); err != nil {
+			slog.Error("sync error", "type", SyncStandard, "op", OpWriteLocal, "status", "Error", "path", res.Path, "error", err)
+			se.syncStatus.SetError(syncRelPath, err)
+			continue
+		}
 		se.syncStatus.SetCompleted(syncRelPath)
 		slog.Info("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Completed", "path", res.Path, "size", humanize.Bytes(uint64(res.Metadata.Size)))
 	}
@@ -265,31 +268,28 @@ func (se *SyncEngine) getDownloadPriority(meta *FileMetadata) int {
 }
 
 // prepareDownloadTarget ensures the download destination can be written safely.
-// It handles file-vs-directory conflicts by comparing timestamps - the newer
-// version wins, and the older version is preserved as a conflict marker.
+// It handles file-vs-directory type conflicts using a deterministic "directory wins" rule
+// to ensure convergence in a P2P network. When there's a type conflict:
+// - If local file blocks a remote directory: move file to .conflict, create directory
+// - If local directory blocks a remote file: skip download, keep directory (directory wins)
 func (se *SyncEngine) prepareDownloadTarget(dst string, meta *FileMetadata) (skip bool, err error) {
 	parentDir := filepath.Dir(dst)
 
 	// If the parent exists as a file, we have a file-vs-directory conflict.
+	// Directory wins: move the local file to .conflict and create the directory.
+	// This ensures convergence - both peers will end up with the directory structure.
 	if info, statErr := os.Stat(parentDir); statErr == nil {
 		if !info.IsDir() {
-			// Local file blocks directory creation - compare timestamps.
+			// Local file blocks directory creation - directory wins, preserve file as conflict.
 			localMtime := info.ModTime()
 			remoteMtime := meta.LastModified
 
-			if localMtime.After(remoteMtime) {
-				// Local file is newer - skip download, keep local
-				slog.Warn("download parent path is file and newer than remote; skipping download",
-					"path", meta.Path, "localMtime", localMtime, "remoteMtime", remoteMtime)
-				return true, nil
-			}
-
-			// Remote is newer - move local file to conflict and create directory
+			// Move local file to conflict and create directory (directory wins for convergence)
 			conflictPath, markErr := SetMarker(parentDir, Conflict)
 			if markErr != nil {
 				return false, fmt.Errorf("prepare download target: parent is file %s: %w", parentDir, markErr)
 			}
-			slog.Warn("download parent path is file; preserving as conflict and creating directory",
+			slog.Warn("type conflict: local file vs remote directory; directory wins, preserving file as conflict",
 				"path", meta.Path, "conflictPath", conflictPath, "localMtime", localMtime, "remoteMtime", remoteMtime)
 			if err := os.MkdirAll(parentDir, 0o755); err != nil {
 				return false, fmt.Errorf("prepare download target: create directory %s: %w", parentDir, err)
@@ -304,31 +304,16 @@ func (se *SyncEngine) prepareDownloadTarget(dst string, meta *FileMetadata) (ski
 	}
 
 	// If the destination already exists as a directory, we have a directory-vs-file conflict.
+	// Directory wins: skip the file download, keep the local directory.
+	// This ensures convergence - both peers will end up with the directory structure.
 	if info, statErr := os.Stat(dst); statErr == nil && info.IsDir() {
 		localMtime := info.ModTime()
 		remoteMtime := meta.LastModified
 
-		if localMtime.After(remoteMtime) {
-			// Local directory is newer - skip download, keep local directory
-			slog.Warn("download target is directory and newer than remote file; skipping download",
-				"path", meta.Path, "localMtime", localMtime, "remoteMtime", remoteMtime)
-			return true, nil
-		}
-
-		// Remote file is newer - move directory to conflict and proceed with download
-		conflictPath := dst + string(Conflict)
-
-		// If conflict path already exists, add timestamp
-		if _, err := os.Stat(conflictPath); err == nil {
-			timestamp := time.Now().Format("20060102150405")
-			conflictPath = fmt.Sprintf("%s%s.%s", dst, string(Conflict), timestamp)
-		}
-
-		if err := os.Rename(dst, conflictPath); err != nil {
-			return false, fmt.Errorf("prepare download target: move directory to conflict %s -> %s: %w", dst, conflictPath, err)
-		}
-		slog.Warn("download target is directory; preserving as conflict and downloading file",
-			"path", meta.Path, "conflictPath", conflictPath, "localMtime", localMtime, "remoteMtime", remoteMtime)
+		// Directory wins - skip download of the file, keep local directory
+		slog.Warn("type conflict: local directory vs remote file; directory wins, skipping file download",
+			"path", meta.Path, "localMtime", localMtime, "remoteMtime", remoteMtime)
+		return true, nil
 	}
 
 	return false, nil

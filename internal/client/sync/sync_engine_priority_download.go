@@ -61,14 +61,18 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	if et, err := calculateETag(localAbsPath); err == nil {
 		localETag = et
 	}
-	se.journal.Set(&FileMetadata{
+	if err := se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         createMsg.ETag,
 		LocalETag:    localETag,
 		Size:         createMsg.Length,
 		LastModified: time.Now(),
 		Version:      "",
-	})
+	}); err != nil {
+		se.syncStatus.SetError(syncRelPath, err)
+		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", err)
+		return
+	}
 
 	// mark as completed
 	se.syncStatus.SetCompleted(syncRelPath)
