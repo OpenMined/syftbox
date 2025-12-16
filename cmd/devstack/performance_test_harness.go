@@ -349,6 +349,10 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 	if err := writeState(statePath, &state); err != nil {
 		return fmt.Errorf("write state: %w", err)
 	}
+	// Also save to global state so preflight cleanup can find us
+	if err := saveGlobalState(s.root, &state); err != nil {
+		t.Logf("warning: failed to save global state: %v", err)
+	}
 
 	s.server = sState
 	s.clients = clients
@@ -515,6 +519,8 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	if err := writeState(statePath, &state); err != nil {
 		return stackState{}, fmt.Errorf("write state: %w", err)
 	}
+	// Also save to global state so preflight cleanup can find us
+	_ = saveGlobalState(opts.root, &state)
 
 	// Wait for initial sync
 	time.Sleep(2 * time.Second)

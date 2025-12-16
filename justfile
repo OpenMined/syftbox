@@ -1013,11 +1013,27 @@ sbdev-test-nested-loop RUNS='10' *ARGS:
     else
         SANDBOX_DIR="$REPO_ROOT/.test-sandbox/all-tests-loop"
     fi
+    # Default test set for this loop (avoids the longest/most expensive tests).
     RUN_REGEX="TestACLRaceCondition|TestWebSocketLatency|TestLargeFileTransfer|TestConcurrentUploads|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestManySmallFiles|TestACKNACKMechanism"
+
+    # Parse optional go test args. (If the caller uses `just ... -- <args>`, strip the leading `--`.)
+    ARGS=( {{ ARGS }} )
+    if [ "${#ARGS[@]}" -gt 0 ] && [ "${ARGS[0]}" = "--" ]; then
+        ARGS=("${ARGS[@]:1}")
+    fi
+
+    # Kill any orphaned processes from previous runs using this sandbox
+    if pgrep -f "$SANDBOX_DIR" > /dev/null 2>&1; then
+        echo "Killing orphaned processes from previous runs..."
+        pkill -f "$SANDBOX_DIR" 2>/dev/null || true
+        sleep 1
+    fi
     for ((i = 1; i <= RUNS; i++)); do
         echo "=== Run $i/$RUNS (sandbox: $SANDBOX_DIR) ==="
+        pkill -f "$SANDBOX_DIR" 2>/dev/null || true
+        sleep 0.5
         rm -rf "$SANDBOX_DIR"
-        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run "^(${RUN_REGEX})$" {{ ARGS }} || {
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run "^(${RUN_REGEX})$" "${ARGS[@]}" || {
             echo "FAILED on run $i (sandbox preserved at $SANDBOX_DIR)"
             exit 1
         }

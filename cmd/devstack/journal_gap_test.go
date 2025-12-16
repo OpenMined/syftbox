@@ -293,20 +293,93 @@ func deleteJournalEntrySingle(journalPath, pathPattern string) error {
 	return nil
 }
 
-// countJournalEntriesSingle counts entries matching a pattern
-func countJournalEntriesSingle(journalPath, pathPattern string) (int, error) {
-	db, err := sql.Open("sqlite3", journalPath)
+// countJournalEntriesForPaths returns a map of exact path->count for the given paths.
+// Missing paths will be present in the map with count 0.
+func countJournalEntriesForPaths(journalDBPath string, paths []string) (map[string]int, error) {
+	counts := make(map[string]int, len(paths))
+	for _, p := range paths {
+		counts[p] = 0
+	}
+	if len(paths) == 0 {
+		return counts, nil
+	}
+
+	db, err := sql.Open("sqlite3", journalDBPath)
 	if err != nil {
-		return 0, fmt.Errorf("open journal: %w", err)
+		return nil, fmt.Errorf("open journal: %w", err)
 	}
 	defer db.Close()
 
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM sync_journal WHERE path LIKE ?", "%"+pathPattern+"%").Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("count journal entries: %w", err)
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(paths)), ",")
+	args := make([]any, 0, len(paths))
+	for _, p := range paths {
+		args = append(args, p)
 	}
-	return count, nil
+
+	rows, err := db.Query("SELECT path, COUNT(*) FROM sync_journal WHERE path IN ("+placeholders+") GROUP BY path", args...) //nolint:sqlclosecheck
+	if err != nil {
+		return nil, fmt.Errorf("query journal counts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var path string
+		var count int
+		if err := rows.Scan(&path, &count); err != nil {
+			return nil, fmt.Errorf("scan count row: %w", err)
+		}
+		counts[path] = count
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate count rows: %w", err)
+	}
+
+	return counts, nil
+}
+
+func waitForJournalCounts(t *testing.T, journalDBPath string, paths []string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last map[string]int
+
+	for time.Now().Before(deadline) {
+		counts, err := countJournalEntriesForPaths(journalDBPath, paths)
+		if err != nil {
+			t.Fatalf("count journal entries: %v", err)
+		}
+		last = counts
+
+		allMatch := true
+		for _, p := range paths {
+			if counts[p] != want {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for journal counts want=%d got=%v", want, last)
+}
+
+func assertJournalCountsStable(t *testing.T, journalDBPath string, paths []string, want int, duration time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(duration)
+	for time.Now().Before(deadline) {
+		counts, err := countJournalEntriesForPaths(journalDBPath, paths)
+		if err != nil {
+			t.Fatalf("count journal entries: %v", err)
+		}
+		for _, p := range paths {
+			if counts[p] != want {
+				t.Fatalf("expected journal count for %q to stay %d, got %d (all=%v)", p, want, counts[p], counts)
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // listJournalEntries returns all journal entries
@@ -344,16 +417,16 @@ func TestJournalGapHealing(t *testing.T) {
 
 	t.Run("healing_enabled", func(t *testing.T) {
 		t.Setenv("SYFTBOX_SYNC_HEAL_JOURNAL_GAPS", "1")
-		runJournalGapScenario(t, false)
+		runJournalGapScenario(t, true)
 	})
 
-	t.Run("healing_disabled_reproduces_conflicts", func(t *testing.T) {
+	t.Run("healing_disabled_does_not_repopulate_journal", func(t *testing.T) {
 		t.Setenv("SYFTBOX_SYNC_HEAL_JOURNAL_GAPS", "0")
-		runJournalGapScenario(t, true)
+		runJournalGapScenario(t, false)
 	})
 }
 
-func runJournalGapScenario(t *testing.T, expectConflicts bool) {
+func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 	t.Helper()
 
 	h := NewDevstackHarness(t)
@@ -409,40 +482,28 @@ func runJournalGapScenario(t *testing.T, expectConflicts bool) {
 		t.Fatalf("delete journal entries: %v", err)
 	}
 
-	if err := triggerClientSync(t, h.bob); err != nil {
-		t.Fatalf("trigger bob sync: %v", err)
+	// Verify the test setup: entries should be missing before the next sync.
+	counts, err := countJournalEntriesForPaths(syncDBPath, journalPaths)
+	if err != nil {
+		t.Fatalf("count journal entries: %v", err)
 	}
-	time.Sleep(750 * time.Millisecond)
-
-	conflictPaths := make([]string, 0, len(filenames))
-	for _, filename := range filenames {
-		base := strings.TrimSuffix(filename, filepath.Ext(filename))
-		ext := filepath.Ext(filename)
-		conflictName := base + ".conflict" + ext
-		conflictPaths = append(conflictPaths, filepath.Join(
-			h.bob.dataDir,
-			"datasites",
-			h.alice.email,
-			"app_data",
-			appName,
-			"rpc",
-			endpoint,
-			conflictName,
-		))
-	}
-
-	found := make([]string, 0)
-	for _, p := range conflictPaths {
-		if _, err := os.Stat(p); err == nil {
-			found = append(found, p)
+	for _, p := range journalPaths {
+		if counts[p] != 0 {
+			t.Fatalf("expected journal entry for %q to be deleted, got %d (all=%v)", p, counts[p], counts)
 		}
 	}
 
-	if expectConflicts && len(found) == 0 {
-		t.Fatalf("expected conflict markers after deleting journal entries, but found none")
+	if err := triggerClientSync(t, h.bob); err != nil {
+		t.Fatalf("trigger bob sync: %v", err)
 	}
-	if !expectConflicts && len(found) > 0 {
-		t.Fatalf("unexpected conflict markers after deleting journal entries: %v", found)
+
+	// When enabled, we expect the missing journal entries to be repopulated by healJournalGaps().
+	// When disabled, recent reconcile behavior can still avoid spurious conflicts and treat the
+	// path as unchanged without restoring the journal row; so we assert the journal behavior only.
+	if expectJournalHealed {
+		waitForJournalCounts(t, syncDBPath, journalPaths, 1, 5*time.Second)
+	} else {
+		assertJournalCountsStable(t, syncDBPath, journalPaths, 0, 2*time.Second)
 	}
 }
 
@@ -464,7 +525,7 @@ func deleteJournalEntries(t *testing.T, dbPath string, paths []string) error {
 		args = append(args, p)
 	}
 	_, err = conn.Exec("DELETE FROM sync_journal WHERE path IN ("+placeholders+")", args...) //nolint:sqlclosecheck
-	return err //nolint:wrapcheck
+	return err                                                                               //nolint:wrapcheck
 }
 
 func triggerClientSync(t *testing.T, client *ClientHelper) error {
