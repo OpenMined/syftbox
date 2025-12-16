@@ -304,8 +304,8 @@ fn save_config_file(path: &Path, cfg: &Config) -> Result<()> {
 }
 
 #[allow(dead_code)]
-pub fn save_refresh_token(path: &Path, refresh_token: &str) -> Result<()> {
-    let mut cfg = Config::load_with_overrides(path, ConfigOverrides::default())?;
+pub fn save_refresh_token_file_only(path: &Path, refresh_token: &str) -> Result<()> {
+    let mut cfg = Config::load_file_only(path)?;
     cfg.refresh_token = Some(refresh_token.to_string());
     cfg.save()
 }
@@ -741,7 +741,7 @@ mod tests {
         )
         .unwrap();
 
-        save_refresh_token(&cfg_path, "new").unwrap();
+        save_refresh_token_file_only(&cfg_path, "new").unwrap();
 
         let raw = fs::read_to_string(&cfg_path).unwrap();
         assert!(raw.contains("\"refresh_token\":\"new\""));

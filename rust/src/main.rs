@@ -256,6 +256,8 @@ async fn run_daemon(cfg: Config, http_addr: String, http_token: String) -> Resul
         &cfg.server_url,
         &cfg.email,
         cfg.access_token.as_deref(),
+        cfg.refresh_token.as_deref(),
+        cfg.config_path.as_deref(),
         http_stats.clone(),
     )?;
 

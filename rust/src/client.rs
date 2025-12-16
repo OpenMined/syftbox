@@ -72,13 +72,22 @@ impl Client {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        self.wait_for_healthz().await?;
+        let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+        let shutdown_task = shutdown.clone();
+        tokio::spawn(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            shutdown_task.notify_waiters();
+        });
+
+        let healthy = self.wait_for_healthz(shutdown.clone()).await?;
+        if !healthy {
+            return Ok(());
+        }
 
         let api = self.api.clone();
         let data_dir = self.cfg.data_dir.clone();
         let email = self.cfg.email.clone();
         let server_url = self.cfg.server_url.clone();
-        let auth_token = self.cfg.access_token.clone();
         let control = self.control.clone();
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -90,10 +99,10 @@ impl Client {
         ACL_READY.store(true, Ordering::SeqCst);
 
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
+            _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, auth_token, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
@@ -110,17 +119,27 @@ impl Client {
 }
 
 impl Client {
-    async fn wait_for_healthz(&self) -> Result<()> {
+    async fn wait_for_healthz(
+        &self,
+        shutdown: std::sync::Arc<tokio::sync::Notify>,
+    ) -> Result<bool> {
         let mut attempts = 0;
         loop {
-            match self.api.healthz().await {
-                Ok(_) => return Ok(()),
+            let res = tokio::select! {
+                _ = shutdown.notified() => return Ok(false),
+                res = self.api.healthz() => res,
+            };
+            match res {
+                Ok(_) => return Ok(true),
                 Err(err) => {
                     attempts += 1;
                     if attempts >= 60 {
                         return Err(err).context("healthz");
                     }
-                    sleep(Duration::from_millis(500)).await;
+                    tokio::select! {
+                        _ = shutdown.notified() => return Ok(false),
+                        _ = sleep(Duration::from_millis(500)) => {}
+                    }
                 }
             }
         }
@@ -237,7 +256,6 @@ impl WsHandle {
 async fn run_ws_listener(
     api: ApiClient,
     server_url: String,
-    auth_token: Option<String>,
     data_dir: PathBuf,
     email: String,
     filters: std::sync::Arc<SyncFilters>,
@@ -256,97 +274,116 @@ async fn run_ws_listener(
     ws_url.set_path("/api/v1/events");
     ws_url.query_pairs_mut().append_pair("user", &email);
 
-    let mut req = ws_url.as_str().into_client_request()?;
     let supported_encodings = format!("{},{}", Encoding::MsgPack.as_str(), Encoding::Json.as_str());
-    req.headers_mut().insert(
-        "X-Syft-WS-Encodings",
-        HeaderValue::from_str(&supported_encodings)?,
-    );
-    if let Some(token) = auth_token {
-        let value = format!("Bearer {token}");
-        req.headers_mut()
-            .insert(AUTHORIZATION, HeaderValue::from_str(&value)?);
-    }
-
     let config = WebSocketConfig {
         max_message_size: Some(WS_MAX_MESSAGE_BYTES),
         max_frame_size: Some(WS_MAX_MESSAGE_BYTES),
         ..Default::default()
     };
 
-    let (ws_stream, resp) = connect_async_with_config(req, Some(config), false).await?;
-    let enc_header = resp
-        .headers()
-        .get("X-Syft-WS-Encoding")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let encoding = crate::wsproto::preferred_encoding(enc_header);
-    let (mut write, mut read) = ws_stream.split();
+    let mut backoff = Duration::from_millis(250);
+    loop {
+        let _ = api.ensure_access_token().await;
+        let token = api.current_access_token().await;
 
-    let pending: PendingAcks =
-        std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<
-            String,
-            oneshot::Sender<Result<()>>,
-        >::new()));
-
-    let (tx, mut rx) = mpsc::channel::<WsOutbound>(256);
-    let ws_handle = WsHandle {
-        encoding,
-        tx,
-        pending: pending.clone(),
-    };
-
-    let watch_root = datasites_root.clone();
-    let watcher_filters = filters.clone();
-    let watcher_kick = sync_kick.clone();
-    let watcher_ws = ws_handle.clone();
-    let watcher_email = email.clone();
-    tokio::spawn(async move {
-        if let Err(err) = watch_priority_files(
-            &watch_root,
-            &watcher_email,
-            watcher_filters,
-            watcher_kick,
-            watcher_ws,
-        )
-        .await
-        {
-            crate::logging::error(format!("watcher error: {err:?}"));
+        let mut req = ws_url.as_str().into_client_request()?;
+        req.headers_mut().insert(
+            "X-Syft-WS-Encodings",
+            HeaderValue::from_str(&supported_encodings)?,
+        );
+        if let Some(token) = token {
+            let value = format!("Bearer {token}");
+            req.headers_mut()
+                .insert(AUTHORIZATION, HeaderValue::from_str(&value)?);
         }
-    });
 
-    // writer
-    let pending_writer = pending.clone();
-    let write_task = tokio::spawn(async move {
-        while let Some(out) = rx.recv().await {
-            if let Err(err) = write.send(out.message).await {
-                crate::logging::error(format!("ws send error: {err}"));
-                if let Some(key) = out.ack_key {
-                    if let Some(sender) = pending_writer.lock().await.remove(&key) {
-                        let _ = sender.send(Err(anyhow::anyhow!("ws send error: {err}")));
-                    }
+        let connect = connect_async_with_config(req, Some(config), false).await;
+        let (ws_stream, resp) = match connect {
+            Ok(ok) => ok,
+            Err(err) => {
+                crate::logging::error(format!("ws connect error: {err:?}"));
+                if api.has_refresh_token().await {
+                    api.clear_access_token().await;
+                    let _ = api.ensure_access_token().await;
                 }
-                break;
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, Duration::from_secs(5));
+                continue;
             }
-        }
-    });
+        };
+        backoff = Duration::from_millis(250);
 
-    // reader
-    while let Some(msg) = read.next().await {
-        match msg {
-            Ok(Message::Text(txt)) => {
-                handle_ws_message(&api, &datasites_root, &txt, None, &pending).await;
+        let enc_header = resp
+            .headers()
+            .get("X-Syft-WS-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let encoding = crate::wsproto::preferred_encoding(enc_header);
+        let (mut write, mut read) = ws_stream.split();
+
+        let pending: PendingAcks =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::<
+                String,
+                oneshot::Sender<Result<()>>,
+            >::new()));
+
+        let (tx, mut rx) = mpsc::channel::<WsOutbound>(256);
+        let ws_handle = WsHandle {
+            encoding,
+            tx,
+            pending: pending.clone(),
+        };
+
+        let watch_root = datasites_root.clone();
+        let watcher_filters = filters.clone();
+        let watcher_kick = sync_kick.clone();
+        let watcher_ws = ws_handle.clone();
+        let watcher_email = email.clone();
+        let watcher_task = tokio::spawn(async move {
+            if let Err(err) = watch_priority_files(
+                &watch_root,
+                &watcher_email,
+                watcher_filters,
+                watcher_kick,
+                watcher_ws,
+            )
+            .await
+            {
+                crate::logging::error(format!("watcher error: {err:?}"));
             }
-            Ok(Message::Binary(bin)) => {
-                handle_ws_message(&api, &datasites_root, "", Some(&bin), &pending).await;
+        });
+
+        let pending_writer = pending.clone();
+        let write_task = tokio::spawn(async move {
+            while let Some(out) = rx.recv().await {
+                if let Err(err) = write.send(out.message).await {
+                    crate::logging::error(format!("ws send error: {err}"));
+                    if let Some(key) = out.ack_key {
+                        if let Some(sender) = pending_writer.lock().await.remove(&key) {
+                            let _ = sender.send(Err(anyhow::anyhow!("ws send error: {err}")));
+                        }
+                    }
+                    break;
+                }
             }
-            _ => {}
+        });
+
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(Message::Text(txt)) => {
+                    handle_ws_message(&api, &datasites_root, &txt, None, &pending).await;
+                }
+                Ok(Message::Binary(bin)) => {
+                    handle_ws_message(&api, &datasites_root, "", Some(&bin), &pending).await;
+                }
+                _ => {}
+            }
         }
+
+        write_task.abort();
+        watcher_task.abort();
+        crate::logging::info("ws disconnected; reconnecting");
     }
-
-    write_task.abort();
-
-    Ok(())
 }
 
 async fn handle_ws_message(
