@@ -253,9 +253,10 @@ async fn run_ws_listener(
     ws_url.query_pairs_mut().append_pair("user", &email);
 
     let mut req = ws_url.as_str().into_client_request()?;
+    let supported_encodings = format!("{},{}", Encoding::MsgPack.as_str(), Encoding::Json.as_str());
     req.headers_mut().insert(
         "X-Syft-WS-Encodings",
-        HeaderValue::from_static("msgpack,json"),
+        HeaderValue::from_str(&supported_encodings)?,
     );
     if let Some(token) = auth_token {
         let value = format!("Bearer {token}");
@@ -349,9 +350,7 @@ async fn handle_ws_message(
     datasites_root: &Path,
     raw_text: &str,
     raw_bin: Option<&[u8]>,
-    pending: &std::sync::Arc<
-        tokio::sync::Mutex<std::collections::HashMap<String, oneshot::Sender<Result<()>>>>,
-    >,
+    pending: &PendingAcks,
 ) {
     let decoded = match raw_bin {
         Some(bin) => crate::wsproto::decode_binary(bin),
@@ -375,20 +374,47 @@ async fn handle_ws_message(
         }
         Decoded::FileWrite(file) => handle_ws_file_write(api, datasites_root, file).await,
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
-        Decoded::Other { .. } => {}
+        Decoded::Other { id, typ } => drop((id, typ)),
     }
 }
 
 async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: FileWrite) {
     if let Some(content) = file.content {
+        let etag = if file.etag.is_empty() {
+            format!("{:x}", md5_compute(&content))
+        } else {
+            file.etag.clone()
+        };
         if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
             eprintln!("ws write error: {err:?}");
+        } else if let Some(data_dir) = datasites_root.parent() {
+            let _ = crate::sync::journal_upsert_direct(
+                data_dir,
+                &file.path,
+                &etag,
+                file.length,
+                chrono::Utc::now().timestamp(),
+            );
         }
         return;
     }
     if file.length == 0 {
         if let Err(err) = write_bytes(datasites_root, &file.path, &[]) {
             eprintln!("ws write error: {err:?}");
+        } else if let Some(data_dir) = datasites_root.parent() {
+            let etag = if file.etag.is_empty() {
+                // MD5 of empty content (matches server ETag semantics in devstack).
+                format!("{:x}", md5_compute([]))
+            } else {
+                file.etag.clone()
+            };
+            let _ = crate::sync::journal_upsert_direct(
+                data_dir,
+                &file.path,
+                &etag,
+                0,
+                chrono::Utc::now().timestamp(),
+            );
         }
         return;
     }

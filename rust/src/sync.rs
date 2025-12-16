@@ -179,6 +179,33 @@ impl SyncJournal {
     }
 }
 
+pub(crate) fn journal_upsert_direct(
+    data_dir: &Path,
+    key: &str,
+    etag: &str,
+    size: i64,
+    last_modified_epoch: i64,
+) -> Result<()> {
+    let db_path = data_dir.join(".data").join("sync.db");
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .with_context(|| format!("open journal {}", db_path.display()))?;
+    conn.execute_batch(SYNC_JOURNAL_SCHEMA)
+        .context("init sync journal schema")?;
+
+    let last_modified = epoch_to_rfc3339(last_modified_epoch);
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![key, size, etag, "", last_modified],
+    )
+    .context("upsert sync journal row")?;
+
+    Ok(())
+}
+
 fn epoch_to_rfc3339(epoch_seconds: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp(epoch_seconds, 0)
         .unwrap_or_else(chrono::Utc::now)
