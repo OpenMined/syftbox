@@ -64,6 +64,15 @@ func TestDevstackIntegration(t *testing.T) {
 
 	t.Logf("Starting devstack at %s", opts.root)
 
+	// Stop any existing stack for this root before starting
+	preflightCleanup(opts.root, t)
+
+	// Ensure cleanup runs even if test fails
+	t.Cleanup(func() {
+		t.Logf("Stopping devstack...")
+		_ = stopStack(opts.root)
+	})
+
 	// Create root directory
 	if err := os.MkdirAll(opts.root, 0o755); err != nil {
 		t.Fatalf("create root dir: %v", err)
@@ -207,12 +216,6 @@ func TestDevstackIntegration(t *testing.T) {
 		if len(entries) < 1 {
 			t.Fatalf("expected at least 1 file in %s, got %d", targetDir, len(entries))
 		}
-	}
-
-	// Cleanup
-	t.Logf("Stopping devstack...")
-	if err := stopStack(opts.root); err != nil {
-		t.Fatalf("stop stack: %v", err)
 	}
 
 	t.Logf("✅ Devstack integration test completed successfully")

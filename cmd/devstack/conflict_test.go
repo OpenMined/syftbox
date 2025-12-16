@@ -1127,9 +1127,9 @@ func TestJournalLossRecovery(t *testing.T) {
 		if conflictMD5 == v3MD5 {
 			t.Log("   ✅ Conflict file contains Bob's v3 edit (preserved)")
 		} else {
-			t.Logf("   ⚠️  Conflict file has unexpected content (MD5: %s)", conflictMD5)
+			t.Logf("   ℹ️  Conflict file has different content (MD5: %s)", conflictMD5)
 		}
 	} else {
-		t.Log("   ⚠️  No conflict backup file found")
+		t.Log("   ℹ️  No conflict backup file (server-wins resolved without preserving local)")
 	}
 }
