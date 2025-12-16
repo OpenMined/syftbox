@@ -343,7 +343,7 @@ pub async fn sync_once_with_control(
             if let Err(err) =
                 upload_blob_smart(api, control.as_ref(), data_dir, &l.key, &l.path).await
             {
-                eprintln!("sync upload error for {}: {err:?}", l.key);
+                crate::logging::error(format!("sync upload error for {}: {err:?}", l.key));
                 continue;
             }
             journal.set(
@@ -381,7 +381,7 @@ pub async fn sync_once_with_control(
     // Remote deletes
     if !remote_deletes.is_empty() {
         if let Err(err) = api.delete_blobs(&remote_deletes).await {
-            eprintln!("sync remote delete error: {err:?}");
+            crate::logging::error(format!("sync remote delete error: {err:?}"));
         } else {
             for key in remote_deletes {
                 journal.delete(&key);

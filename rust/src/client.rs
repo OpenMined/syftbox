@@ -83,20 +83,24 @@ impl Client {
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
 
-        ensure_default_acls(&data_dir, &email)?;
+        crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
+        let _workspace_lock = crate::workspace::WorkspaceLock::try_lock(&data_dir)?;
         // Ensure any existing ACLs are present on the server before normal sync begins.
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
         ACL_READY.store(true, Ordering::SeqCst);
 
         tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                crate::logging::info("shutdown requested");
+            }
             res = run_ws_listener(api.clone(), server_url, auth_token, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
                 if let Err(err) = res {
-                    eprintln!("ws listener crashed: {err:?}");
+                    crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
             res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
                 if let Err(err) = res {
-                    eprintln!("sync loop crashed: {err:?}");
+                    crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
             }
         }
@@ -136,7 +140,7 @@ async fn run_sync_loop(
         if let Err(err) =
             sync_once_with_control(&api, &data_dir, control.clone(), &filters, &mut journal).await
         {
-            eprintln!("sync error: {err:?}");
+            crate::logging::error(format!("sync error: {err:?}"));
         }
 
         if let Some(cp) = &control {
@@ -307,7 +311,7 @@ async fn run_ws_listener(
         )
         .await
         {
-            eprintln!("watcher error: {err:?}");
+            crate::logging::error(format!("watcher error: {err:?}"));
         }
     });
 
@@ -316,7 +320,7 @@ async fn run_ws_listener(
     let write_task = tokio::spawn(async move {
         while let Some(out) = rx.recv().await {
             if let Err(err) = write.send(out.message).await {
-                eprintln!("ws send error: {err}");
+                crate::logging::error(format!("ws send error: {err}"));
                 if let Some(key) = out.ack_key {
                     if let Some(sender) = pending_writer.lock().await.remove(&key) {
                         let _ = sender.send(Err(anyhow::anyhow!("ws send error: {err}")));
@@ -386,7 +390,7 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
             file.etag.clone()
         };
         if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
-            eprintln!("ws write error: {err:?}");
+            crate::logging::error(format!("ws write error: {err:?}"));
         } else if let Some(data_dir) = datasites_root.parent() {
             let _ = crate::sync::journal_upsert_direct(
                 data_dir,
@@ -400,7 +404,7 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
     }
     if file.length == 0 {
         if let Err(err) = write_bytes(datasites_root, &file.path, &[]) {
-            eprintln!("ws write error: {err:?}");
+            crate::logging::error(format!("ws write error: {err:?}"));
         } else if let Some(data_dir) = datasites_root.parent() {
             let etag = if file.etag.is_empty() {
                 // MD5 of empty content (matches server ETag semantics in devstack).
@@ -426,7 +430,7 @@ async fn handle_ws_http(api: &ApiClient, datasites_root: &Path, http_msg: HttpMs
         let file_key = format!("{rel}/{}.request", http_msg.id);
         if let Some(body) = http_msg.body {
             if let Err(err) = write_bytes(datasites_root, &file_key, &body) {
-                eprintln!("ws http write error: {err:?}");
+                crate::logging::error(format!("ws http write error: {err:?}"));
             }
         } else {
             let _ = download_keys(api, datasites_root, vec![file_key]).await;
@@ -494,26 +498,6 @@ async fn upload_existing_acls(
     Ok(())
 }
 
-fn ensure_default_acls(data_dir: &Path, email: &str) -> Result<()> {
-    let root_dir = data_dir.join("datasites").join(email);
-    let public_dir = root_dir.join("public");
-    fs::create_dir_all(&public_dir)?;
-
-    let root_acl = root_dir.join("syft.pub.yaml");
-    if !root_acl.exists() {
-        let content = "terminal: false\nrules:\n  - pattern: '**'\n    access:\n      admin: []\n      write: []\n      read: []\n";
-        fs::write(&root_acl, content)?;
-    }
-
-    let public_acl = public_dir.join("syft.pub.yaml");
-    if !public_acl.exists() {
-        let content = "terminal: false\nrules:\n  - pattern: '**'\n    access:\n      admin: []\n      write: []\n      read: ['*']\n";
-        fs::write(&public_acl, content)?;
-    }
-
-    Ok(())
-}
-
 async fn watch_priority_files(
     root: &Path,
     my_email: &str,
@@ -558,7 +542,9 @@ async fn watch_priority_files(
                         sync_kick.notify_one();
                     }
                 }
-                Err(err) => eprintln!("priority send error (startup scan): {err:?}"),
+                Err(err) => {
+                    crate::logging::error(format!("priority send error (startup scan): {err:?}"))
+                }
             }
         }
     }
@@ -602,7 +588,7 @@ async fn watch_priority_files(
                                 sync_kick.notify_one();
                             }
                         }
-                        Err(err) => eprintln!("priority send error: {err:?}"),
+                        Err(err) => crate::logging::error(format!("priority send error: {err:?}")),
                     }
                 }
             }
@@ -613,7 +599,7 @@ async fn watch_priority_files(
                             sync_kick.notify_one();
                         }
                     }
-                    Err(err) => eprintln!("priority poll error: {err:?}"),
+                    Err(err) => crate::logging::error(format!("priority poll error: {err:?}")),
                 }
             }
         }
@@ -671,7 +657,7 @@ fn ingest_event_paths(pending: &mut HashSet<PathBuf>, res: notify::Result<notify
     let event = match res {
         Ok(ev) => ev,
         Err(err) => {
-            eprintln!("notify error: {err:?}");
+            crate::logging::error(format!("notify error: {err:?}"));
             return;
         }
     };
@@ -745,7 +731,7 @@ async fn send_priority_if_small(
             Ok(true)
         }
         Err(err) => {
-            eprintln!("priority send ack error: {err:?}");
+            crate::logging::error(format!("priority send ack error: {err:?}"));
             // Fallback: let normal sync handle it ASAP.
             Ok(true)
         }
@@ -768,11 +754,11 @@ mod tests {
     }
 
     #[test]
-    fn ensure_default_acls_written() {
+    fn ensure_workspace_layout_written() {
         let tmp = env::temp_dir().join("syftbox-rs-acl-test");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        ensure_default_acls(&tmp, "alice@example.com").unwrap();
+        crate::workspace::ensure_workspace_layout(&tmp, "alice@example.com").unwrap();
         let root_acl = tmp
             .join("datasites")
             .join("alice@example.com")
@@ -784,5 +770,7 @@ mod tests {
             .join("syft.pub.yaml");
         assert!(root_acl.exists());
         assert!(public_acl.exists());
+        assert!(tmp.join("apps").exists());
+        assert!(tmp.join(".data").exists());
     }
 }

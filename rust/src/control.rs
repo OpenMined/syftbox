@@ -82,11 +82,16 @@ struct UploadListResponse {
 }
 
 impl ControlPlane {
-    pub fn start(addr: &str, http_stats: Arc<HttpStats>) -> anyhow::Result<Self> {
-        let token = Uuid::new_v4().as_simple().to_string();
-        println!("control plane start token={}", token);
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
+    pub fn start(
+        addr: &str,
+        token: Option<String>,
+        http_stats: Arc<HttpStats>,
+    ) -> anyhow::Result<Self> {
+        let token = token.unwrap_or_else(|| Uuid::new_v4().as_simple().to_string());
+        crate::logging::info_kv(
+            "control plane start",
+            &[("addr", addr), ("token", token.as_str())],
+        );
 
         let state = Arc::new(ControlState {
             token,
