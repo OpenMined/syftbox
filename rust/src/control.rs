@@ -1,7 +1,7 @@
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, sync::Mutex};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -22,6 +22,7 @@ pub struct ControlPlane {
 struct ControlState {
     token: String,
     uploads: Mutex<HashMap<String, UploadEntry>>,
+    sync_status: Mutex<HashMap<String, SyncFileStatus>>,
     sync_now: Notify,
     http_stats: Arc<HttpStats>,
 }
@@ -46,17 +47,31 @@ struct UploadEntry {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct SyncFileStatus {
     path: String,
     state: String,
-    #[serde(rename = "conflictState", skip_serializing_if = "Option::is_none")]
-    conflict_state: Option<String>,
+    #[serde(rename = "conflictState")]
+    #[serde(default = "default_conflict_state")]
+    conflict_state: String,
+    #[serde(default)]
     progress: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default)]
+    error: String,
+    #[serde(rename = "errorCount", skip_serializing_if = "is_zero")]
+    #[serde(default)]
+    error_count: i64,
     #[serde(rename = "updatedAt")]
     updated_at: DateTime<Utc>,
+}
+
+fn default_conflict_state() -> String {
+    "none".to_string()
+}
+
+fn is_zero(v: &i64) -> bool {
+    *v == 0
 }
 
 #[derive(Serialize, Deserialize)]
@@ -93,6 +108,7 @@ impl ControlPlane {
         let state = Arc::new(ControlState {
             token,
             uploads: Mutex::new(HashMap::new()),
+            sync_status: Mutex::new(HashMap::new()),
             sync_now: Notify::new(),
             http_stats,
         });
@@ -100,6 +116,7 @@ impl ControlPlane {
         let app = Router::new()
             .route("/v1/status", get(status))
             .route("/v1/sync/status", get(sync_status))
+            .route("/v1/sync/status/file", get(sync_status_file))
             .route("/v1/sync/now", post(sync_now))
             .route("/v1/uploads/", get(list_uploads))
             .route("/v1/uploads/:id", get(get_upload).delete(delete_upload))
@@ -126,6 +143,78 @@ impl ControlPlane {
         self.state.sync_now.notified().await;
     }
 
+    pub fn seed_completed(&self, keys: impl IntoIterator<Item = String>) {
+        let mut sync = self.state.sync_status.lock().unwrap();
+        let now = Utc::now();
+        for key in keys {
+            sync.entry(key.clone()).or_insert(SyncFileStatus {
+                path: key,
+                state: "completed".to_string(),
+                conflict_state: "none".to_string(),
+                progress: 100.0,
+                error: String::new(),
+                error_count: 0,
+                updated_at: now,
+            });
+        }
+    }
+
+    pub fn set_sync_syncing(&self, key: &str, progress: f64) {
+        self.upsert_sync_status(key, "syncing", progress, None, None, false);
+    }
+
+    pub fn set_sync_completed(&self, key: &str) {
+        self.upsert_sync_status(key, "completed", 100.0, None, None, false);
+    }
+
+    pub fn set_sync_conflicted(&self, key: &str) {
+        self.upsert_sync_status(key, "completed", 100.0, Some("conflicted"), None, false);
+    }
+
+    pub fn set_sync_rejected(&self, key: &str) {
+        self.upsert_sync_status(key, "completed", 100.0, Some("rejected"), None, false);
+    }
+
+    pub fn set_sync_error(&self, key: &str, err: &str) {
+        self.upsert_sync_status(key, "error", 0.0, None, Some(err), true);
+    }
+
+    fn upsert_sync_status(
+        &self,
+        key: &str,
+        state: &str,
+        progress: f64,
+        conflict_state: Option<&str>,
+        error: Option<&str>,
+        inc_error_count: bool,
+    ) {
+        let mut sync = self.state.sync_status.lock().unwrap();
+        let now = Utc::now();
+        let entry = sync.entry(key.to_string()).or_insert(SyncFileStatus {
+            path: key.to_string(),
+            state: "pending".to_string(),
+            conflict_state: "none".to_string(),
+            progress: 0.0,
+            error: String::new(),
+            error_count: 0,
+            updated_at: now,
+        });
+        entry.state = state.to_string();
+        entry.progress = progress.clamp(0.0, 100.0);
+        if let Some(cs) = conflict_state {
+            entry.conflict_state = cs.to_string();
+        }
+        if let Some(e) = error {
+            entry.error = e.to_string();
+            if inc_error_count {
+                entry.error_count += 1;
+            }
+        } else {
+            entry.error.clear();
+        }
+        entry.updated_at = now;
+    }
+
     pub fn upsert_upload(
         &self,
         key: String,
@@ -147,11 +236,13 @@ impl ControlPlane {
                 u.part_size = part_size;
                 u.part_count = part_count;
                 u.updated_at = now;
+                self.set_sync_syncing(&u.key, u.progress);
                 return id.clone();
             }
         }
 
         let id = Uuid::new_v4().to_string();
+        let key_clone = key.clone();
         uploads.insert(
             id.clone(),
             UploadEntry {
@@ -170,6 +261,7 @@ impl ControlPlane {
                 updated_at: now,
             },
         );
+        self.set_sync_syncing(&key_clone, 0.0);
         id
     }
 
@@ -185,6 +277,7 @@ impl ControlPlane {
                 }
             }
             u.updated_at = Utc::now();
+            self.set_sync_syncing(&u.key, u.progress);
         }
     }
 
@@ -194,6 +287,18 @@ impl ControlPlane {
             u.state = state;
             u.error = error;
             u.updated_at = Utc::now();
+            let sync_state = match u.state.as_str() {
+                "uploading" => "syncing",
+                "paused" => "pending",
+                "completed" => "completed",
+                "error" => "error",
+                _ => "pending",
+            };
+            if let Some(err) = u.error.as_deref() {
+                self.set_sync_error(&u.key, err);
+            } else {
+                self.upsert_sync_status(&u.key, sync_state, u.progress, None, None, false);
+            }
         }
     }
 
@@ -209,6 +314,7 @@ impl ControlPlane {
             u.uploaded_bytes = uploaded_bytes.max(0);
             u.progress = 100.0;
             u.updated_at = Utc::now();
+            self.set_sync_completed(&u.key);
         }
     }
 
@@ -277,32 +383,44 @@ async fn status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
 }
 
 async fn sync_status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
-    let uploads = state.uploads.lock().unwrap();
-    let mut files = Vec::new();
+    let sync = state.sync_status.lock().unwrap();
+    let mut files: Vec<SyncFileStatus> = sync.values().cloned().collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
     let mut summary = SyncSummary {
         pending: 0,
         syncing: 0,
         completed: 0,
         error: 0,
     };
-    for u in uploads.values() {
-        files.push(SyncFileStatus {
-            path: u.key.clone(),
-            state: u.state.clone(),
-            conflict_state: None,
-            progress: u.progress,
-            error: u.error.clone(),
-            updated_at: u.updated_at,
-        });
-        match u.state.as_str() {
+    for f in &files {
+        match f.state.as_str() {
+            "pending" => summary.pending += 1,
+            "syncing" => summary.syncing += 1,
             "completed" => summary.completed += 1,
             "error" => summary.error += 1,
-            "uploading" => summary.syncing += 1,
-            "paused" => summary.pending += 1,
             _ => summary.pending += 1,
         }
     }
     Json(SyncStatusResponse { files, summary })
+}
+
+#[derive(Deserialize)]
+struct SyncStatusFileQuery {
+    path: String,
+}
+
+async fn sync_status_file(
+    State(state): State<Arc<ControlState>>,
+    Query(q): Query<SyncStatusFileQuery>,
+) -> impl IntoResponse {
+    if q.path.trim().is_empty() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let sync = state.sync_status.lock().unwrap();
+    if let Some(s) = sync.get(&q.path) {
+        return (StatusCode::OK, Json(s.clone())).into_response();
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 async fn sync_now(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
@@ -351,6 +469,11 @@ async fn pause_upload(
     if let Some(u) = uploads.get_mut(&id) {
         u.state = "paused".to_string();
         u.updated_at = Utc::now();
+        let mut sync = state.sync_status.lock().unwrap();
+        if let Some(s) = sync.get_mut(&u.key) {
+            s.state = "pending".to_string();
+            s.updated_at = Utc::now();
+        }
         return StatusCode::OK;
     }
     StatusCode::NOT_FOUND
@@ -364,6 +487,11 @@ async fn resume_upload(
     if let Some(u) = uploads.get_mut(&id) {
         u.state = "uploading".to_string();
         u.updated_at = Utc::now();
+        let mut sync = state.sync_status.lock().unwrap();
+        if let Some(s) = sync.get_mut(&u.key) {
+            s.state = "syncing".to_string();
+            s.updated_at = Utc::now();
+        }
         return StatusCode::OK;
     }
     StatusCode::NOT_FOUND
@@ -379,6 +507,19 @@ async fn restart_upload(
         u.progress = 0.0;
         u.uploaded_bytes = 0;
         u.updated_at = Utc::now();
+        let mut sync = state.sync_status.lock().unwrap();
+        sync.insert(
+            u.key.clone(),
+            SyncFileStatus {
+                path: u.key.clone(),
+                state: "pending".to_string(),
+                conflict_state: "none".to_string(),
+                progress: 0.0,
+                error: String::new(),
+                error_count: 0,
+                updated_at: Utc::now(),
+            },
+        );
         return StatusCode::OK;
     }
     StatusCode::NOT_FOUND
@@ -395,6 +536,7 @@ mod tests {
         let state = Arc::new(ControlState {
             token: "secret".into(),
             uploads: Mutex::new(HashMap::new()),
+            sync_status: Mutex::new(HashMap::new()),
             sync_now: Notify::new(),
             http_stats: stats,
         });

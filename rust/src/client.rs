@@ -99,6 +99,14 @@ impl Client {
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
         ACL_READY.store(true, Ordering::SeqCst);
 
+        // Seed control-plane sync status so clients can query /v1/sync/status immediately after
+        // startup (Go parity). This is best-effort: failures should not prevent the daemon from
+        // starting.
+        if let Some(cp) = self.control.as_ref() {
+            let keys = collect_synced_keys(&data_dir.join("datasites"), &filters);
+            cp.seed_completed(keys);
+        }
+
         tokio::select! {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
@@ -603,6 +611,50 @@ async fn upload_existing_acls(
         }
     }
     Ok(())
+}
+
+fn collect_synced_keys(datasites_root: &Path, filters: &SyncFilters) -> Vec<String> {
+    if !datasites_root.exists() {
+        return Vec::new();
+    }
+
+    let mut keys = Vec::new();
+    for entry in WalkDir::new(datasites_root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path();
+        let rel = match path.strip_prefix(datasites_root) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let key = rel.to_string_lossy().replace('\\', "/");
+        if key.is_empty() {
+            continue;
+        }
+        if !is_synced_key(&key) {
+            continue;
+        }
+        if SyncFilters::is_marked_rel_path(&key) {
+            continue;
+        }
+        if filters.ignore.should_ignore_rel(Path::new(&key), false) {
+            continue;
+        }
+        keys.push(key);
+    }
+
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn is_synced_key(key: &str) -> bool {
+    key.contains("/public/")
+        || key.ends_with("syft.pub.yaml")
+        || key.ends_with(".request")
+        || key.ends_with(".response")
 }
 
 async fn watch_priority_files(

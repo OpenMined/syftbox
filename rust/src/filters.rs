@@ -145,7 +145,10 @@ impl SyncFilters {
 
     pub fn is_marked_rel_path(rel: &str) -> bool {
         // Equivalent to Go IsMarkedPath checks on filenames (and avoids infinite loops).
-        rel.contains(".conflict") || rel.contains(".rejected") || rel.contains("syftrejected")
+        rel.contains(".conflict")
+            || rel.contains(".rejected")
+            || rel.contains("syftrejected")
+            || rel.contains("syftconflict")
     }
 }
 

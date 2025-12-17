@@ -11,6 +11,27 @@ use tokio::sync::Mutex;
 use crate::auth::{refresh_auth_tokens, validate_token, AuthTokenResponse};
 use crate::telemetry::HttpStats;
 
+#[derive(Debug)]
+pub struct HttpStatusError {
+    pub op: String,
+    pub status: StatusCode,
+    pub body: String,
+}
+
+impl std::fmt::Display for HttpStatusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = self.body.trim();
+        match self.status {
+            StatusCode::UNAUTHORIZED => write!(f, "{} unauthorized: {}", self.op, text),
+            StatusCode::FORBIDDEN => write!(f, "{} forbidden: {}", self.op, text),
+            StatusCode::NOT_FOUND => write!(f, "{} not found: {}", self.op, text),
+            _ => write!(f, "{} failed: {} {}", self.op, self.status, text),
+        }
+    }
+}
+
+impl std::error::Error for HttpStatusError {}
+
 #[derive(Clone)]
 pub struct ApiClient {
     base: String,
@@ -470,12 +491,12 @@ async fn map_error<T: for<'de> Deserialize<'de>>(resp: Response, op: &str) -> Re
     }
 
     let text = resp.text().await.unwrap_or_default();
-    match status {
-        StatusCode::UNAUTHORIZED => anyhow::bail!("{op} unauthorized: {text}"),
-        StatusCode::FORBIDDEN => anyhow::bail!("{op} forbidden: {text}"),
-        StatusCode::NOT_FOUND => anyhow::bail!("{op} not found: {text}"),
-        _ => anyhow::bail!("{op} failed: {status} {text}"),
+    Err(HttpStatusError {
+        op: op.to_string(),
+        status,
+        body: text,
     }
+    .into())
 }
 
 async fn map_status(resp: Response, op: &str) -> Result<()> {
@@ -484,12 +505,12 @@ async fn map_status(resp: Response, op: &str) -> Result<()> {
         return Ok(());
     }
     let text = resp.text().await.unwrap_or_default();
-    match status {
-        StatusCode::UNAUTHORIZED => anyhow::bail!("{op} unauthorized: {text}"),
-        StatusCode::FORBIDDEN => anyhow::bail!("{op} forbidden: {text}"),
-        StatusCode::NOT_FOUND => anyhow::bail!("{op} not found: {text}"),
-        _ => anyhow::bail!("{op} failed: {status} {text}"),
+    Err(HttpStatusError {
+        op: op.to_string(),
+        status,
+        body: text,
     }
+    .into())
 }
 
 #[derive(Debug, Deserialize)]

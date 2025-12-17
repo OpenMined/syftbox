@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
+use reqwest::StatusCode;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -14,7 +15,7 @@ use walkdir::WalkDir;
 
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
-use crate::http::{ApiClient, BlobInfo, PresignedParams};
+use crate::http::{ApiClient, BlobInfo, HttpStatusError, PresignedParams};
 use crate::uploader::upload_blob_smart;
 
 #[derive(Debug, Clone)]
@@ -455,6 +456,9 @@ pub async fn sync_once_with_control(
         if let Some(l) = local.get(&key) {
             let abs = datasites_root.join(&l.key);
             let _ = mark_conflict(&abs);
+            if let Some(cp) = control.as_ref() {
+                cp.set_sync_conflicted(&l.key);
+            }
         }
         // Mirror Go behavior: remove journal entry so the remote winner
         // is pulled and avoid treating this as a delete.
@@ -466,9 +470,33 @@ pub async fn sync_once_with_control(
     // Remote writes (uploads)
     for key in upload_keys {
         if let Some(l) = local.get(&key) {
+            if rejected_marker_exists(&l.path) {
+                // Mirror Go behavior: once a rejected marker exists for this base path, do not
+                // keep retrying uploads until resolved; drop journal so the remote winner can be
+                // pulled if present.
+                if let Some(cp) = control.as_ref() {
+                    cp.set_sync_rejected(&l.key);
+                }
+                journal.delete(&key);
+                continue;
+            }
+
             if let Err(err) =
                 upload_blob_smart(api, control.as_ref(), data_dir, &l.key, &l.path).await
             {
+                let forbidden = err
+                    .downcast_ref::<HttpStatusError>()
+                    .is_some_and(|e| e.status == StatusCode::FORBIDDEN);
+                if forbidden {
+                    if is_owner_sync_key(owner_email, &l.key) {
+                        let _ = mark_rejected(&l.path);
+                    }
+                    if let Some(cp) = control.as_ref() {
+                        cp.set_sync_rejected(&l.key);
+                    }
+                    journal.delete(&key);
+                }
+
                 crate::logging::error(format!("sync upload error for {}: {err:?}", l.key));
                 continue;
             }
@@ -489,6 +517,12 @@ pub async fn sync_once_with_control(
     if !download_keys_list.is_empty() {
         download_keys_list.sort();
         download_keys_list.dedup();
+
+        if let Some(cp) = control.as_ref() {
+            for key in &download_keys_list {
+                cp.set_sync_syncing(key, 0.0);
+            }
+        }
 
         let staged = stage_downloads(api, &datasites_root, &download_keys_list).await?;
         for key in &download_keys_list {
@@ -513,6 +547,11 @@ pub async fn sync_once_with_control(
             return Err(err);
         }
         commit_staged_downloads(staged).await?;
+        if let Some(cp) = control.as_ref() {
+            for key in &download_keys_list {
+                cp.set_sync_completed(key);
+            }
+        }
     }
 
     // Remote deletes
@@ -788,7 +827,10 @@ pub(crate) fn write_file_resolving_conflicts(target: &std::path::Path, bytes: &[
 
 fn is_marked_key(key: &str) -> bool {
     // Equivalent to Go IsMarkedPath checks on filenames.
-    key.contains(".conflict") || key.contains(".rejected")
+    key.contains(".conflict")
+        || key.contains(".rejected")
+        || key.contains("syftrejected")
+        || key.contains("syftconflict")
 }
 
 fn is_synced_key(key: &str) -> bool {
@@ -880,6 +922,9 @@ fn mark_conflict(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
+    if is_marked_path(path, ".conflict") {
+        return Ok(());
+    }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let base = if ext.is_empty() {
         path.to_path_buf()
@@ -904,6 +949,97 @@ fn mark_conflict(path: &Path) -> Result<()> {
 
     fs::rename(path, marked)?;
     Ok(())
+}
+
+fn mark_rejected(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if is_marked_path(path, ".rejected") {
+        return Ok(());
+    }
+    if find_existing_marker(path, ".rejected").is_some() {
+        // Mirror Go behavior: avoid unbounded dedupe/rotation loops.
+        // If any rejected marker already exists for this base path, keep the existing one and
+        // delete the new offending file without rotating.
+        let _ = fs::remove_file(path);
+        return Ok(());
+    }
+
+    let marked = as_marked_path(path, ".rejected");
+    fs::rename(path, marked)?;
+    Ok(())
+}
+
+fn rejected_marker_exists(path: &Path) -> bool {
+    find_existing_marker(path, ".rejected").is_some()
+}
+
+fn is_marked_path(path: &Path, marker: &str) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| name.contains(marker))
+}
+
+fn as_marked_path(path: &Path, marker: &str) -> PathBuf {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let base = if ext.is_empty() {
+        path.to_path_buf()
+    } else {
+        PathBuf::from(path.to_string_lossy().trim_end_matches(&format!(".{ext}")))
+    };
+    if ext.is_empty() {
+        PathBuf::from(format!("{}{}", base.to_string_lossy(), marker))
+    } else {
+        PathBuf::from(format!("{}{}.{ext}", base.to_string_lossy(), marker))
+    }
+}
+
+fn find_existing_marker(path: &Path, marker: &str) -> Option<PathBuf> {
+    let dir = path.parent()?;
+    let file_name = path.file_name()?.to_str()?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let base = if ext.is_empty() {
+        file_name.to_string()
+    } else {
+        file_name
+            .strip_suffix(&format!(".{ext}"))
+            .unwrap_or(file_name)
+            .to_string()
+    };
+
+    let unrotated = if ext.is_empty() {
+        format!("{base}{marker}")
+    } else {
+        format!("{base}{marker}.{ext}")
+    };
+    let unrotated_path = dir.join(&unrotated);
+    if unrotated_path.exists() {
+        return Some(unrotated_path);
+    }
+
+    let prefix = format!("{base}{marker}.");
+    let suffix = if ext.is_empty() {
+        String::new()
+    } else {
+        format!(".{ext}")
+    };
+
+    let mut matches: Vec<PathBuf> = Vec::new();
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_str().unwrap_or("");
+        if !name.starts_with(&prefix) || !name.ends_with(&suffix) {
+            continue;
+        }
+        let ts = &name[prefix.len()..name.len().saturating_sub(suffix.len())];
+        if ts.len() == 14 && ts.chars().all(|c| c.is_ascii_digit()) {
+            matches.push(entry.path());
+        }
+    }
+    matches.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+    matches.into_iter().next()
 }
 
 #[cfg(test)]
@@ -969,6 +1105,87 @@ mod tests {
             0,
             0
         ));
+    }
+
+    #[test]
+    fn mark_conflict_does_not_double_mark() {
+        let root = make_temp_dir();
+        let dir = root.join("alice@example.com/public");
+        fs::create_dir_all(&dir).unwrap();
+        let orig = dir.join("file.txt");
+        fs::write(&orig, b"v1").unwrap();
+
+        mark_conflict(&orig).unwrap();
+        let marked = dir.join("file.conflict.txt");
+        assert!(marked.exists());
+
+        // Marking an already-marked file should be a no-op (avoid `.conflict.conflict.*` loops).
+        mark_conflict(&marked).unwrap();
+        assert!(marked.exists());
+        assert!(!dir.join("file.conflict.conflict.txt").exists());
+    }
+
+    #[test]
+    fn mark_conflict_rotates_existing_marker() {
+        let root = make_temp_dir();
+        let dir = root.join("alice@example.com/public");
+        fs::create_dir_all(&dir).unwrap();
+        let orig = dir.join("file.txt");
+        fs::write(&orig, b"v1").unwrap();
+        mark_conflict(&orig).unwrap();
+
+        // Create another file at the original path and mark again to force rotation.
+        fs::write(&orig, b"v2").unwrap();
+        mark_conflict(&orig).unwrap();
+
+        let marked = dir.join("file.conflict.txt");
+        assert!(marked.exists());
+
+        // Expect a rotated prior marker with a timestamp.
+        let mut found_rotated = false;
+        for entry in fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("file.conflict.") && name.ends_with(".txt") {
+                let ts = name
+                    .trim_start_matches("file.conflict.")
+                    .trim_end_matches(".txt");
+                if ts.len() == 14 && ts.chars().all(|c| c.is_ascii_digit()) {
+                    found_rotated = true;
+                    break;
+                }
+            }
+        }
+        assert!(found_rotated);
+    }
+
+    #[test]
+    fn mark_rejected_dedupes_without_rotation() {
+        let root = make_temp_dir();
+        let dir = root.join("alice@example.com/public");
+        fs::create_dir_all(&dir).unwrap();
+        let orig = dir.join("file.txt");
+        fs::write(&orig, b"v1").unwrap();
+
+        mark_rejected(&orig).unwrap();
+        let marked = dir.join("file.rejected.txt");
+        assert!(marked.exists());
+
+        // Create another file at the original path; marking should delete it and keep the marker.
+        fs::write(&orig, b"v2").unwrap();
+        mark_rejected(&orig).unwrap();
+        assert!(!orig.exists());
+        assert!(marked.exists());
+
+        // No rotation should have occurred for rejected markers.
+        let mut rejected_count = 0;
+        for entry in fs::read_dir(&dir).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.contains(".rejected") {
+                rejected_count += 1;
+                assert!(!name.starts_with("file.rejected.") || name == "file.rejected.txt");
+            }
+        }
+        assert_eq!(rejected_count, 1);
     }
 
     fn make_temp_dir() -> PathBuf {
