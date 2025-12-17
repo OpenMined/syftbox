@@ -21,6 +21,7 @@ use tokio_tungstenite::{
         client::IntoClientRequest,
         http::header::AUTHORIZATION,
         http::HeaderValue,
+        http::StatusCode as HttpStatusCode,
         protocol::{Message, WebSocketConfig},
     },
 };
@@ -102,7 +103,7 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), shutdown.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
@@ -149,15 +150,22 @@ impl Client {
 async fn run_sync_loop(
     api: ApiClient,
     data_dir: PathBuf,
-    _email: String,
+    email: String,
     control: Option<ControlPlane>,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
     loop {
-        if let Err(err) =
-            sync_once_with_control(&api, &data_dir, control.clone(), &filters, &mut journal).await
+        if let Err(err) = sync_once_with_control(
+            &api,
+            &data_dir,
+            &email,
+            control.clone(),
+            &filters,
+            &mut journal,
+        )
+        .await
         {
             crate::logging::error(format!("sync error: {err:?}"));
         }
@@ -218,7 +226,7 @@ impl WsHandle {
                     path: rel_path,
                     etag,
                     length: size,
-                    content: Some(content),
+                    content: Some(content.into()),
                 };
                 let bin = crate::wsproto::encode_msgpack(&id, 2, &fw)?;
                 Message::Binary(bin)
@@ -260,6 +268,7 @@ async fn run_ws_listener(
     email: String,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let datasites_root = data_dir.join("datasites");
     if !datasites_root.exists() {
@@ -297,16 +306,30 @@ async fn run_ws_listener(
                 .insert(AUTHORIZATION, HeaderValue::from_str(&value)?);
         }
 
-        let connect = connect_async_with_config(req, Some(config), false).await;
+        let connect = tokio::select! {
+            _ = shutdown.notified() => return Ok(()),
+            res = connect_async_with_config(req, Some(config), false) => res,
+        };
         let (ws_stream, resp) = match connect {
             Ok(ok) => ok,
             Err(err) => {
                 crate::logging::error(format!("ws connect error: {err:?}"));
-                if api.has_refresh_token().await {
+
+                let auth_failed = matches!(
+                    err,
+                    tokio_tungstenite::tungstenite::Error::Http(ref resp)
+                        if resp.status() == HttpStatusCode::UNAUTHORIZED
+                            || resp.status() == HttpStatusCode::FORBIDDEN
+                );
+                if auth_failed && api.has_refresh_token().await {
                     api.clear_access_token().await;
                     let _ = api.ensure_access_token().await;
                 }
-                tokio::time::sleep(backoff).await;
+
+                tokio::select! {
+                    _ = shutdown.notified() => return Ok(()),
+                    _ = tokio::time::sleep(backoff) => {}
+                }
                 backoff = std::cmp::min(backoff * 2, Duration::from_secs(5));
                 continue;
             }
@@ -339,6 +362,7 @@ async fn run_ws_listener(
         let watcher_kick = sync_kick.clone();
         let watcher_ws = ws_handle.clone();
         let watcher_email = email.clone();
+        let watcher_shutdown = shutdown.clone();
         let watcher_task = tokio::spawn(async move {
             if let Err(err) = watch_priority_files(
                 &watch_root,
@@ -346,6 +370,7 @@ async fn run_ws_listener(
                 watcher_filters,
                 watcher_kick,
                 watcher_ws,
+                watcher_shutdown,
             )
             .await
             {
@@ -354,8 +379,14 @@ async fn run_ws_listener(
         });
 
         let pending_writer = pending.clone();
+        let write_shutdown = shutdown.clone();
         let write_task = tokio::spawn(async move {
-            while let Some(out) = rx.recv().await {
+            loop {
+                let out = tokio::select! {
+                    _ = write_shutdown.notified() => break,
+                    out = rx.recv() => out,
+                };
+                let Some(out) = out else { break };
                 if let Err(err) = write.send(out.message).await {
                     crate::logging::error(format!("ws send error: {err}"));
                     if let Some(key) = out.ack_key {
@@ -368,7 +399,16 @@ async fn run_ws_listener(
             }
         });
 
-        while let Some(msg) = read.next().await {
+        let mut shutting_down = false;
+        loop {
+            let msg = tokio::select! {
+                _ = shutdown.notified() => {
+                    shutting_down = true;
+                    break;
+                },
+                msg = read.next() => msg,
+            };
+            let Some(msg) = msg else { break };
             match msg {
                 Ok(Message::Text(txt)) => {
                     handle_ws_message(&api, &datasites_root, &txt, None, &pending).await;
@@ -382,6 +422,15 @@ async fn run_ws_listener(
 
         write_task.abort();
         watcher_task.abort();
+
+        let mut pending = pending.lock().await;
+        for (_, sender) in pending.drain() {
+            let _ = sender.send(Err(anyhow::anyhow!("ws disconnected")));
+        }
+
+        if shutting_down {
+            return Ok(());
+        }
         crate::logging::info("ws disconnected; reconnecting");
     }
 }
@@ -421,6 +470,13 @@ async fn handle_ws_message(
 
 async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: FileWrite) {
     if let Some(content) = file.content {
+        // Go treats empty content as a push notification (no embedded bytes) when length>0.
+        // Avoid writing empty files; download the blob instead.
+        if content.is_empty() && file.length > 0 {
+            let _ = download_keys(api, datasites_root, vec![file.path]).await;
+            return;
+        }
+
         let etag = if file.etag.is_empty() {
             format!("{:x}", md5_compute(&content))
         } else {
@@ -428,38 +484,52 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         };
         if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
             crate::logging::error(format!("ws write error: {err:?}"));
-        } else if let Some(data_dir) = datasites_root.parent() {
-            let _ = crate::sync::journal_upsert_direct(
-                data_dir,
-                &file.path,
-                &etag,
-                file.length,
-                chrono::Utc::now().timestamp(),
-            );
+        } else if ws_should_update_journal() {
+            if let Some(data_dir) = datasites_root.parent() {
+                let _ = crate::sync::journal_upsert_direct(
+                    data_dir,
+                    &file.path,
+                    &etag,
+                    file.length,
+                    chrono::Utc::now().timestamp(),
+                );
+            }
         }
         return;
     }
     if file.length == 0 {
         if let Err(err) = write_bytes(datasites_root, &file.path, &[]) {
             crate::logging::error(format!("ws write error: {err:?}"));
-        } else if let Some(data_dir) = datasites_root.parent() {
-            let etag = if file.etag.is_empty() {
-                // MD5 of empty content (matches server ETag semantics in devstack).
-                format!("{:x}", md5_compute([]))
-            } else {
-                file.etag.clone()
-            };
-            let _ = crate::sync::journal_upsert_direct(
-                data_dir,
-                &file.path,
-                &etag,
-                0,
-                chrono::Utc::now().timestamp(),
-            );
+        } else if ws_should_update_journal() {
+            if let Some(data_dir) = datasites_root.parent() {
+                let etag = if file.etag.is_empty() {
+                    // MD5 of empty content (matches server ETag semantics in devstack).
+                    format!("{:x}", md5_compute([]))
+                } else {
+                    file.etag.clone()
+                };
+                let _ = crate::sync::journal_upsert_direct(
+                    data_dir,
+                    &file.path,
+                    &etag,
+                    0,
+                    chrono::Utc::now().timestamp(),
+                );
+            }
         }
         return;
     }
     let _ = download_keys(api, datasites_root, vec![file.path]).await;
+}
+
+fn ws_should_update_journal() -> bool {
+    match std::env::var("SYFTBOX_SYNC_HEAL_JOURNAL_GAPS") {
+        Ok(raw) => {
+            let v = raw.trim().to_lowercase();
+            v != "0" && v != "false"
+        }
+        Err(_) => true,
+    }
 }
 
 async fn handle_ws_http(api: &ApiClient, datasites_root: &Path, http_msg: HttpMsg) {
@@ -541,6 +611,7 @@ async fn watch_priority_files(
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
     ws: WsHandle,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(64);
     let mut watcher = RecommendedWatcher::new(
@@ -598,6 +669,7 @@ async fn watch_priority_files(
 
     loop {
         tokio::select! {
+            _ = shutdown.notified() => break,
             maybe = event_rx.recv() => {
                 let Some(res) = maybe else { break };
                 ingest_event_paths(&mut pending, res);
@@ -607,6 +679,7 @@ async fn watch_priority_files(
                 tokio::pin!(timer);
                 loop {
                     tokio::select! {
+                        _ = shutdown.notified() => return Ok(()),
                         _ = &mut timer => break,
                         next = event_rx.recv() => {
                             match next {
@@ -617,7 +690,18 @@ async fn watch_priority_files(
                     }
                 }
 
-                let paths: Vec<PathBuf> = pending.drain().collect();
+                let mut paths: Vec<PathBuf> = pending.drain().collect();
+                paths.sort_by(|a, b| {
+                    let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    let a_is_acl = a_name == "syft.pub.yaml";
+                    let b_is_acl = b_name == "syft.pub.yaml";
+                    match (a_is_acl, b_is_acl) {
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        _ => a.to_string_lossy().cmp(&b.to_string_lossy()),
+                    }
+                });
                 for path in paths {
                     match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
                         Ok(did_trigger) => {
@@ -658,12 +742,25 @@ async fn poll_priority_changes(
     }
 
     let mut did_trigger = false;
-    for entry in WalkDir::new(&my_root)
+    let mut candidates: Vec<PathBuf> = WalkDir::new(&my_root)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path().to_path_buf();
+        .map(|e| e.path().to_path_buf())
+        .collect();
+    candidates.sort_by(|a, b| {
+        let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let a_is_acl = a_name == "syft.pub.yaml";
+        let b_is_acl = b_name == "syft.pub.yaml";
+        match (a_is_acl, b_is_acl) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.to_string_lossy().cmp(&b.to_string_lossy()),
+        }
+    });
+
+    for path in candidates {
         let meta = match tokio::fs::metadata(&path).await {
             Ok(m) => m,
             Err(_) => continue,

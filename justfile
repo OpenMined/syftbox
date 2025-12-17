@@ -462,7 +462,7 @@ sbdev-test-all mode="go":
     echo "Sandbox: $SANDBOX_DIR"
     rm -rf "$SANDBOX_DIR"
     cd cmd/devstack
-    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "TestACKNACKMechanism|TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestJournalGapSpuriousConflict|TestJournalGapHealing|TestFileModificationDuringSync|TestWebSocketLatency|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestLargeFileTransfer|TestConcurrentUploads|TestManySmallFiles|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "TestACKNACKMechanism|TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestWebSocketReconnectAfterServerRestart|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestJournalGapSpuriousConflict|TestJournalGapHealing|TestFileModificationDuringSync|TestWebSocketLatency|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestLargeFileTransfer|TestConcurrentUploads|TestManySmallFiles|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress"
     echo ""
     echo "✅ Devstack integration suite completed (mode=$MODE)! Sandbox preserved at: $SANDBOX_DIR"
 sbdev-test-acl:

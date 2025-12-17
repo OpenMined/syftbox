@@ -190,9 +190,14 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 	if err := buildBinary(s.serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(s.clientBin, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+
+	// Build (or resolve) the default Go client binary; per-email overrides and SBDEV_CLIENT_MODE
+	// are applied when starting each client so persistent mode works for rust/mixed too.
+	clientBin, err := resolveClientBinary(s.binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags)
+	if err != nil {
 		return fmt.Errorf("build client: %w", err)
 	}
+	s.clientBin = clientBin
 
 	if s.minio.PID == 0 {
 		// Allocate ports for MinIO; keep it running across tests.
@@ -327,9 +332,14 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 
 	t.Logf("Starting clients for test...")
 	var clients []clientState
-	for _, email := range s.emails {
+	for i, email := range s.emails {
 		port, _ := getFreePort()
-		cState, err := startClient(s.clientBin, s.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, i, s.clientBin)
+		if err != nil {
+			_ = killProcess(sState.PID)
+			return fmt.Errorf("resolve client bin %s: %w", email, err)
+		}
+		cState, err := startClient(binForEmail, s.root, email, serverURL, port)
 		if err != nil {
 			_ = killProcess(sState.PID)
 			return fmt.Errorf("start client %s: %w", email, err)

@@ -60,6 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_journal_last_modified ON sync_journal(last_modifi
 pub(crate) struct SyncJournal {
     db_path: PathBuf,
     state: JournalState,
+    dirty: HashSet<String>,
+    deleted: HashSet<String>,
 }
 
 impl SyncJournal {
@@ -98,10 +100,61 @@ impl SyncJournal {
             );
         }
 
-        Ok(SyncJournal { db_path, state })
+        Ok(SyncJournal {
+            db_path,
+            state,
+            dirty: HashSet::new(),
+            deleted: HashSet::new(),
+        })
     }
 
-    fn save(&self) -> Result<()> {
+    fn refresh_from_disk(&mut self) -> Result<()> {
+        if let Some(parent) = self.db_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let conn = rusqlite::Connection::open(&self.db_path)
+            .with_context(|| format!("open journal {}", self.db_path.display()))?;
+        conn.execute_batch(SYNC_JOURNAL_SCHEMA)
+            .context("init sync journal schema")?;
+
+        let mut next = HashMap::new();
+        let mut stmt =
+            conn.prepare("SELECT path, size, etag, version, last_modified FROM sync_journal")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
+            let size: i64 = row.get(1)?;
+            let etag: String = row.get(2)?;
+            let version: String = row.get(3)?;
+            let last_modified: String = row.get(4)?;
+
+            let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
+            let completed_at = self
+                .state
+                .files
+                .get(&path)
+                .map(|m| m.completed_at)
+                .unwrap_or(0);
+            next.insert(
+                path,
+                FileMetadata {
+                    etag,
+                    size,
+                    last_modified: lm_epoch,
+                    version,
+                    completed_at,
+                },
+            );
+        }
+
+        self.state.files = next;
+        self.dirty.clear();
+        self.deleted.clear();
+        Ok(())
+    }
+
+    fn save(&mut self) -> Result<()> {
         if let Some(parent) = self.db_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -112,27 +165,34 @@ impl SyncJournal {
             .context("init sync journal schema")?;
 
         let tx = conn.transaction().context("begin sync journal tx")?;
-        tx.execute("DELETE FROM sync_journal", [])
-            .context("truncate sync journal")?;
+        {
+            let mut delete_stmt = tx.prepare("DELETE FROM sync_journal WHERE path = ?1")?;
+            for key in &self.deleted {
+                delete_stmt.execute(params![key])?;
+            }
+        }
 
         {
-            let mut stmt = tx.prepare(
+            let mut upsert_stmt = tx.prepare(
                 "INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5)",
             )?;
-
-            for (path, meta) in &self.state.files {
-                let last_modified = epoch_to_rfc3339(meta.last_modified);
-                stmt.execute(params![
-                    path,
-                    meta.size,
-                    meta.etag,
-                    meta.version,
-                    last_modified
-                ])?;
+            for key in &self.dirty {
+                if let Some(meta) = self.state.files.get(key) {
+                    let last_modified = epoch_to_rfc3339(meta.last_modified);
+                    upsert_stmt.execute(params![
+                        key,
+                        meta.size,
+                        meta.etag,
+                        meta.version,
+                        last_modified
+                    ])?;
+                }
             }
         }
 
         tx.commit().context("commit sync journal tx")?;
+        self.dirty.clear();
+        self.deleted.clear();
         Ok(())
     }
 
@@ -141,11 +201,21 @@ impl SyncJournal {
     }
 
     fn set(&mut self, key: String, meta: FileMetadata) {
-        self.state.files.insert(key, meta);
+        if std::env::var("SYFTBOX_DEBUG_JOURNAL").is_ok() && key.contains("jg-file-") {
+            crate::logging::info(format!(
+                "debug journal set key={} etag={} size={}",
+                key, meta.etag, meta.size
+            ));
+        }
+        self.state.files.insert(key.clone(), meta);
+        self.deleted.remove(&key);
+        self.dirty.insert(key);
     }
 
     fn delete(&mut self, key: &str) {
         self.state.files.remove(key);
+        self.dirty.remove(key);
+        self.deleted.insert(key.to_string());
     }
 
     fn count(&self) -> usize {
@@ -186,6 +256,12 @@ pub(crate) fn journal_upsert_direct(
     size: i64,
     last_modified_epoch: i64,
 ) -> Result<()> {
+    if std::env::var("SYFTBOX_DEBUG_JOURNAL").is_ok() && key.contains("jg-file-") {
+        crate::logging::info(format!(
+            "debug journal upsert key={key} etag={} size={size}",
+            etag
+        ));
+    }
     let db_path = data_dir.join(".data").join("sync.db");
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)?;
@@ -220,15 +296,22 @@ fn parse_rfc3339_epoch(raw: &str) -> Option<i64> {
 pub async fn sync_once_with_control(
     api: &ApiClient,
     data_dir: &Path,
+    owner_email: &str,
     control: Option<ControlPlane>,
     filters: &SyncFilters,
     journal: &mut SyncJournal,
 ) -> Result<()> {
+    journal
+        .refresh_from_disk()
+        .context("refresh sync journal")?;
+
     let datasites_root = data_dir.join("datasites");
     let local = scan_local(&datasites_root, filters)?;
     let remote = scan_remote(api, filters).await?;
 
     journal.rebuild_if_empty(&local, &remote);
+
+    let heal_journal_gaps = journal_gap_healing_enabled();
 
     let mut all_keys: HashSet<String> = HashSet::new();
     all_keys.extend(local.keys().cloned());
@@ -258,6 +341,49 @@ pub async fn sync_once_with_control(
         let local_exists = local_meta.is_some();
         let remote_exists = remote_meta.is_some();
         let journal_exists = journal_meta.is_some();
+
+        // Special case: both local and remote exist but journal is missing.
+        //
+        // When journal entries are missing, the default baseline comparison can treat both sides as
+        // modified, which leads to spurious conflict markers for mirrored (non-owner) paths.
+        //
+        // - If content appears identical, treat as unchanged (and optionally heal the journal).
+        // - If content differs and this is a mirrored path, prefer a download (server-wins) and
+        //   avoid creating conflict markers.
+        if local_exists && remote_exists && !journal_exists {
+            let l = local_meta.unwrap();
+            let r = remote_meta.unwrap();
+            let is_owner = is_owner_sync_key(owner_email, &key);
+            let differs = content_differs_for_key(
+                is_owner,
+                &l.etag,
+                l.size,
+                &r.etag,
+                r.size,
+                l.last_modified,
+                r.last_modified.timestamp(),
+            );
+            if !differs {
+                if heal_journal_gaps {
+                    journal.set(
+                        key.clone(),
+                        FileMetadata {
+                            etag: r.etag.clone(),
+                            size: r.size,
+                            last_modified: r.last_modified.timestamp(),
+                            version: String::new(),
+                            completed_at: chrono::Utc::now().timestamp(),
+                        },
+                    );
+                }
+                continue;
+            }
+
+            if !is_owner {
+                download_keys_list.push(key);
+                continue;
+            }
+        }
 
         // Recent-complete grace window to avoid spurious conflicts on rapid overwrites.
         if let Some(jm) = journal_meta {
@@ -361,9 +487,12 @@ pub async fn sync_once_with_control(
 
     // Local writes (downloads)
     if !download_keys_list.is_empty() {
-        download_keys(api, &datasites_root, download_keys_list.clone()).await?;
-        for key in download_keys_list {
-            if let Some(r) = remote.get(&key) {
+        download_keys_list.sort();
+        download_keys_list.dedup();
+
+        let staged = stage_downloads(api, &datasites_root, &download_keys_list).await?;
+        for key in &download_keys_list {
+            if let Some(r) = remote.get(key) {
                 journal.set(
                     key.clone(),
                     FileMetadata {
@@ -376,6 +505,14 @@ pub async fn sync_once_with_control(
                 );
             }
         }
+
+        if let Err(err) = journal.save() {
+            for item in staged {
+                let _ = fs::remove_file(&item.tmp);
+            }
+            return Err(err);
+        }
+        commit_staged_downloads(staged).await?;
     }
 
     // Remote deletes
@@ -408,6 +545,71 @@ pub async fn sync_once_with_control(
     Ok(())
 }
 
+fn journal_gap_healing_enabled() -> bool {
+    match std::env::var("SYFTBOX_SYNC_HEAL_JOURNAL_GAPS") {
+        Ok(raw) => {
+            let v = raw.trim().to_lowercase();
+            v != "0" && v != "false"
+        }
+        Err(_) => true,
+    }
+}
+
+fn is_owner_sync_key(owner_email: &str, key: &str) -> bool {
+    key.strip_prefix(owner_email)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn content_differs_for_key(
+    is_owner: bool,
+    etag_a: &str,
+    size_a: i64,
+    etag_b: &str,
+    size_b: i64,
+    lm_a: i64,
+    lm_b: i64,
+) -> bool {
+    if size_a != size_b {
+        return true;
+    }
+
+    let a = normalize_etag(etag_a);
+    let b = normalize_etag(etag_b);
+    if !a.is_empty() && !b.is_empty() {
+        if a == b {
+            return false;
+        }
+        if !is_owner && is_mixed_multipart_etag_pair(&a, &b) {
+            // For mirrored paths, tolerate mixed multipart-vs-plain ETags when sizes match to
+            // avoid reupload/download loops.
+            return false;
+        }
+        return true;
+    }
+
+    // Fallback: if ETags aren't usable, compare last-modified timestamps.
+    lm_a != lm_b
+}
+
+fn normalize_etag(raw: &str) -> String {
+    raw.trim().trim_matches('"').to_ascii_lowercase()
+}
+
+fn is_mixed_multipart_etag_pair(a: &str, b: &str) -> bool {
+    (is_plain_md5_etag(a) && is_multipart_etag(b)) || (is_multipart_etag(a) && is_plain_md5_etag(b))
+}
+
+fn is_plain_md5_etag(etag: &str) -> bool {
+    etag.len() == 32 && etag.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_multipart_etag(etag: &str) -> bool {
+    let Some((left, right)) = etag.split_once('-') else {
+        return false;
+    };
+    is_plain_md5_etag(left) && !right.is_empty() && right.chars().all(|c| c.is_ascii_digit())
+}
+
 fn has_modified_local(local: &LocalFile, journal: Option<&FileMetadata>) -> bool {
     has_modified(
         journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)),
@@ -438,6 +640,11 @@ fn has_modified(a: Option<(&str, i64, i64)>, b: Option<(&str, i64, i64)>) -> boo
     }
 }
 
+struct StagedDownload {
+    tmp: PathBuf,
+    target: PathBuf,
+}
+
 pub async fn download_keys(
     api: &ApiClient,
     datasites_root: &Path,
@@ -446,30 +653,59 @@ pub async fn download_keys(
     if keys.is_empty() {
         return Ok(());
     }
+    let staged = stage_downloads(api, datasites_root, &keys).await?;
+    commit_staged_downloads(staged).await
+}
+
+async fn stage_downloads(
+    api: &ApiClient,
+    datasites_root: &Path,
+    keys: &[String],
+) -> Result<Vec<StagedDownload>> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
     let presigned = api
-        .get_blob_presigned(&PresignedParams { keys: keys.clone() })
+        .get_blob_presigned(&PresignedParams {
+            keys: keys.to_vec(),
+        })
         .await?;
+
+    let mut out = Vec::with_capacity(presigned.urls.len());
     for blob in presigned.urls {
         let target = datasites_root.join(&blob.key);
         ensure_parent_dirs(&target)?;
-        download_to_path(api, &blob.url, &target).await?;
+        let tmp = download_to_tmp(api, &blob.url, &target).await?;
+        out.push(StagedDownload { tmp, target });
+    }
+    Ok(out)
+}
+
+async fn commit_staged_downloads(staged: Vec<StagedDownload>) -> Result<()> {
+    for item in staged {
+        if item.target.exists() {
+            let meta = fs::metadata(&item.target)?;
+            if meta.is_dir() {
+                fs::remove_dir_all(&item.target)?;
+            } else {
+                let _ = fs::remove_file(&item.target);
+            }
+        }
+        tokio::fs::rename(&item.tmp, &item.target)
+            .await
+            .with_context(|| {
+                format!("rename {} -> {}", item.tmp.display(), item.target.display())
+            })?;
     }
     Ok(())
 }
 
-async fn download_to_path(api: &ApiClient, url: &str, target: &Path) -> Result<()> {
+async fn download_to_tmp(api: &ApiClient, url: &str, target: &Path) -> Result<PathBuf> {
     let resp = api.http().get(url).send().await?;
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();
         anyhow::bail!("download failed: {status} {text}");
-    }
-
-    if target.exists() {
-        let meta = fs::metadata(target)?;
-        if meta.is_dir() {
-            fs::remove_dir_all(target)?;
-        }
     }
 
     let Some(parent) = target.parent() else {
@@ -479,7 +715,7 @@ async fn download_to_path(api: &ApiClient, url: &str, target: &Path) -> Result<(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("download");
-    let tmp = parent.join(format!(".{}.tmp", fname));
+    let tmp = parent.join(format!(".{}.tmp-{}", fname, uuid::Uuid::new_v4()));
 
     if tmp.exists() {
         let _ = fs::remove_file(&tmp);
@@ -497,19 +733,7 @@ async fn download_to_path(api: &ApiClient, url: &str, target: &Path) -> Result<(
     f.flush().await?;
     drop(f);
 
-    // Replace target atomically-ish (portable): remove existing file first.
-    if target.exists() {
-        let meta = fs::metadata(target)?;
-        if meta.is_dir() {
-            fs::remove_dir_all(target)?;
-        } else {
-            let _ = fs::remove_file(target);
-        }
-    }
-    tokio::fs::rename(&tmp, target)
-        .await
-        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
-    Ok(())
+    Ok(tmp)
 }
 
 /// Ensure parent directories exist for `target`. If a parent path exists as a file,
@@ -715,6 +939,36 @@ mod tests {
 
         let computed = compute_md5(&f1).unwrap();
         assert_eq!(computed, meta.etag);
+    }
+
+    #[test]
+    fn content_differs_ignores_last_modified_when_etag_matches() {
+        let etag = "0123456789abcdef0123456789abcdef";
+        assert!(!content_differs_for_key(
+            false, etag, 10, etag, 10, 111, 222
+        ));
+    }
+
+    #[test]
+    fn content_differs_tolerates_mixed_multipart_for_mirror_paths() {
+        let plain = "0123456789abcdef0123456789abcdef";
+        let multipart = "0123456789abcdef0123456789abcdef-2";
+        assert!(!content_differs_for_key(
+            false, plain, 10, multipart, 10, 0, 0
+        ));
+    }
+
+    #[test]
+    fn content_differs_flags_different_etags() {
+        assert!(content_differs_for_key(
+            false,
+            "0123456789abcdef0123456789abcdef",
+            10,
+            "fedcba9876543210fedcba9876543210",
+            10,
+            0,
+            0
+        ));
     }
 
     fn make_temp_dir() -> PathBuf {

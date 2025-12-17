@@ -190,7 +190,10 @@ mod tests {
                 "/api/v1/blob/upload",
                 axum::routing::put({
                     let access2 = access2.clone();
-                    move |headers: axum::http::HeaderMap| async move {
+                    move |headers: axum::http::HeaderMap, body: axum::body::Body| async move {
+                        // Drain the request body so the client doesn't see broken pipes when we
+                        // return early (this endpoint is used with streaming multipart bodies).
+                        let _ = axum::body::to_bytes(body, usize::MAX).await;
                         let got = headers
                             .get(axum::http::header::AUTHORIZATION)
                             .and_then(|v| v.to_str().ok())

@@ -123,6 +123,7 @@ pub async fn install_from_url(
     branch: &str,
     tag: &str,
     commit: &str,
+    use_git: bool,
     force: bool,
 ) -> Result<AppInfo> {
     let parsed = Url::parse(uri).context("invalid url")?;
@@ -144,17 +145,21 @@ pub async fn install_from_url(
         }
     }
 
-    let archive_url = get_archive_url(&parsed, branch, tag, commit)?;
-    let zip_path = download_zip(&archive_url).await?;
-    struct Tmp(PathBuf);
-    impl Drop for Tmp {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_file(&self.0);
+    if use_git && system_git_available() {
+        install_from_git(uri, &install_dir, branch, tag, commit)?;
+    } else {
+        let archive_url = get_archive_url(&parsed, branch, tag, commit)?;
+        let zip_path = download_zip(&archive_url).await?;
+        struct Tmp(PathBuf);
+        impl Drop for Tmp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
         }
-    }
-    let _cleanup = Tmp(zip_path.clone());
+        let _cleanup = Tmp(zip_path.clone());
 
-    extract_zip_strip_root(&zip_path, &install_dir)?;
+        extract_zip_strip_root(&zip_path, &install_dir)?;
+    }
     if !is_valid_app(&install_dir) {
         let _ = std::fs::remove_dir_all(&install_dir);
         anyhow::bail!("not a valid syftbox app");
@@ -173,6 +178,68 @@ pub async fn install_from_url(
     };
     save_app_info(&install_dir, &info)?;
     Ok(info)
+}
+
+fn install_from_git(repo: &str, dst: &Path, branch: &str, tag: &str, commit: &str) -> Result<()> {
+    if !system_git_available() {
+        anyhow::bail!("git is not available on this system");
+    }
+
+    let mut args: Vec<String> = Vec::new();
+    args.push("clone".to_string());
+    if !branch.is_empty() {
+        args.push("--branch".to_string());
+        args.push(branch.to_string());
+    } else if !tag.is_empty() {
+        args.push("--branch".to_string());
+        args.push(tag.to_string());
+    }
+    if commit.is_empty() {
+        args.push("--depth=1".to_string());
+    }
+    args.push(repo.to_string());
+    args.push(dst.display().to_string());
+
+    let out = Command::new("git").args(&args).output();
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => return Err(e).context("spawn git"),
+    };
+    if !out.status.success() {
+        anyhow::bail!(
+            "git clone failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+
+    if !commit.is_empty() {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dst)
+            .arg("checkout")
+            .arg(commit)
+            .output();
+        let out = match out {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(dst);
+                return Err(e).context("spawn git checkout");
+            }
+        };
+        if !out.status.success() {
+            let _ = std::fs::remove_dir_all(dst);
+            anyhow::bail!(
+                "git checkout failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn system_git_available() -> bool {
+    Command::new("git").arg("--version").output().is_ok()
 }
 
 pub fn list_apps(cfg: &Config) -> Result<Vec<AppInfo>> {
@@ -571,6 +638,97 @@ mod tests {
         assert_eq!(
             get_archive_url(&url, "main", "", "").unwrap(),
             "https://gitlab.com/cznic/sqlite/-/archive/main/archive.zip"
+        );
+    }
+
+    #[test]
+    fn git_installer_clones_branch_tag_and_commit() {
+        if !system_git_available() {
+            return;
+        }
+
+        let tmp = std::env::temp_dir().join("syftbox-rs-apps-git-test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let repo = tmp.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let run = |dir: &Path, args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        };
+
+        run(&repo, &["init"]);
+        run(&repo, &["config", "user.email", "test@example.com"]);
+        run(&repo, &["config", "user.name", "Test"]);
+        run(&repo, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.join("run.sh"), "#!/bin/sh\necho ok\n").unwrap();
+        std::fs::write(repo.join("message.txt"), "main\n").unwrap();
+        run(&repo, &["add", "."]);
+        run(&repo, &["commit", "-m", "init"]);
+
+        run(&repo, &["tag", "v1.0.0"]);
+
+        run(&repo, &["checkout", "-b", "feature"]);
+        std::fs::write(repo.join("message.txt"), "feature\n").unwrap();
+        run(&repo, &["add", "."]);
+        run(&repo, &["commit", "-m", "feature"]);
+
+        let commit = {
+            let out = Command::new("git")
+                .args(["rev-parse", "HEAD~1"])
+                .current_dir(&repo)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        // Branch clone.
+        let dst_branch = tmp.join("out-branch");
+        let _ = std::fs::remove_dir_all(&dst_branch);
+        install_from_git(
+            repo.to_string_lossy().as_ref(),
+            &dst_branch,
+            "feature",
+            "",
+            "",
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dst_branch.join("message.txt")).unwrap(),
+            "feature\n"
+        );
+        let _ = std::fs::remove_dir_all(&dst_branch);
+
+        // Tag clone.
+        let dst_tag = tmp.join("out-tag");
+        let _ = std::fs::remove_dir_all(&dst_tag);
+        install_from_git(repo.to_string_lossy().as_ref(), &dst_tag, "", "v1.0.0", "").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dst_tag.join("message.txt")).unwrap(),
+            "main\n"
+        );
+        let _ = std::fs::remove_dir_all(&dst_tag);
+
+        // Commit checkout.
+        let dst_commit = tmp.join("out-commit");
+        let _ = std::fs::remove_dir_all(&dst_commit);
+        install_from_git(
+            repo.to_string_lossy().as_ref(),
+            &dst_commit,
+            "",
+            "",
+            &commit,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dst_commit.join("message.txt")).unwrap(),
+            "main\n"
         );
     }
 }

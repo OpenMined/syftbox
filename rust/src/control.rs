@@ -42,9 +42,7 @@ struct UploadEntry {
     progress: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    #[serde(with = "chrono::serde::ts_seconds")]
     started_at: DateTime<Utc>,
-    #[serde(with = "chrono::serde::ts_seconds")]
     updated_at: DateTime<Utc>,
 }
 
@@ -57,7 +55,6 @@ struct SyncFileStatus {
     progress: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    #[serde(with = "chrono::serde::ts_seconds")]
     #[serde(rename = "updatedAt")]
     updated_at: DateTime<Utc>,
 }

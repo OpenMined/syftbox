@@ -477,9 +477,9 @@ async fn run_app(
                 let app = apps::install_from_path(&p, &cfg, force)?;
                 print!("{}", apps::format_install_result(&app));
             } else if uri.starts_with("http://") || uri.starts_with("https://") {
-                // For now: implement archive installs (matches Go when `--use-git=false` or git unavailable).
-                let _ = use_git;
-                let app = apps::install_from_url(&uri, &cfg, &branch, &tag, &commit, force).await?;
+                let app =
+                    apps::install_from_url(&uri, &cfg, &branch, &tag, &commit, use_git, force)
+                        .await?;
                 print!("{}", apps::format_install_result(&app));
             } else {
                 anyhow::bail!("invalid url or path {:?}", p);

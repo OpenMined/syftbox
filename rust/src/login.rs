@@ -19,6 +19,11 @@ struct FileConfig {
     refresh_token: String,
 }
 
+struct ExistingLoginState {
+    is_logged_in: bool,
+    note: Option<String>,
+}
+
 pub struct LoginArgs {
     pub config_path: PathBuf,
     pub server_url: String,
@@ -28,7 +33,8 @@ pub struct LoginArgs {
 }
 
 pub async fn run_login(args: LoginArgs) -> Result<()> {
-    if already_logged_in(&args.config_path, &args.server_url).is_ok() {
+    let existing = existing_login_state(&args.config_path, &args.server_url);
+    if existing.is_logged_in {
         if args.quiet {
             return Ok(());
         }
@@ -49,13 +55,29 @@ pub async fn run_login(args: LoginArgs) -> Result<()> {
     validate_email(&email).context("email")?;
     validate_url(&args.server_url).context("server_url")?;
 
+    if let Some(note) = existing.note {
+        if !args.quiet {
+            eprintln!("{note}");
+        }
+    }
+
     if !args.quiet {
         eprintln!("Requesting one-time code...");
     }
     request_email_code(&http, &args.server_url, &email).await?;
 
-    let code = prompt_line("Code: ")?;
-    let tokens = verify_email_code(&http, &args.server_url, &email, &code).await?;
+    let tokens = loop {
+        let code = prompt_line("Code: ")?;
+        match verify_email_code(&http, &args.server_url, &email, &code).await {
+            Ok(tokens) => break tokens,
+            Err(err) => {
+                if args.quiet {
+                    return Err(err);
+                }
+                eprintln!("ERROR: {err}");
+            }
+        }
+    };
 
     validate_token(&tokens.refresh_token, "refresh", &email).context("refresh token")?;
     validate_token(&tokens.access_token, "access", &email).context("access token")?;
@@ -79,27 +101,66 @@ pub async fn run_login(args: LoginArgs) -> Result<()> {
     Ok(())
 }
 
-fn already_logged_in(config_path: &Path, requested_server: &str) -> Result<()> {
-    if !config_path.exists() {
-        anyhow::bail!("no config");
-    }
-    let data = std::fs::read_to_string(config_path)
-        .with_context(|| format!("read {}", config_path.display()))?;
-    let file: FileConfig = serde_json::from_str(&data).context("parse config")?;
+fn existing_login_state(config_path: &Path, requested_server: &str) -> ExistingLoginState {
+    let data = match std::fs::read_to_string(config_path) {
+        Ok(s) => s,
+        Err(_) => {
+            return ExistingLoginState {
+                is_logged_in: false,
+                note: None,
+            };
+        }
+    };
+    let file: FileConfig = match serde_json::from_str(&data) {
+        Ok(v) => v,
+        Err(_) => {
+            return ExistingLoginState {
+                is_logged_in: false,
+                note: None,
+            };
+        }
+    };
 
-    validate_email(&file.email).context("email")?;
-    validate_url(&file.server_url).context("server_url")?;
-    if !file.client_url.trim().is_empty() {
-        validate_url(&file.client_url).context("client_url")?;
+    if validate_email(&file.email).is_err() || validate_url(&file.server_url).is_err() {
+        return ExistingLoginState {
+            is_logged_in: false,
+            note: None,
+        };
     }
-    if file.refresh_token.trim().is_empty() {
-        anyhow::bail!("no refresh token");
+    if !file.client_url.trim().is_empty() && validate_url(&file.client_url).is_err() {
+        return ExistingLoginState {
+            is_logged_in: false,
+            note: None,
+        };
     }
+
     if file.server_url != requested_server {
-        anyhow::bail!("server changed");
+        return ExistingLoginState {
+            is_logged_in: false,
+            note: Some(format!(
+                "[RELOGIN] Current config's server changed from '{}' to '{}'",
+                file.server_url, requested_server
+            )),
+        };
     }
-    validate_token(&file.refresh_token, "refresh", &file.email)?;
-    Ok(())
+
+    if file.refresh_token.trim().is_empty() {
+        return ExistingLoginState {
+            is_logged_in: false,
+            note: None,
+        };
+    }
+
+    match validate_token(&file.refresh_token, "refresh", &file.email) {
+        Ok(()) => ExistingLoginState {
+            is_logged_in: true,
+            note: None,
+        },
+        Err(_) => ExistingLoginState {
+            is_logged_in: false,
+            note: Some("[RELOGIN] Token expired".to_string()),
+        },
+    }
 }
 
 pub fn format_already_logged_in(config_path: &Path, cfg: &Config) -> String {
@@ -170,7 +231,9 @@ mod tests {
         );
         std::fs::write(&cfg_path, json).unwrap();
 
-        already_logged_in(&cfg_path, server_url).unwrap();
+        let st = existing_login_state(&cfg_path, server_url);
+        assert!(st.is_logged_in);
+        assert!(st.note.is_none());
 
         let cfg = Config::load_file_only(&cfg_path).unwrap();
         let rendered = format_already_logged_in(&cfg_path, &cfg);
@@ -205,10 +268,13 @@ mod tests {
         );
         std::fs::write(&cfg_path, json).unwrap();
 
-        let err = already_logged_in(&cfg_path, "http://127.0.0.1:2222")
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("server changed"));
+        let new_server = "http://127.0.0.1:2222";
+        let st = existing_login_state(&cfg_path, new_server);
+        assert!(!st.is_logged_in);
+        assert_eq!(
+            st.note.unwrap_or_default(),
+            "[RELOGIN] Current config's server changed from 'http://127.0.0.1:1111' to 'http://127.0.0.1:2222'"
+        );
     }
 
     #[test]
@@ -237,9 +303,8 @@ mod tests {
         );
         std::fs::write(&cfg_path, json).unwrap();
 
-        let err = already_logged_in(&cfg_path, server_url)
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("expired"));
+        let st = existing_login_state(&cfg_path, server_url);
+        assert!(!st.is_logged_in);
+        assert_eq!(st.note.unwrap_or_default(), "[RELOGIN] Token expired");
     }
 }
