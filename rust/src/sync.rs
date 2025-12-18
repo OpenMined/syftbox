@@ -835,12 +835,10 @@ fn is_marked_key(key: &str) -> bool {
 }
 
 fn is_synced_key(key: &str) -> bool {
-    // Devstack-focused scope (still not full Go parity): public datasite contents,
-    // ACL files, and RPC request/response files.
-    key.contains("/public/")
-        || key.ends_with("syft.pub.yaml")
-        || key.ends_with(".request")
-        || key.ends_with(".response")
+    // Full datasites sync: if it's under the datasites root, it's in scope.
+    //
+    // (We still apply ignore filters + marked-path checks elsewhere.)
+    !key.is_empty()
 }
 
 fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {

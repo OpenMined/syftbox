@@ -653,10 +653,10 @@ fn collect_synced_keys(datasites_root: &Path, filters: &SyncFilters) -> Vec<Stri
 }
 
 fn is_synced_key(key: &str) -> bool {
-    key.contains("/public/")
-        || key.ends_with("syft.pub.yaml")
-        || key.ends_with(".request")
-        || key.ends_with(".response")
+    // Full datasites sync: if it's under the datasites root, it's in scope.
+    //
+    // (We still apply ignore filters + marked-path checks elsewhere.)
+    !key.is_empty()
 }
 
 async fn watch_priority_files(
