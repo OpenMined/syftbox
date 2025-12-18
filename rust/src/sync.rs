@@ -835,10 +835,16 @@ fn is_marked_key(key: &str) -> bool {
 }
 
 fn is_synced_key(key: &str) -> bool {
-    // Full datasites sync: if it's under the datasites root, it's in scope.
+    // Full datasites sync: keep everything that is under a datasite root directory.
     //
-    // (We still apply ignore filters + marked-path checks elsewhere.)
-    !key.is_empty()
+    // In the on-disk datasites layout, the first path segment is the email identity
+    // (e.g. `client1@sandbox.local/...`). Restricting to that shape avoids syncing
+    // any non-datasites server-side objects that may share the same bucket.
+    let key = key.trim_start_matches('/');
+    let Some((root, _rest)) = key.split_once('/') else {
+        return false;
+    };
+    root.contains('@')
 }
 
 fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {
