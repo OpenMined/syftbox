@@ -436,11 +436,17 @@ func downloadMinio(dest string) error {
 		} else {
 			platform = "linux-amd64"
 		}
+	case "windows":
+		platform = "windows-amd64"
 	default:
 		return fmt.Errorf("unsupported platform for minio download: %s/%s", osName, arch)
 	}
 
-	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, minioBinaryName)
+	binaryName := minioBinaryName
+	if osName == "windows" {
+		binaryName = minioBinaryName + ".exe"
+	}
+	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, binaryName)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(url) //nolint:gosec
 	if err != nil {
