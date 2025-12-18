@@ -169,7 +169,10 @@ impl<'a> ResumableUploader<'a> {
                 self.ensure_upload_entry();
             }
 
-            self.upload_parts(resp.urls).await?;
+            if self.upload_parts(resp.urls).await? {
+                // Restart requested; start a fresh multipart session.
+                continue;
+            }
         }
 
         // Complete multipart upload.
@@ -207,7 +210,7 @@ impl<'a> ResumableUploader<'a> {
         }
     }
 
-    async fn upload_parts(&mut self, urls: HashMap<i64, String>) -> Result<()> {
+    async fn upload_parts(&mut self, urls: HashMap<i64, String>) -> Result<bool> {
         let mut parts = urls.keys().copied().collect::<Vec<_>>();
         parts.sort_unstable();
 
@@ -215,7 +218,9 @@ impl<'a> ResumableUploader<'a> {
             .with_context(|| format!("open {}", self.file_path.display()))?;
 
         for part in parts {
-            self.wait_if_paused().await;
+            if self.wait_if_paused_or_restarted().await? {
+                return Ok(true);
+            }
 
             let url = urls
                 .get(&part)
@@ -280,7 +285,7 @@ impl<'a> ResumableUploader<'a> {
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     fn ensure_upload_entry(&mut self) {
@@ -311,21 +316,44 @@ impl<'a> ResumableUploader<'a> {
         }
     }
 
-    async fn wait_if_paused(&self) {
+    async fn wait_if_paused_or_restarted(&mut self) -> Result<bool> {
         let Some(cp) = self.cp else {
-            return;
+            return Ok(false);
         };
         let Some(id) = self.upload_entry_id.as_deref() else {
-            return;
+            return Ok(false);
         };
 
         loop {
             let state = cp.get_upload_state(id);
-            if state != "paused" {
-                return;
+            match state.as_str() {
+                "paused" => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                "restarted" => {
+                    self.restart_session()?;
+                    return Ok(true);
+                }
+                _ => return Ok(false),
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
+    }
+
+    fn restart_session(&mut self) -> Result<()> {
+        // Mirror Go's restart semantics: clear local session state so a fresh
+        // multipart upload is started from scratch.
+        self.cleanup_session();
+        self.session.upload_id.clear();
+        self.session.completed.clear();
+        self.save_session()?;
+
+        if let (Some(cp), Some(id)) = (self.cp, self.upload_entry_id.as_deref()) {
+            cp.set_upload_state(id, "uploading".to_string(), None);
+            cp.update_upload_progress(id, 0, Vec::new());
+        }
+
+        Ok(())
     }
 
     fn remaining_parts(&self) -> Vec<i64> {

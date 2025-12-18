@@ -3,13 +3,15 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc, sync::Mutex};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
+    response::sse::{Event, KeepAlive, Sse},
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
+use futures_util::stream::unfold;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
+use tokio::sync::{broadcast, Notify};
 use uuid::Uuid;
 
 use crate::telemetry::HttpStats;
@@ -23,6 +25,7 @@ struct ControlState {
     token: String,
     uploads: Mutex<HashMap<String, UploadEntry>>,
     sync_status: Mutex<HashMap<String, SyncFileStatus>>,
+    sync_events: broadcast::Sender<SyncFileStatus>,
     sync_now: Notify,
     http_stats: Arc<HttpStats>,
 }
@@ -109,6 +112,7 @@ impl ControlPlane {
             token,
             uploads: Mutex::new(HashMap::new()),
             sync_status: Mutex::new(HashMap::new()),
+            sync_events: broadcast::channel(1024).0,
             sync_now: Notify::new(),
             http_stats,
         });
@@ -117,6 +121,7 @@ impl ControlPlane {
             .route("/v1/status", get(status))
             .route("/v1/sync/status", get(sync_status))
             .route("/v1/sync/status/file", get(sync_status_file))
+            .route("/v1/sync/events", get(sync_events))
             .route("/v1/sync/now", post(sync_now))
             .route("/v1/uploads/", get(list_uploads))
             .route("/v1/uploads/:id", get(get_upload).delete(delete_upload))
@@ -213,6 +218,8 @@ impl ControlPlane {
             entry.error.clear();
         }
         entry.updated_at = now;
+
+        let _ = self.state.sync_events.send(entry.clone());
     }
 
     pub fn upsert_upload(
@@ -314,7 +321,11 @@ impl ControlPlane {
             u.uploaded_bytes = uploaded_bytes.max(0);
             u.progress = 100.0;
             u.updated_at = Utc::now();
-            self.set_sync_completed(&u.key);
+        }
+        let key = uploads.get(id).map(|u| u.key.clone()).unwrap_or_default();
+        if !key.is_empty() {
+            self.set_sync_completed(&key);
+            uploads.remove(id);
         }
     }
 
@@ -404,6 +415,24 @@ async fn sync_status(State(state): State<Arc<ControlState>>) -> impl IntoRespons
     Json(SyncStatusResponse { files, summary })
 }
 
+async fn sync_events(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let rx = state.sync_events.subscribe();
+    let stream = unfold(rx, |mut rx| async move {
+        loop {
+            match rx.recv().await {
+                Ok(status) => {
+                    let data = serde_json::to_string(&status).unwrap_or_else(|_| "{}".to_string());
+                    let ev = Event::default().event("sync").data(data);
+                    return Some((Ok::<_, std::convert::Infallible>(ev), rx));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            }
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+}
+
 #[derive(Deserialize)]
 struct SyncStatusFileQuery {
     path: String,
@@ -455,10 +484,13 @@ async fn delete_upload(
 ) -> impl IntoResponse {
     let mut uploads = state.uploads.lock().unwrap();
     if uploads.remove(&id).is_some() {
-        StatusCode::OK
-    } else {
-        StatusCode::NOT_FOUND
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "cancelled" })),
+        )
+            .into_response();
     }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 async fn pause_upload(
@@ -473,10 +505,15 @@ async fn pause_upload(
         if let Some(s) = sync.get_mut(&u.key) {
             s.state = "pending".to_string();
             s.updated_at = Utc::now();
+            let _ = state.sync_events.send(s.clone());
         }
-        return StatusCode::OK;
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "paused" })),
+        )
+            .into_response();
     }
-    StatusCode::NOT_FOUND
+    StatusCode::NOT_FOUND.into_response()
 }
 
 async fn resume_upload(
@@ -491,10 +528,15 @@ async fn resume_upload(
         if let Some(s) = sync.get_mut(&u.key) {
             s.state = "syncing".to_string();
             s.updated_at = Utc::now();
+            let _ = state.sync_events.send(s.clone());
         }
-        return StatusCode::OK;
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "resumed" })),
+        )
+            .into_response();
     }
-    StatusCode::NOT_FOUND
+    StatusCode::NOT_FOUND.into_response()
 }
 
 async fn restart_upload(
@@ -508,21 +550,24 @@ async fn restart_upload(
         u.uploaded_bytes = 0;
         u.updated_at = Utc::now();
         let mut sync = state.sync_status.lock().unwrap();
-        sync.insert(
-            u.key.clone(),
-            SyncFileStatus {
-                path: u.key.clone(),
-                state: "pending".to_string(),
-                conflict_state: "none".to_string(),
-                progress: 0.0,
-                error: String::new(),
-                error_count: 0,
-                updated_at: Utc::now(),
-            },
-        );
-        return StatusCode::OK;
+        let status = SyncFileStatus {
+            path: u.key.clone(),
+            state: "pending".to_string(),
+            conflict_state: "none".to_string(),
+            progress: 0.0,
+            error: String::new(),
+            error_count: 0,
+            updated_at: Utc::now(),
+        };
+        sync.insert(u.key.clone(), status.clone());
+        let _ = state.sync_events.send(status);
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "status": "restarted" })),
+        )
+            .into_response();
     }
-    StatusCode::NOT_FOUND
+    StatusCode::NOT_FOUND.into_response()
 }
 
 #[cfg(test)]
@@ -533,10 +578,12 @@ mod tests {
     #[tokio::test]
     async fn uploads_are_listed_and_sync_status_completed() {
         let stats = Arc::new(HttpStats::default());
+        let (tx, _) = broadcast::channel(16);
         let state = Arc::new(ControlState {
             token: "secret".into(),
             uploads: Mutex::new(HashMap::new()),
             sync_status: Mutex::new(HashMap::new()),
+            sync_events: tx,
             sync_now: Notify::new(),
             http_stats: stats,
         });
@@ -556,9 +603,7 @@ mod tests {
             .await
             .unwrap();
         let list: UploadListResponse = serde_json::from_slice(&list_bytes).unwrap();
-        assert_eq!(list.uploads.len(), 1);
-        assert_eq!(list.uploads[0].state, "completed");
-        assert_eq!(list.uploads[0].uploaded_bytes, 1024);
+        assert_eq!(list.uploads.len(), 0);
 
         let status_resp = sync_status(State(state.clone())).await;
         let status_bytes = to_bytes(status_resp.into_response().into_body(), usize::MAX)

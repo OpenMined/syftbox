@@ -1,8 +1,8 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::Read,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -300,6 +300,7 @@ pub async fn sync_once_with_control(
     owner_email: &str,
     control: Option<ControlPlane>,
     filters: &SyncFilters,
+    local_scanner: &mut LocalScanner,
     journal: &mut SyncJournal,
 ) -> Result<()> {
     journal
@@ -307,7 +308,7 @@ pub async fn sync_once_with_control(
         .context("refresh sync journal")?;
 
     let datasites_root = data_dir.join("datasites");
-    let local = scan_local(&datasites_root, filters)?;
+    let local = local_scanner.scan(&datasites_root, filters)?;
     let remote = scan_remote(api, filters).await?;
 
     journal.rebuild_if_empty(&local, &remote);
@@ -846,50 +847,97 @@ fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {
     filters.ignore.should_ignore_rel(Path::new(key), false) || SyncFilters::is_marked_rel_path(key)
 }
 
-fn scan_local(datasites_root: &Path, filters: &SyncFilters) -> Result<HashMap<String, LocalFile>> {
-    let mut out = HashMap::new();
-    if !datasites_root.exists() {
-        return Ok(out);
+#[derive(Clone, Debug)]
+struct LocalScanCacheEntry {
+    size: i64,
+    mtime_nanos: u128,
+    etag: String,
+}
+
+#[derive(Default)]
+pub(crate) struct LocalScanner {
+    last_state: HashMap<String, LocalScanCacheEntry>,
+}
+
+impl LocalScanner {
+    fn scan(
+        &mut self,
+        datasites_root: &Path,
+        filters: &SyncFilters,
+    ) -> Result<HashMap<String, LocalFile>> {
+        let mut out = HashMap::new();
+        let mut next_state: HashMap<String, LocalScanCacheEntry> = HashMap::new();
+
+        if !datasites_root.exists() {
+            self.last_state.clear();
+            return Ok(out);
+        }
+
+        for entry in WalkDir::new(datasites_root)
+            .into_iter()
+            .filter_entry(|e| e.file_name() != ".data")
+            .filter_map(|e| e.ok())
+        {
+            let ftype = entry.file_type();
+            if ftype.is_dir() || ftype.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(datasites_root)
+                .with_context(|| format!("strip prefix {}", path.display()))?;
+            if filters.ignore.should_ignore_rel(rel, false) {
+                continue;
+            }
+            let key = rel.to_string_lossy().to_string();
+            if !is_synced_key(&key) {
+                continue;
+            }
+            if is_marked_key(&key) {
+                continue;
+            }
+
+            let meta = entry.metadata()?;
+            let size = meta.len() as i64;
+            let (mtime_nanos, last_modified_secs) = match meta.modified() {
+                Ok(st) => {
+                    let d = st.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                    (d.as_nanos(), d.as_secs() as i64)
+                }
+                Err(_) => (0, 0),
+            };
+
+            let etag = match self.last_state.get(&key) {
+                Some(prev) if prev.size == size && prev.mtime_nanos == mtime_nanos => {
+                    prev.etag.clone()
+                }
+                _ => compute_local_etag(path, size)?,
+            };
+
+            next_state.insert(
+                key.clone(),
+                LocalScanCacheEntry {
+                    size,
+                    mtime_nanos,
+                    etag: etag.clone(),
+                },
+            );
+
+            out.insert(
+                key.clone(),
+                LocalFile {
+                    key,
+                    path: path.to_path_buf(),
+                    etag,
+                    size,
+                    last_modified: last_modified_secs,
+                },
+            );
+        }
+
+        self.last_state = next_state;
+        Ok(out)
     }
-    for entry in WalkDir::new(datasites_root)
-        .into_iter()
-        .filter_entry(|e| e.file_name() != ".data")
-        .filter_map(|e| e.ok())
-    {
-        let ftype = entry.file_type();
-        if ftype.is_dir() || ftype.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        let rel = path
-            .strip_prefix(datasites_root)
-            .with_context(|| format!("strip prefix {}", path.display()))?;
-        if filters.ignore.should_ignore_rel(rel, false) {
-            continue;
-        }
-        let key = rel.to_string_lossy().to_string();
-        if !is_synced_key(&key) {
-            continue;
-        }
-        if is_marked_key(&key) {
-            continue;
-        }
-        let meta = entry.metadata()?;
-        let etag = compute_md5(path)?;
-        let size = meta.len() as i64;
-        let last_modified = meta.modified().map(to_epoch_seconds).unwrap_or(0);
-        out.insert(
-            key.clone(),
-            LocalFile {
-                key,
-                path: path.to_path_buf(),
-                etag,
-                size,
-                last_modified,
-            },
-        );
-    }
-    Ok(out)
 }
 
 async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<String, BlobInfo>> {
@@ -906,16 +954,119 @@ async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<S
     Ok(out)
 }
 
-fn compute_md5(path: &Path) -> Result<String> {
-    let data = fs::read(path)?;
-    let digest = md5::compute(&data);
-    Ok(format!("{:x}", digest))
+const DEFAULT_MULTIPART_PART_SIZE: i64 = 64 * 1024 * 1024; // match uploader
+const MIN_MULTIPART_PART_SIZE: i64 = 5 * 1024 * 1024; // S3 minimum
+const MAX_MULTIPART_PARTS: i64 = 10000;
+const MULTIPART_THRESHOLD: i64 = 32 * 1024 * 1024; // match uploader / Go threshold
+
+fn compute_local_etag(path: &Path, size: i64) -> Result<String> {
+    if size > MULTIPART_THRESHOLD {
+        let (part_size, part_count) = select_part_size(size, parse_part_size_env());
+        return compute_multipart_etag(path, size, part_size, part_count);
+    }
+    compute_md5_hex_streaming(path)
 }
 
-fn to_epoch_seconds(t: SystemTime) -> i64 {
-    t.duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+fn compute_md5_hex_streaming(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut ctx = md5::Context::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        ctx.consume(&buf[..n]);
+    }
+    Ok(format!("{:x}", ctx.compute()))
+}
+
+fn compute_multipart_etag(
+    path: &Path,
+    size: i64,
+    part_size: i64,
+    part_count: i64,
+) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut buf = vec![0u8; 1024 * 1024];
+    let mut remaining = size;
+    let mut part_digests = Vec::with_capacity(part_count.max(0) as usize);
+
+    for _ in 0..part_count {
+        let mut ctx = md5::Context::new();
+        let mut to_read = remaining.min(part_size);
+        while to_read > 0 {
+            let cap = std::cmp::min(buf.len() as i64, to_read) as usize;
+            let n = file.read(&mut buf[..cap])?;
+            if n == 0 {
+                break;
+            }
+            ctx.consume(&buf[..n]);
+            to_read -= n as i64;
+            remaining -= n as i64;
+        }
+        part_digests.push(ctx.compute());
+    }
+
+    let mut concat = Vec::with_capacity(part_digests.len() * 16);
+    for d in &part_digests {
+        concat.extend_from_slice(&d.0);
+    }
+    let final_digest = md5::compute(&concat);
+    Ok(format!("{:x}-{part_count}", final_digest))
+}
+
+fn parse_part_size_env() -> Option<i64> {
+    let v = std::env::var("SBDEV_PART_SIZE").ok()?;
+    parse_bytes(&v)
+}
+
+fn select_part_size(size: i64, override_part_size: Option<i64>) -> (i64, i64) {
+    let mut part_size = override_part_size.unwrap_or(DEFAULT_MULTIPART_PART_SIZE);
+    if part_size < MIN_MULTIPART_PART_SIZE {
+        part_size = MIN_MULTIPART_PART_SIZE;
+    }
+    let mut part_count = divide_and_ceil(size, part_size);
+    while part_count > MAX_MULTIPART_PARTS {
+        part_size *= 2;
+        part_count = divide_and_ceil(size, part_size);
+    }
+    (part_size, part_count)
+}
+
+fn divide_and_ceil(n: i64, d: i64) -> i64 {
+    if d <= 0 {
+        return 0;
+    }
+    let mut q = n / d;
+    if n % d != 0 {
+        q += 1;
+    }
+    q
+}
+
+fn parse_bytes(s: &str) -> Option<i64> {
+    let raw = s.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let upper = raw.to_uppercase();
+    let (num, mult) = if let Some(n) = upper.strip_suffix("GB") {
+        (n, 1024_i64 * 1024 * 1024)
+    } else if let Some(n) = upper.strip_suffix("MB") {
+        (n, 1024_i64 * 1024)
+    } else if let Some(n) = upper.strip_suffix("KB") {
+        (n, 1024_i64)
+    } else if let Some(n) = upper.strip_suffix('B') {
+        (n, 1_i64)
+    } else {
+        (upper.as_str(), 1_i64)
+    };
+    let n: i64 = num.trim().parse().ok()?;
+    if n <= 0 {
+        return None;
+    }
+    Some(n.saturating_mul(mult))
 }
 
 fn mark_conflict(path: &Path) -> Result<()> {
@@ -1053,7 +1204,8 @@ mod tests {
     fn scan_local_empty_dir() {
         let root = make_temp_dir();
         let filters = SyncFilters::load(&root).unwrap();
-        let state = scan_local(&root, &filters).unwrap();
+        let mut scanner = LocalScanner::default();
+        let state = scanner.scan(&root, &filters).unwrap();
         assert!(state.is_empty());
     }
 
@@ -1066,14 +1218,15 @@ mod tests {
         writeln!(file, "hello").unwrap();
 
         let filters = SyncFilters::load(&root).unwrap();
-        let state = scan_local(&root, &filters).unwrap();
+        let mut scanner = LocalScanner::default();
+        let state = scanner.scan(&root, &filters).unwrap();
         let key = "alice@example.com/public/a.txt".to_string();
         assert!(state.contains_key(&key));
         let meta = state.get(&key).unwrap();
         assert_eq!(meta.key, key);
         assert!(!meta.etag.is_empty());
 
-        let computed = compute_md5(&f1).unwrap();
+        let computed = compute_md5_hex_streaming(&f1).unwrap();
         assert_eq!(computed, meta.etag);
     }
 

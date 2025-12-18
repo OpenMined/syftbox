@@ -164,6 +164,7 @@ async fn run_sync_loop(
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
+    let mut local_scanner = crate::sync::LocalScanner::default();
     loop {
         if let Err(err) = sync_once_with_control(
             &api,
@@ -171,6 +172,7 @@ async fn run_sync_loop(
             &email,
             control.clone(),
             &filters,
+            &mut local_scanner,
             &mut journal,
         )
         .await
