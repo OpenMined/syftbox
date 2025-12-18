@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Rust client entrypoint for SyftBox (shim over Go client while porting)"
 
+[lib]
+name = "syftbox_rs"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }

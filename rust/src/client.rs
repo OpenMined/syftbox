@@ -55,6 +55,21 @@ pub struct Client {
     events_rx: Option<Receiver<Message>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ClientStartOptions {
+    /// How many health checks to attempt before returning an error.
+    /// If `None`, retry indefinitely until shutdown.
+    pub healthz_max_attempts: Option<usize>,
+}
+
+impl Default for ClientStartOptions {
+    fn default() -> Self {
+        Self {
+            healthz_max_attempts: Some(60),
+        }
+    }
+}
+
 impl Client {
     pub fn new(
         cfg: Config,
@@ -73,6 +88,10 @@ impl Client {
     }
 
     pub async fn start(&mut self) -> Result<()> {
+        self.start_with_options(ClientStartOptions::default()).await
+    }
+
+    pub async fn start_with_options(&mut self, opts: ClientStartOptions) -> Result<()> {
         let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
         let shutdown_task = shutdown.clone();
         tokio::spawn(async move {
@@ -80,7 +99,9 @@ impl Client {
             shutdown_task.notify_waiters();
         });
 
-        let healthy = self.wait_for_healthz(shutdown.clone()).await?;
+        let healthy = self
+            .wait_for_healthz(shutdown.clone(), opts.healthz_max_attempts)
+            .await?;
         if !healthy {
             return Ok(());
         }
@@ -125,12 +146,62 @@ impl Client {
 
         Ok(())
     }
+
+    pub async fn start_with_shutdown(
+        &mut self,
+        shutdown: std::sync::Arc<tokio::sync::Notify>,
+        opts: ClientStartOptions,
+    ) -> Result<()> {
+        let healthy = self
+            .wait_for_healthz(shutdown.clone(), opts.healthz_max_attempts)
+            .await?;
+        if !healthy {
+            return Ok(());
+        }
+
+        let api = self.api.clone();
+        let data_dir = self.cfg.data_dir.clone();
+        let email = self.cfg.email.clone();
+        let server_url = self.cfg.server_url.clone();
+        let control = self.control.clone();
+        let filters = self.filters.clone();
+        let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
+
+        crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
+        let _workspace_lock = crate::workspace::WorkspaceLock::try_lock(&data_dir)?;
+        upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
+        ACL_READY.store(true, Ordering::SeqCst);
+
+        if let Some(cp) = self.control.as_ref() {
+            let keys = collect_synced_keys(&data_dir.join("datasites"), &filters);
+            cp.seed_completed(keys);
+        }
+
+        tokio::select! {
+            _ = shutdown.notified() => {
+                crate::logging::info("shutdown requested");
+            }
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), shutdown.clone()) => {
+                if let Err(err) = res {
+                    crate::logging::error(format!("ws listener crashed: {err:?}"));
+                }
+            }
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
+                if let Err(err) = res {
+                    crate::logging::error(format!("sync loop crashed: {err:?}"));
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Client {
     async fn wait_for_healthz(
         &self,
         shutdown: std::sync::Arc<tokio::sync::Notify>,
+        max_attempts: Option<usize>,
     ) -> Result<bool> {
         let mut attempts = 0;
         loop {
@@ -142,8 +213,10 @@ impl Client {
                 Ok(_) => return Ok(true),
                 Err(err) => {
                     attempts += 1;
-                    if attempts >= 60 {
-                        return Err(err).context("healthz");
+                    if let Some(max) = max_attempts {
+                        if attempts >= max {
+                            return Err(err).context("healthz");
+                        }
                     }
                     tokio::select! {
                         _ = shutdown.notified() => return Ok(false),

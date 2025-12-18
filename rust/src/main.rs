@@ -1,28 +1,12 @@
-mod apps;
-mod auth;
-mod client;
-mod config;
-mod control;
-mod events;
-mod filters;
-mod http;
-mod logging;
-mod login;
-mod sync;
-mod telemetry;
-mod uploader;
-mod workspace;
-mod wsproto;
-
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use config::{Config, ConfigOverrides};
-use control::ControlPlane;
-use filters::SyncFilters;
-use http::ApiClient;
-use telemetry::HttpStats;
+use syftbox_rs::config::{Config, ConfigOverrides};
+use syftbox_rs::control::ControlPlane;
+use syftbox_rs::filters::SyncFilters;
+use syftbox_rs::http::ApiClient;
+use syftbox_rs::telemetry::HttpStats;
 
 #[derive(Parser, Debug)]
 #[command(name = "syftbox", version)]
@@ -164,7 +148,7 @@ async fn main() -> Result<()> {
             let requested_server = server
                 .clone()
                 .unwrap_or_else(|| Config::default_server_url().to_string());
-            login::run_login(login::LoginArgs {
+            syftbox_rs::login::run_login(syftbox_rs::login::LoginArgs {
                 config_path: resolved_config,
                 server_url: requested_server,
                 data_dir: datadir.unwrap_or_else(Config::default_data_dir),
@@ -237,8 +221,8 @@ async fn run_daemon(cfg: Config, http_addr: String, http_token: String) -> Resul
     let mut cfg = cfg;
     let (http_addr, http_token) = prepare_control_plane(&mut cfg, &http_addr, &http_token)?;
 
-    let log_path = crate::logging::init_default_log_file()?;
-    crate::logging::info(format!(
+    let log_path = syftbox_rs::logging::init_default_log_file()?;
+    syftbox_rs::logging::info(format!(
         "daemon start version={} config={} log={}",
         env!("CARGO_PKG_VERSION"),
         cfg.config_path
@@ -261,13 +245,13 @@ async fn run_daemon(cfg: Config, http_addr: String, http_token: String) -> Resul
         http_stats.clone(),
     )?;
 
-    let control = ControlPlane::start(&http_addr, Some(http_token), http_stats)?;
+    let control = ControlPlane::start(&http_addr, Some(http_token), http_stats, None)?;
 
     // TODO: wire websocket events; keep None until implemented.
     let datasites_root = cfg.data_dir.join("datasites");
     let filters = std::sync::Arc::new(SyncFilters::load(&datasites_root)?);
 
-    let mut client = client::Client::new(cfg, api, filters, None, Some(control));
+    let mut client = syftbox_rs::client::Client::new(cfg, api, filters, None, Some(control));
     client.start().await?;
     Ok(())
 }
@@ -459,8 +443,8 @@ async fn run_app(
 
     match command {
         AppCommands::List => {
-            let apps = apps::list_apps(&cfg)?;
-            let out = apps::format_app_list(&apps::apps_dir(&cfg), &apps);
+            let apps = syftbox_rs::apps::list_apps(&cfg)?;
+            let out = syftbox_rs::apps::format_app_list(&syftbox_rs::apps::apps_dir(&cfg), &apps);
             print!("{out}");
         }
         AppCommands::Install {
@@ -474,20 +458,21 @@ async fn run_app(
         } => {
             let p = PathBuf::from(&uri);
             if p.is_dir() {
-                let app = apps::install_from_path(&p, &cfg, force)?;
-                print!("{}", apps::format_install_result(&app));
+                let app = syftbox_rs::apps::install_from_path(&p, &cfg, force)?;
+                print!("{}", syftbox_rs::apps::format_install_result(&app));
             } else if uri.starts_with("http://") || uri.starts_with("https://") {
-                let app =
-                    apps::install_from_url(&uri, &cfg, &branch, &tag, &commit, use_git, force)
-                        .await?;
-                print!("{}", apps::format_install_result(&app));
+                let app = syftbox_rs::apps::install_from_url(
+                    &uri, &cfg, &branch, &tag, &commit, use_git, force,
+                )
+                .await?;
+                print!("{}", syftbox_rs::apps::format_install_result(&app));
             } else {
                 anyhow::bail!("invalid url or path {:?}", p);
             }
         }
         AppCommands::Uninstall { uri } => {
-            let id = apps::uninstall_app(&cfg, &uri)?;
-            print!("{}", apps::format_uninstall_result(&id));
+            let id = syftbox_rs::apps::uninstall_app(&cfg, &uri)?;
+            print!("{}", syftbox_rs::apps::format_uninstall_result(&id));
         }
     }
     Ok(())

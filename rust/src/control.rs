@@ -101,6 +101,7 @@ impl ControlPlane {
         addr: &str,
         token: Option<String>,
         http_stats: Arc<HttpStats>,
+        shutdown: Option<Arc<Notify>>,
     ) -> anyhow::Result<Self> {
         let token = token.unwrap_or_else(|| Uuid::new_v4().as_simple().to_string());
         crate::logging::info_kv(
@@ -137,7 +138,15 @@ impl ControlPlane {
         let addr: SocketAddr = addr.parse()?;
         tokio::spawn(async move {
             if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-                let _ = axum::serve(listener, app).await;
+                if let Some(shutdown) = shutdown {
+                    let _ = axum::serve(listener, app)
+                        .with_graceful_shutdown(async move {
+                            shutdown.notified().await;
+                        })
+                        .await;
+                } else {
+                    let _ = axum::serve(listener, app).await;
+                }
             }
         });
 

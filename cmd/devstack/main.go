@@ -114,6 +114,7 @@ type startOptions struct {
 	useDockerMinio  bool
 	keepData        bool
 	skipSyncCheck   bool
+	skipClientDaemons bool
 	reset           bool
 }
 
@@ -212,9 +213,12 @@ func runStart(args []string) error {
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
 	}
-	defaultClientBin, err := resolveClientBinary(binDir, "./cmd/client", clientBuildTags)
-	if err != nil {
-		return fmt.Errorf("build client: %w", err)
+	var defaultClientBin string
+	if !opts.skipClientDaemons {
+		defaultClientBin, err = resolveClientBinary(binDir, "./cmd/client", clientBuildTags)
+		if err != nil {
+			return fmt.Errorf("build client: %w", err)
+		}
 	}
 
 	serverPort := opts.serverPort
@@ -280,13 +284,21 @@ func runStart(args []string) error {
 			}
 		}
 
-		clientBin, err := clientBinaryForEmail(email, i, defaultClientBin)
-		if err != nil {
-			return fmt.Errorf("client bin for %s: %w", email, err)
-		}
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
-		if err != nil {
-			return fmt.Errorf("start client %s: %w", email, err)
+		var cState clientState
+		if opts.skipClientDaemons {
+			cState, err = initClient(opts.root, email, serverURL, port)
+			if err != nil {
+				return fmt.Errorf("init client %s: %w", email, err)
+			}
+		} else {
+			clientBin, err := clientBinaryForEmail(email, i, defaultClientBin)
+			if err != nil {
+				return fmt.Errorf("client bin for %s: %w", email, err)
+			}
+			cState, err = startClient(clientBin, opts.root, email, serverURL, port)
+			if err != nil {
+				return fmt.Errorf("start client %s: %w", email, err)
+			}
 		}
 		clients = append(clients, cState)
 	}
@@ -313,11 +325,15 @@ func runStart(args []string) error {
 	fmt.Printf("  Server: %s (pid %d)\n", serverURL, sState.PID)
 	fmt.Printf("  MinIO:  http://127.0.0.1:%d (console http://127.0.0.1:%d)\n", mState.APIPort, mState.ConsolePort)
 	for _, c := range clients {
-		fmt.Printf("  Client: %s (daemon http://127.0.0.1:%d pid %d)\n", c.Email, c.Port, c.PID)
+		if c.PID > 0 {
+			fmt.Printf("  Client: %s (daemon http://127.0.0.1:%d pid %d)\n", c.Email, c.Port, c.PID)
+		} else {
+			fmt.Printf("  Client: %s (config only; control-plane http://127.0.0.1:%d)\n", c.Email, c.Port)
+		}
 	}
 	fmt.Printf("State: %s\n", statePath)
 
-	if !opts.skipSyncCheck {
+	if !opts.skipSyncCheck && !opts.skipClientDaemons {
 		if err := runSyncCheck(opts.root, opts.clients); err != nil {
 			fmt.Printf("Sync check warning (continuing): %v\n", err)
 		}
@@ -362,6 +378,8 @@ func parseStartFlags(args []string) (startOptions, error) {
 			opts.keepData = true
 		case "--skip-sync-check":
 			opts.skipSyncCheck = true
+		case "--skip-client-daemons":
+			opts.skipClientDaemons = true
 		case "--reset":
 			opts.reset = true
 		default:
@@ -854,6 +872,62 @@ func writeServerConfig(path string, port, minioPort int, dataDir, logDir string)
 	return os.WriteFile(path, data, 0o644)
 }
 
+func initClient(root, email, serverURL string, port int) (clientState, error) {
+	emailDir := filepath.Join(root, email)
+	homeDir := emailDir
+	configDir := filepath.Join(homeDir, ".syftbox")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return clientState{}, err
+	}
+	dataDir := emailDir
+	// Ensure encrypted and shadow roots exist under the workspace root.
+	if err := os.MkdirAll(filepath.Join(dataDir, "datasites"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "unencrypted"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	logDir := filepath.Join(homeDir, ".syftbox", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return clientState{}, err
+	}
+
+	clientURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	configPath := filepath.Join(configDir, "config.json")
+	cfg := map[string]any{
+		"data_dir":     dataDir,
+		"email":        email,
+		"server_url":   serverURL,
+		"client_url":   clientURL,
+		"client_token": "",
+	}
+	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return clientState{}, err
+	}
+	if err := os.WriteFile(configPath, cfgData, 0o644); err != nil {
+		return clientState{}, err
+	}
+
+	logFile := filepath.Join(emailDir, "client-daemon.log")
+	// Create/truncate the log file so tooling that expects it can still tail it.
+	if err := os.WriteFile(logFile, []byte("client daemon not started (skip-client-daemons)\n"), 0o644); err != nil {
+		return clientState{}, err
+	}
+
+	return clientState{
+		Email:     email,
+		PID:       0,
+		Port:      port,
+		Config:    configPath,
+		DataPath:  dataDir,
+		LogPath:   logFile,
+		HomePath:  homeDir,
+		BinPath:   "",
+		ServerURL: serverURL,
+	}, nil
+}
+
 func startClient(binPath, root, email, serverURL string, port int) (clientState, error) {
 	emailDir := filepath.Join(root, email)
 	homeDir := emailDir
@@ -1344,6 +1418,9 @@ func processExists(pid int) bool {
 }
 
 func killProcess(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
