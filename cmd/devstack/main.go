@@ -208,8 +208,15 @@ func runStart(args []string) error {
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
+	// On Windows, binaries need .exe extension
+	serverName := "server"
+	clientName := "syftbox"
+	if runtime.GOOS == "windows" {
+		serverName = "server.exe"
+		clientName = "syftbox.exe"
+	}
+	serverBin := filepath.Join(binDir, serverName)
+	clientBin := filepath.Join(binDir, clientName)
 
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
