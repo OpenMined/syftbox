@@ -382,23 +382,29 @@ func buildBinary(outPath, pkg, tags string) error {
 }
 
 func ensureMinioBinary(binDir string) (string, error) {
-	if path, err := exec.LookPath(minioBinaryName); err == nil {
+	// On Windows, the binary has .exe extension
+	binaryName := minioBinaryName
+	if runtime.GOOS == "windows" {
+		binaryName = minioBinaryName + ".exe"
+	}
+
+	if path, err := exec.LookPath(binaryName); err == nil {
 		return path, nil
 	}
 
 	// check sbdev cache (~/.sbdev/bin/minio) if present
-	sbdevPath := filepath.Join(os.Getenv("HOME"), ".sbdev", "bin", minioBinaryName)
+	sbdevPath := filepath.Join(os.Getenv("HOME"), ".sbdev", "bin", binaryName)
 	if _, err := os.Stat(sbdevPath); err == nil {
 		return sbdevPath, nil
 	}
 
 	// check global cache
-	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", minioBinaryName)
+	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", binaryName)
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	}
 
-	target := filepath.Join(binDir, minioBinaryName)
+	target := filepath.Join(binDir, binaryName)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
