@@ -18,6 +18,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS sync_journal (
     path TEXT PRIMARY KEY,
     etag TEXT NOT NULL,
+    local_etag TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL,
     size INTEGER NOT NULL,
     last_modified TEXT NOT NULL -- Store as RFC3339 string
@@ -33,6 +34,7 @@ type dbFileMetadata struct {
 	Path         SyncPath `db:"path"`
 	Size         int64    `db:"size"`
 	ETag         string   `db:"etag"`
+	LocalETag    string   `db:"local_etag"`
 	Version      string   `db:"version"`
 	LastModified string   `db:"last_modified"`
 }
@@ -73,8 +75,36 @@ func (s *SyncJournal) Open() error {
 		return fmt.Errorf("failed to initialize journal schema: %w", err)
 	}
 
+	// Migrate older journals missing local_etag.
+	if err := ensureLocalETagColumn(db); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to migrate journal schema: %w", err)
+	}
+
 	s.db = db
 	return nil
+}
+
+func ensureLocalETagColumn(db *sqlx.DB) error {
+	type colInfo struct {
+		CID       int     `db:"cid"`
+		Name      string  `db:"name"`
+		Type      string  `db:"type"`
+		NotNull   int     `db:"notnull"`
+		Default   *string `db:"dflt_value"`
+		PrimaryKey int    `db:"pk"`
+	}
+	var cols []colInfo
+	if err := db.Select(&cols, "PRAGMA table_info(sync_journal)"); err != nil {
+		return err
+	}
+	for _, c := range cols {
+		if c.Name == "local_etag" {
+			return nil
+		}
+	}
+	_, err := db.Exec("ALTER TABLE sync_journal ADD COLUMN local_etag TEXT NOT NULL DEFAULT ''")
+	return err
 }
 
 // Close closes the underlying database connection.
@@ -93,7 +123,7 @@ func (s *SyncJournal) Close() error {
 // Get retrieves the metadata for a specific path.
 func (s *SyncJournal) Get(path SyncPath) (*FileMetadata, error) {
 	var dbMeta dbFileMetadata
-	err := s.db.Get(&dbMeta, "SELECT path, size, etag, version, last_modified FROM sync_journal WHERE path = ?", path)
+	err := s.db.Get(&dbMeta, "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal WHERE path = ?", path)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -112,6 +142,7 @@ func (s *SyncJournal) Get(path SyncPath) (*FileMetadata, error) {
 		Path:         dbMeta.Path,
 		Size:         dbMeta.Size,
 		ETag:         dbMeta.ETag,
+		LocalETag:    dbMeta.LocalETag,
 		Version:      dbMeta.Version,
 		LastModified: modTime,
 	}
@@ -141,12 +172,13 @@ func (s *SyncJournal) Set(state *FileMetadata) error {
 		Path:         state.Path,
 		Size:         state.Size,
 		ETag:         state.ETag,
+		LocalETag:    state.LocalETag,
 		Version:      state.Version,
 		LastModified: state.LastModified.Format(time.RFC3339),
 	}
 
-	query := `INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) 
-	          VALUES (:path, :size, :etag, :version, :last_modified)`
+	query := `INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) 
+	          VALUES (:path, :size, :etag, :local_etag, :version, :last_modified)`
 	_, err := s.db.NamedExec(query, data)
 	if err != nil {
 		return fmt.Errorf("failed to set state for path %s: %w", state.Path, err)
@@ -167,7 +199,7 @@ func (s *SyncJournal) GetPaths() ([]SyncPath, error) {
 // GetState retrieves the entire state map from the journal.
 func (s *SyncJournal) GetState() (map[SyncPath]*FileMetadata, error) {
 	var dbMetas []dbFileMetadata
-	err := s.db.Select(&dbMetas, "SELECT path, size, etag, version, last_modified FROM sync_journal")
+	err := s.db.Select(&dbMetas, "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query full state: %w", err)
 	}
@@ -184,6 +216,7 @@ func (s *SyncJournal) GetState() (map[SyncPath]*FileMetadata, error) {
 			Path:         dbMeta.Path,
 			Size:         dbMeta.Size,
 			ETag:         dbMeta.ETag,
+			LocalETag:    dbMeta.LocalETag,
 			Version:      dbMeta.Version,
 			LastModified: modTime,
 		}

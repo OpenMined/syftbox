@@ -3,6 +3,7 @@ package blob
 import (
 	"fmt"
 
+	"github.com/openmined/syftbox/internal/server/blob"
 	"github.com/openmined/syftbox/internal/server/handlers/api"
 )
 
@@ -44,6 +45,33 @@ type UploadResponse struct {
 	ETag         string `json:"etag"`
 	Size         int64  `json:"size"`
 	LastModified string `json:"lastModified"`
+}
+
+type MultipartUploadRequest struct {
+	Key         string `json:"key" binding:"required"`
+	Size        int64  `json:"size" binding:"required"`
+	PartSize    int64  `json:"partSize"`
+	UploadID    string `json:"uploadId"`
+	PartNumbers []int  `json:"partNumbers"`
+}
+
+type MultipartUploadResponse struct {
+	Key       string         `json:"key"`
+	UploadID  string         `json:"uploadId"`
+	PartSize  int64          `json:"partSize"`
+	PartCount int            `json:"partCount"`
+	URLs      map[int]string `json:"urls"`
+}
+
+type CompleteMultipartUploadRequest struct {
+	Key      string                `json:"key" binding:"required"`
+	UploadID string                `json:"uploadId" binding:"required"`
+	Parts    []*blob.CompletedPart `json:"parts" binding:"required"`
+}
+
+type AbortMultipartUploadRequest struct {
+	Key      string `json:"key" binding:"required"`
+	UploadID string `json:"uploadId" binding:"required"`
 }
 
 type PresignURLRequest struct {

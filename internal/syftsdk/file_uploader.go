@@ -3,6 +3,7 @@ package syftsdk
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -34,8 +35,12 @@ func UploadPresigned(ctx context.Context, url string, path string, callback Prog
 		totalSize: fileInfo.Size(),
 		callback:  callback,
 	}
+	bodyReader := io.Reader(progressReader)
+	if stats := getHTTPStats(); stats != nil {
+		bodyReader = &countingReader{r: progressReader, onRead: stats.onSend}
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, progressReader)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bodyReader)
 	if err != nil {
 		return nil, err
 	}
@@ -47,9 +52,15 @@ func UploadPresigned(ctx context.Context, url string, path string, callback Prog
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		if stats := getHTTPStats(); stats != nil {
+			stats.setLastError(err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if stats := getHTTPStats(); stats != nil && resp.Body != nil {
+		_, _ = io.Copy(io.Discard, &countingReader{r: resp.Body, onRead: stats.onRecv})
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to upload blob: %v", resp.Status)

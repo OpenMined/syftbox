@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftsdk"
@@ -49,4 +50,30 @@ func (m *SyncManager) Start(ctx context.Context) error {
 func (m *SyncManager) Stop() error {
 	slog.Info("sync manager stop")
 	return m.engine.Stop()
+}
+
+func (m *SyncManager) GetSyncStatus() *SyncStatus {
+	return m.engine.syncStatus
+}
+
+func (m *SyncManager) GetUploadRegistry() *UploadRegistry {
+	return m.engine.uploadRegistry
+}
+
+// LastSyncTime returns the last completed full sync time.
+// This is best-effort and may be zero before first sync.
+func (m *SyncManager) LastSyncTime() time.Time {
+	ns := m.engine.lastSyncNs.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns).UTC()
+}
+
+func (m *SyncManager) TriggerSync() {
+	go func() {
+		if err := m.engine.RunSync(context.Background()); err != nil {
+			slog.Error("triggered sync", "error", err)
+		}
+	}()
 }

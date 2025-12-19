@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
 	"time"
@@ -18,6 +19,20 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	}
 
 	syncRelPath := SyncPath(createMsg.Path)
+
+	// If content is empty, this is a push notification (not embedded content)
+	// Trigger an immediate sync to download the file
+	if len(createMsg.Content) == 0 {
+		slog.Info("push notification received, triggering immediate sync", "path", createMsg.Path, "etag", createMsg.ETag)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := se.runFullSync(ctx); err != nil {
+				slog.Error("sync after push notification failed", "path", createMsg.Path, "error", err)
+			}
+		}()
+		return
+	}
 
 	// set sync status
 	se.syncStatus.SetSyncing(syncRelPath)
@@ -42,13 +57,22 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	}
 
 	// Update the sync journal
-	se.journal.Set(&FileMetadata{
+	localETag := ""
+	if et, err := calculateETag(localAbsPath); err == nil {
+		localETag = et
+	}
+	if err := se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         createMsg.ETag,
+		LocalETag:    localETag,
 		Size:         createMsg.Length,
 		LastModified: time.Now(),
 		Version:      "",
-	})
+	}); err != nil {
+		se.syncStatus.SetError(syncRelPath, err)
+		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", err)
+		return
+	}
 
 	// mark as completed
 	se.syncStatus.SetCompleted(syncRelPath)
