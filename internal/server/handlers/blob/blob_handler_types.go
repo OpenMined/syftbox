@@ -63,3 +63,34 @@ type DeleteResponse struct {
 	Deleted []string        `json:"deleted"`
 	Errors  []*BlobAPIError `json:"errors"`
 }
+
+// Multipart upload types
+type MultipartUploadRequest struct {
+	Key   string `json:"key" binding:"required"`
+	Parts int    `json:"parts" binding:"required,min=1,max=10000"`
+}
+
+type MultipartUploadResponse struct {
+	Key      string   `json:"key"`
+	UploadID string   `json:"uploadId"`
+	URLs     []string `json:"urls"`
+}
+
+type CompleteUploadRequest struct {
+	Key      string                 `json:"key" binding:"required"`
+	UploadID string                 `json:"uploadId" binding:"required"`
+	Parts    []CompletedPartRequest `json:"parts" binding:"required,min=1"`
+}
+
+type CompletedPartRequest struct {
+	PartNumber int    `json:"partNumber" binding:"required,min=1"`
+	ETag       string `json:"etag" binding:"required"`
+}
+
+type CompleteUploadResponse struct {
+	Key          string `json:"key"`
+	Version      string `json:"version"`
+	ETag         string `json:"etag"`
+	Size         int64  `json:"size"`
+	LastModified string `json:"lastModified"`
+}
