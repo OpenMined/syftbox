@@ -599,10 +599,14 @@ func (se *SyncEngine) hasModified(f1, f2 *FileMetadata) bool {
 			if path == "" {
 				path = f2.Path
 			}
+			owner := ""
+			if se.workspace != nil {
+				owner = se.workspace.Owner
+			}
 			// Large files can have multipart-style remote ETags (md5-<parts>) while local ETags
 			// are plain MD5. For non-owner mirror paths, treat mixed-format ETags as unmodified
 			// when sizes match to avoid reupload/conflict loops.
-			if !isOwnerSyncPath(se.workspace.Owner, path) && isMixedMultipartETagPair(e1, e2) && f1.Size == f2.Size {
+			if !isOwnerSyncPath(owner, path) && isMixedMultipartETagPair(e1, e2) && f1.Size == f2.Size {
 				return false
 			}
 			return true

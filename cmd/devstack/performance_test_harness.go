@@ -190,9 +190,14 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 	if err := buildBinary(s.serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(s.clientBin, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+
+	// Build (or resolve) the default Go client binary; per-email overrides and SBDEV_CLIENT_MODE
+	// are applied when starting each client so persistent mode works for rust/mixed too.
+	clientBin, err := resolveClientBinary(s.binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags)
+	if err != nil {
 		return fmt.Errorf("build client: %w", err)
 	}
+	s.clientBin = clientBin
 
 	if s.minio.PID == 0 {
 		// Allocate ports for MinIO; keep it running across tests.
@@ -327,9 +332,14 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 
 	t.Logf("Starting clients for test...")
 	var clients []clientState
-	for _, email := range s.emails {
+	for i, email := range s.emails {
 		port, _ := getFreePort()
-		cState, err := startClient(s.clientBin, s.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, i, s.clientBin)
+		if err != nil {
+			_ = killProcess(sState.PID)
+			return fmt.Errorf("resolve client bin %s: %w", email, err)
+		}
+		cState, err := startClient(binForEmail, s.root, email, serverURL, port)
 		if err != nil {
 			_ = killProcess(sState.PID)
 			return fmt.Errorf("start client %s: %w", email, err)
@@ -418,17 +428,15 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	if err := buildBinary(serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
 		return stackState{}, fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(clientBin, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
-		return stackState{}, fmt.Errorf("build client: %w", err)
-	}
+		if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+			return stackState{}, fmt.Errorf("build client: %w", err)
+		}
 
-	// Allocate ports (ensure MinIO API and console ports differ)
+	// Allocate ports (ensure MinIO API and console ports differ).
+	// MinIO can occasionally fail to bind if a port becomes occupied between selection and start,
+	// especially across rapid test runs. Retry with new ports if startup fails.
 	serverPort, _ := getFreePort()
-	minioAPIPort, _ := getFreePort()
-	minioConsolePort, _ := getFreePort()
-	for minioConsolePort == minioAPIPort {
-		minioConsolePort, _ = getFreePort()
-	}
+	var minioAPIPort, minioConsolePort int
 
 	// Start MinIO
 	t.Logf("Starting MinIO...")
@@ -437,10 +445,44 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 		return stackState{}, fmt.Errorf("minio binary unavailable: %w", err)
 	}
 
-	mState, err := startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
-	if err != nil {
-		return stackState{}, fmt.Errorf("start minio: %w", err)
-	}
+		var mState minioState
+		var minioErr error
+		for attempt := 0; attempt < 5; attempt++ {
+			var err error
+			minioAPIPort, err = getFreePort()
+			if err != nil {
+				minioErr = fmt.Errorf("allocate minio api port: %w", err)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			minioConsolePort, err = getFreePort()
+			if err != nil {
+				minioErr = fmt.Errorf("allocate minio console port: %w", err)
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
+				minioConsolePort, err = getFreePort()
+				if err != nil {
+					minioErr = fmt.Errorf("allocate minio console port: %w", err)
+					break
+				}
+			}
+			if minioConsolePort == minioAPIPort {
+				minioErr = fmt.Errorf("unable to allocate distinct minio ports")
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+
+			mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
+			if minioErr == nil {
+				break
+			}
+			t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
+		}
+		if minioErr != nil {
+			return stackState{}, fmt.Errorf("start minio: %w", minioErr)
+		}
 
 	// Setup bucket
 	if err := setupBucket(mState.APIPort); err != nil {
@@ -460,9 +502,13 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	// Start clients
 	t.Logf("Starting clients...")
 	var clients []clientState
-	for _, email := range opts.clients {
-		port, _ := getFreePort()
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		for i, email := range opts.clients {
+			port, _ := getFreePort()
+			binForEmail, err := clientBinaryForEmail(email, i, clientBin)
+			if err != nil {
+				t.Fatalf("client bin for %s: %v", email, err)
+		}
+		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
 			_ = killProcess(sState.PID)
 			stopMinio(mState)

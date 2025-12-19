@@ -3,6 +3,8 @@ package sync
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -23,6 +25,7 @@ type FileWatcher struct {
 	watchDir        string
 	events          chan notify.EventInfo
 	rawEvents       chan notify.EventInfo
+	usingNotify     bool
 	ignore          map[string]time.Time
 	ignoreMu        sync.RWMutex
 	cleanupInterval time.Duration
@@ -43,6 +46,7 @@ func NewFileWatcher(watchDir string) *FileWatcher {
 		watchDir:        watchDir,
 		events:          nil,
 		rawEvents:       nil,
+		usingNotify:     false,
 		ignore:          make(map[string]time.Time),
 		cleanupInterval: defaultCleanupInterval,
 		done:            make(chan struct{}),
@@ -77,7 +81,19 @@ func (fw *FileWatcher) Start(ctx context.Context) error {
 
 	recursivePath := fw.watchDir + "/..."
 	if err := notify.Watch(recursivePath, fw.rawEvents, notify.Write); err != nil {
-		return err
+		// Some environments (notably macOS FSEvents in sandboxed/headless contexts)
+		// can fail to start a recursive watch. Fall back to a non-recursive watch so
+		// local edits in the root watchDir still trigger sync.
+		if fallbackErr := notify.Watch(fw.watchDir, fw.rawEvents, notify.Write); fallbackErr != nil {
+			slog.Warn("file watcher notify backend unavailable; using polling fallback", "dir", fw.watchDir, "error", err)
+			fw.wg.Add(1)
+			go fw.pollForChanges(ctx)
+		} else {
+			fw.usingNotify = true
+			slog.Warn("file watcher recursive watch failed; using non-recursive watch", "dir", fw.watchDir, "error", err)
+		}
+	} else {
+		fw.usingNotify = true
 	}
 
 	// Start the filtering goroutine
@@ -98,7 +114,7 @@ func (fw *FileWatcher) Stop() {
 	close(fw.done)
 
 	// Stop notify watching (this closes the channel automatically)
-	if fw.rawEvents != nil {
+	if fw.usingNotify && fw.rawEvents != nil {
 		notify.Stop(fw.rawEvents)
 	}
 
@@ -147,6 +163,69 @@ func (fw *FileWatcher) isPathTemporarilyIgnored(path string) bool {
 	// Path is ignored and not expired, remove it and return true
 	delete(fw.ignore, path)
 	return true
+}
+
+type pollingEventInfo struct {
+	path  string
+	event notify.Event
+}
+
+func (e pollingEventInfo) Event() notify.Event { return e.event }
+func (e pollingEventInfo) Path() string        { return e.path }
+func (e pollingEventInfo) Sys() interface{}    { return nil }
+
+type pollingFileSig struct {
+	modTime int64
+	size    int64
+}
+
+func (fw *FileWatcher) pollForChanges(ctx context.Context) {
+	defer fw.wg.Done()
+
+	const interval = 25 * time.Millisecond
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	snapshot := make(map[string]pollingFileSig)
+	scan := func() {
+		_ = filepath.WalkDir(fw.watchDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				return nil
+			}
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			sig := pollingFileSig{modTime: info.ModTime().UnixNano(), size: info.Size()}
+			prev, ok := snapshot[path]
+			if !ok || prev != sig {
+				snapshot[path] = sig
+				select {
+				case fw.rawEvents <- pollingEventInfo{path: path, event: notify.Write}:
+				default:
+					// rawEvents channel full; drop event (debounce will coalesce anyway)
+				}
+			}
+			return nil
+		})
+	}
+
+	// Initial scan establishes baseline.
+	scan()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-fw.done:
+			return
+		case <-ticker.C:
+			scan()
+		}
+	}
 }
 
 // filterEvents filters out ignored paths, debounces events, and forwards the rest
