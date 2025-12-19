@@ -49,6 +49,16 @@ pub fn validate_token(token: &str, expected_type: &str, email: &str) -> Result<(
     Ok(())
 }
 
+pub fn token_subject(token: &str) -> Option<String> {
+    let payload = parse_jwt_payload(token).ok()?;
+    let sub = payload.sub.trim().to_string();
+    if sub.is_empty() {
+        None
+    } else {
+        Some(sub)
+    }
+}
+
 fn parse_jwt_payload(token: &str) -> Result<JwtPayload> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() < 2 {

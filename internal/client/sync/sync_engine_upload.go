@@ -126,19 +126,13 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 					// 1. mark as rejected
 					// 2. delete from journal
 					// 3. need to pull the previous version again
-					if isOwnerSyncPath(se.workspace.Owner, op.RelPath) {
-						if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
-							// Failed to mark as rejected, set error state
-							se.syncStatus.SetError(op.RelPath, markErr)
-							slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
-						} else {
-							// Successfully marked as rejected
-							slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
-							se.syncStatus.SetRejected(op.RelPath)
-						}
+					if markedPath, markErr := SetMarker(localAbsPath, Rejected); markErr != nil {
+						// Failed to mark as rejected, set error state
+						se.syncStatus.SetError(op.RelPath, markErr)
+						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", markErr, "DEBUG_REJECTION_REASON", "SetMarker_failed")
 					} else {
-						// For non-owner datasites, do not create rejected markers to avoid loops/disk spam.
-						slog.Warn("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "reason", "non-owner rejection (marker suppressed)")
+						// Successfully marked as rejected
+						slog.Error("sync", "type", SyncStandard, "op", OpWriteRemote, "path", op.RelPath, "error", sdkErr, "movedTo", markedPath, "DEBUG_REJECTION_REASON", fmt.Sprintf("server_error_code_%s", sdkErr.ErrorCode()), "DEBUG_SERVER_ERROR", sdkErr.Error())
 						se.syncStatus.SetRejected(op.RelPath)
 					}
 					se.journal.Delete(op.RelPath)

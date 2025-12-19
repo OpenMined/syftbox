@@ -3,6 +3,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::{Context, Result};
@@ -18,6 +19,8 @@ use crate::filters::SyncFilters;
 use crate::http::{ApiClient, BlobInfo, HttpStatusError, PresignedParams};
 use crate::uploader::upload_blob_smart;
 
+static OWNER_MISMATCH_LOGGED: AtomicBool = AtomicBool::new(false);
+
 #[derive(Debug, Clone)]
 struct LocalFile {
     key: String,
@@ -30,6 +33,8 @@ struct LocalFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetadata {
     pub etag: String,
+    #[serde(default)]
+    pub local_etag: String,
     pub size: i64,
     pub last_modified: i64,
     #[serde(default)]
@@ -48,6 +53,7 @@ const SYNC_JOURNAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sync_journal (
     path TEXT PRIMARY KEY,
     etag TEXT NOT NULL,
+    local_etag TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL,
     size INTEGER NOT NULL,
     last_modified TEXT NOT NULL
@@ -76,23 +82,27 @@ impl SyncJournal {
             .with_context(|| format!("open journal {}", db_path.display()))?;
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
+        ensure_local_etag_column(&conn).context("migrate sync journal")?;
 
         let mut state = JournalState::default();
-        let mut stmt =
-            conn.prepare("SELECT path, size, etag, version, last_modified FROM sync_journal")?;
+        let mut stmt = conn.prepare(
+            "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal",
+        )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let path: String = row.get(0)?;
             let size: i64 = row.get(1)?;
             let etag: String = row.get(2)?;
-            let version: String = row.get(3)?;
-            let last_modified: String = row.get(4)?;
+            let local_etag: String = row.get(3)?;
+            let version: String = row.get(4)?;
+            let last_modified: String = row.get(5)?;
 
             let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
             state.files.insert(
                 path,
                 FileMetadata {
                     etag,
+                    local_etag,
                     size,
                     last_modified: lm_epoch,
                     version,
@@ -118,17 +128,20 @@ impl SyncJournal {
             .with_context(|| format!("open journal {}", self.db_path.display()))?;
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
+        ensure_local_etag_column(&conn).context("migrate sync journal")?;
 
         let mut next = HashMap::new();
-        let mut stmt =
-            conn.prepare("SELECT path, size, etag, version, last_modified FROM sync_journal")?;
+        let mut stmt = conn.prepare(
+            "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal",
+        )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let path: String = row.get(0)?;
             let size: i64 = row.get(1)?;
             let etag: String = row.get(2)?;
-            let version: String = row.get(3)?;
-            let last_modified: String = row.get(4)?;
+            let local_etag: String = row.get(3)?;
+            let version: String = row.get(4)?;
+            let last_modified: String = row.get(5)?;
 
             let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
             let completed_at = self
@@ -141,6 +154,7 @@ impl SyncJournal {
                 path,
                 FileMetadata {
                     etag,
+                    local_etag,
                     size,
                     last_modified: lm_epoch,
                     version,
@@ -164,6 +178,7 @@ impl SyncJournal {
             .with_context(|| format!("open journal {}", self.db_path.display()))?;
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
+        ensure_local_etag_column(&conn).context("migrate sync journal")?;
 
         let tx = conn.transaction().context("begin sync journal tx")?;
         {
@@ -175,7 +190,7 @@ impl SyncJournal {
 
         {
             let mut upsert_stmt = tx.prepare(
-                "INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?;
             for key in &self.dirty {
                 if let Some(meta) = self.state.files.get(key) {
@@ -184,6 +199,7 @@ impl SyncJournal {
                         key,
                         meta.size,
                         meta.etag,
+                        meta.local_etag,
                         meta.version,
                         last_modified
                     ])?;
@@ -238,6 +254,7 @@ impl SyncJournal {
                         key.clone(),
                         FileMetadata {
                             etag: l.etag.clone(),
+                            local_etag: l.etag.clone(),
                             size: l.size,
                             last_modified: l.last_modified,
                             version: String::new(),
@@ -254,6 +271,7 @@ pub(crate) fn journal_upsert_direct(
     data_dir: &Path,
     key: &str,
     etag: &str,
+    local_etag: &str,
     size: i64,
     last_modified_epoch: i64,
 ) -> Result<()> {
@@ -272,11 +290,12 @@ pub(crate) fn journal_upsert_direct(
         .with_context(|| format!("open journal {}", db_path.display()))?;
     conn.execute_batch(SYNC_JOURNAL_SCHEMA)
         .context("init sync journal schema")?;
+    ensure_local_etag_column(&conn).context("migrate sync journal")?;
 
     let last_modified = epoch_to_rfc3339(last_modified_epoch);
     conn.execute(
-        "INSERT OR REPLACE INTO sync_journal (path, size, etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![key, size, etag, "", last_modified],
+        "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![key, size, etag, local_etag, "", last_modified],
     )
     .context("upsert sync journal row")?;
 
@@ -294,6 +313,22 @@ fn parse_rfc3339_epoch(raw: &str) -> Option<i64> {
     Some(parsed.with_timezone(&chrono::Utc).timestamp())
 }
 
+fn ensure_local_etag_column(conn: &rusqlite::Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(sync_journal)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == "local_etag" {
+            return Ok(());
+        }
+    }
+    conn.execute(
+        "ALTER TABLE sync_journal ADD COLUMN local_etag TEXT NOT NULL DEFAULT ''",
+        [],
+    )?;
+    Ok(())
+}
+
 pub async fn sync_once_with_control(
     api: &ApiClient,
     data_dir: &Path,
@@ -306,6 +341,21 @@ pub async fn sync_once_with_control(
     journal
         .refresh_from_disk()
         .context("refresh sync journal")?;
+
+    let token_subject = api
+        .current_access_token()
+        .await
+        .and_then(|t| crate::auth::token_subject(&t));
+    let owner_mismatch = token_subject
+        .as_deref()
+        .is_some_and(|sub| sub != owner_email);
+    if owner_mismatch && !OWNER_MISMATCH_LOGGED.swap(true, Ordering::SeqCst) {
+        crate::logging::error(format!(
+            "sync identity mismatch: config email={} token subject={}",
+            owner_email,
+            token_subject.as_deref().unwrap_or("")
+        ));
+    }
 
     let datasites_root = data_dir.join("datasites");
     let local = local_scanner.scan(&datasites_root, filters)?;
@@ -344,6 +394,8 @@ pub async fn sync_once_with_control(
         let remote_exists = remote_meta.is_some();
         let journal_exists = journal_meta.is_some();
 
+        let is_owner = is_owner_sync_key(owner_email, &key);
+
         // Special case: both local and remote exist but journal is missing.
         //
         // When journal entries are missing, the default baseline comparison can treat both sides as
@@ -355,7 +407,6 @@ pub async fn sync_once_with_control(
         if local_exists && remote_exists && !journal_exists {
             let l = local_meta.unwrap();
             let r = remote_meta.unwrap();
-            let is_owner = is_owner_sync_key(owner_email, &key);
             let differs = content_differs_for_key(
                 is_owner,
                 &l.etag,
@@ -371,6 +422,7 @@ pub async fn sync_once_with_control(
                         key.clone(),
                         FileMetadata {
                             etag: r.etag.clone(),
+                            local_etag: l.etag.clone(),
                             size: r.size,
                             last_modified: r.last_modified.timestamp(),
                             version: String::new(),
@@ -392,7 +444,7 @@ pub async fn sync_once_with_control(
             let now = chrono::Utc::now().timestamp();
             if jm.completed_at > 0 && now - jm.completed_at < 5 {
                 let remote_changed =
-                    remote_exists && has_modified_remote(Some(jm), remote_meta.unwrap());
+                    remote_exists && has_modified_remote(is_owner, Some(jm), remote_meta.unwrap());
                 if !remote_changed {
                     continue;
                 }
@@ -404,9 +456,10 @@ pub async fn sync_once_with_control(
         let local_deleted = !local_exists && journal_exists && remote_exists;
         let remote_deleted = local_exists && journal_exists && !remote_exists;
 
-        let local_modified = local_exists && has_modified_local(local_meta.unwrap(), journal_meta);
+        let local_modified =
+            local_exists && has_modified_local(is_owner, local_meta.unwrap(), journal_meta);
         let remote_modified =
-            remote_exists && has_modified_remote(journal_meta, remote_meta.unwrap());
+            remote_exists && has_modified_remote(is_owner, journal_meta, remote_meta.unwrap());
 
         if !local_exists && !remote_exists && journal_exists {
             journal.delete(&key);
@@ -427,6 +480,7 @@ pub async fn sync_once_with_control(
                         key.clone(),
                         FileMetadata {
                             etag: r.etag.clone(),
+                            local_etag: l.etag.clone(),
                             size: r.size,
                             last_modified: r.last_modified.timestamp(),
                             version: String::new(),
@@ -489,9 +543,7 @@ pub async fn sync_once_with_control(
                     .downcast_ref::<HttpStatusError>()
                     .is_some_and(|e| e.status == StatusCode::FORBIDDEN);
                 if forbidden {
-                    if is_owner_sync_key(owner_email, &l.key) {
-                        let _ = mark_rejected(&l.path);
-                    }
+                    let _ = mark_rejected(&l.path);
                     if let Some(cp) = control.as_ref() {
                         cp.set_sync_rejected(&l.key);
                     }
@@ -505,6 +557,7 @@ pub async fn sync_once_with_control(
                 l.key.clone(),
                 FileMetadata {
                     etag: l.etag.clone(),
+                    local_etag: l.etag.clone(),
                     size: l.size,
                     last_modified: l.last_modified,
                     version: String::new(),
@@ -526,12 +579,29 @@ pub async fn sync_once_with_control(
         }
 
         let staged = stage_downloads(api, &datasites_root, &download_keys_list).await?;
+        commit_staged_downloads(staged).await?;
+
         for key in &download_keys_list {
             if let Some(r) = remote.get(key) {
+                let local_path = datasites_root.join(key);
+                let local_etag = match fs::metadata(&local_path) {
+                    Ok(meta) => match compute_local_etag(&local_path, meta.len() as i64) {
+                        Ok(etag) => etag,
+                        Err(err) => {
+                            crate::logging::error(format!(
+                                "sync download hash error for {}: {err:?}",
+                                key
+                            ));
+                            String::new()
+                        }
+                    },
+                    Err(_) => String::new(),
+                };
                 journal.set(
                     key.clone(),
                     FileMetadata {
                         etag: r.etag.clone(),
+                        local_etag,
                         size: r.size,
                         last_modified: r.last_modified.timestamp(),
                         version: String::new(),
@@ -541,13 +611,7 @@ pub async fn sync_once_with_control(
             }
         }
 
-        if let Err(err) = journal.save() {
-            for item in staged {
-                let _ = fs::remove_file(&item.tmp);
-            }
-            return Err(err);
-        }
-        commit_staged_downloads(staged).await?;
+        journal.save()?;
         if let Some(cp) = control.as_ref() {
             for key in &download_keys_list {
                 cp.set_sync_completed(key);
@@ -650,32 +714,76 @@ fn is_multipart_etag(etag: &str) -> bool {
     is_plain_md5_etag(left) && !right.is_empty() && right.chars().all(|c| c.is_ascii_digit())
 }
 
-fn has_modified_local(local: &LocalFile, journal: Option<&FileMetadata>) -> bool {
+struct CompareMeta<'a> {
+    etag: &'a str,
+    local_etag: &'a str,
+    size: i64,
+    last_modified: i64,
+}
+
+fn has_modified_local(is_owner: bool, local: &LocalFile, journal: Option<&FileMetadata>) -> bool {
     has_modified(
-        journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)),
-        Some((&local.etag, local.size, local.last_modified)),
+        journal.map(|j| CompareMeta {
+            etag: j.etag.as_str(),
+            local_etag: j.local_etag.as_str(),
+            size: j.size,
+            last_modified: j.last_modified,
+        }),
+        Some(CompareMeta {
+            etag: local.etag.as_str(),
+            local_etag: local.etag.as_str(),
+            size: local.size,
+            last_modified: local.last_modified,
+        }),
+        is_owner,
     )
 }
 
-fn has_modified_remote(journal: Option<&FileMetadata>, remote: &BlobInfo) -> bool {
+fn has_modified_remote(is_owner: bool, journal: Option<&FileMetadata>, remote: &BlobInfo) -> bool {
     has_modified(
-        journal.map(|j| (j.etag.as_str(), j.size, j.last_modified)),
-        Some((&remote.etag, remote.size, remote.last_modified.timestamp())),
+        journal.map(|j| CompareMeta {
+            etag: j.etag.as_str(),
+            local_etag: j.local_etag.as_str(),
+            size: j.size,
+            last_modified: j.last_modified,
+        }),
+        Some(CompareMeta {
+            etag: remote.etag.as_str(),
+            local_etag: "",
+            size: remote.size,
+            last_modified: remote.last_modified.timestamp(),
+        }),
+        is_owner,
     )
 }
 
-fn has_modified(a: Option<(&str, i64, i64)>, b: Option<(&str, i64, i64)>) -> bool {
+fn has_modified(a: Option<CompareMeta<'_>>, b: Option<CompareMeta<'_>>, is_owner: bool) -> bool {
     match (a, b) {
         (None, None) => false,
         (None, Some(_)) | (Some(_), None) => true,
-        (Some((etag_a, size_a, lm_a)), Some((etag_b, size_b, lm_b))) => {
-            if !etag_a.is_empty() && !etag_b.is_empty() && etag_a != etag_b {
+        (Some(a), Some(b)) => {
+            if !a.local_etag.is_empty() && !b.local_etag.is_empty() {
+                return normalize_etag(a.local_etag) != normalize_etag(b.local_etag);
+            }
+
+            if !a.etag.is_empty() && !b.etag.is_empty() {
+                let ea = normalize_etag(a.etag);
+                let eb = normalize_etag(b.etag);
+                if ea == eb {
+                    return false;
+                }
+                if !is_owner && is_mixed_multipart_etag_pair(&ea, &eb) && a.size == b.size {
+                    // Mirror Go: tolerate mixed multipart-vs-plain ETags for non-owner paths.
+                    return false;
+                }
                 return true;
             }
-            if size_a != size_b {
+
+            if a.size != b.size {
                 return true;
             }
-            lm_a != lm_b
+
+            a.last_modified != b.last_modified
         }
     }
 }
@@ -963,7 +1071,7 @@ const MIN_MULTIPART_PART_SIZE: i64 = 5 * 1024 * 1024; // S3 minimum
 const MAX_MULTIPART_PARTS: i64 = 10000;
 const MULTIPART_THRESHOLD: i64 = 32 * 1024 * 1024; // match uploader / Go threshold
 
-fn compute_local_etag(path: &Path, size: i64) -> Result<String> {
+pub(crate) fn compute_local_etag(path: &Path, size: i64) -> Result<String> {
     if size > MULTIPART_THRESHOLD {
         let (part_size, part_count) = select_part_size(size, parse_part_size_env());
         return compute_multipart_etag(path, size, part_size, part_count);

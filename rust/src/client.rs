@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     fs,
+    io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -556,12 +557,20 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         // Go treats empty content as a push notification (no embedded bytes) when length>0.
         // Avoid writing empty files; download the blob instead.
         if content.is_empty() && file.length > 0 {
-            let _ = download_keys(api, datasites_root, vec![file.path]).await;
+            match download_keys(api, datasites_root, vec![file.path.clone()]).await {
+                Ok(()) => {
+                    journal_upsert_downloaded(datasites_root, &file.path, &file.etag, file.length);
+                }
+                Err(err) => {
+                    crate::logging::error(format!("ws download error: {err:?}"));
+                }
+            }
             return;
         }
 
+        let local_etag = format!("{:x}", md5_compute(&content));
         let etag = if file.etag.is_empty() {
-            format!("{:x}", md5_compute(&content))
+            local_etag.clone()
         } else {
             file.etag.clone()
         };
@@ -573,6 +582,7 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
                     data_dir,
                     &file.path,
                     &etag,
+                    &local_etag,
                     file.length,
                     chrono::Utc::now().timestamp(),
                 );
@@ -585,9 +595,10 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
             crate::logging::error(format!("ws write error: {err:?}"));
         } else if ws_should_update_journal() {
             if let Some(data_dir) = datasites_root.parent() {
+                // MD5 of empty content (matches server ETag semantics in devstack).
+                let local_etag = format!("{:x}", md5_compute([]));
                 let etag = if file.etag.is_empty() {
-                    // MD5 of empty content (matches server ETag semantics in devstack).
-                    format!("{:x}", md5_compute([]))
+                    local_etag.clone()
                 } else {
                     file.etag.clone()
                 };
@@ -595,6 +606,7 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
                     data_dir,
                     &file.path,
                     &etag,
+                    &local_etag,
                     0,
                     chrono::Utc::now().timestamp(),
                 );
@@ -602,7 +614,14 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         }
         return;
     }
-    let _ = download_keys(api, datasites_root, vec![file.path]).await;
+    match download_keys(api, datasites_root, vec![file.path.clone()]).await {
+        Ok(()) => {
+            journal_upsert_downloaded(datasites_root, &file.path, &file.etag, file.length);
+        }
+        Err(err) => {
+            crate::logging::error(format!("ws download error: {err:?}"));
+        }
+    }
 }
 
 fn ws_should_update_journal() -> bool {
@@ -621,9 +640,19 @@ async fn handle_ws_http(api: &ApiClient, datasites_root: &Path, http_msg: HttpMs
         if let Some(body) = http_msg.body {
             if let Err(err) = write_bytes(datasites_root, &file_key, &body) {
                 crate::logging::error(format!("ws http write error: {err:?}"));
+            } else {
+                let etag = format!("{:x}", md5_compute(&body));
+                journal_upsert_downloaded(datasites_root, &file_key, &etag, body.len() as i64);
             }
         } else {
-            let _ = download_keys(api, datasites_root, vec![file_key]).await;
+            match download_keys(api, datasites_root, vec![file_key.clone()]).await {
+                Ok(()) => {
+                    journal_upsert_downloaded(datasites_root, &file_key, "", 0);
+                }
+                Err(err) => {
+                    crate::logging::error(format!("ws http download error: {err:?}"));
+                }
+            }
         }
     }
 }
@@ -658,6 +687,44 @@ fn write_bytes(datasites_root: &Path, rel_path: &str, bytes: &[u8]) -> Result<()
     let target = datasites_root.join(rel_path);
     ensure_parent_dirs(&target)?;
     write_file_resolving_conflicts(&target, bytes)
+}
+
+fn journal_upsert_downloaded(datasites_root: &Path, key: &str, etag_hint: &str, size_hint: i64) {
+    if !ws_should_update_journal() {
+        return;
+    }
+    let Some(data_dir) = datasites_root.parent() else {
+        return;
+    };
+    let target = datasites_root.join(key);
+    if !target.exists() {
+        return;
+    }
+
+    let size = if size_hint > 0 {
+        size_hint
+    } else {
+        fs::metadata(&target).map(|m| m.len() as i64).unwrap_or(0)
+    };
+    let local_etag = crate::sync::compute_local_etag(&target, size).unwrap_or_default();
+    let etag = if !etag_hint.trim().is_empty() {
+        etag_hint.to_string()
+    } else {
+        local_etag.clone()
+    };
+
+    if etag.is_empty() && local_etag.is_empty() {
+        return;
+    }
+
+    let _ = crate::sync::journal_upsert_direct(
+        data_dir,
+        key,
+        &etag,
+        &local_etag,
+        size,
+        chrono::Utc::now().timestamp(),
+    );
 }
 
 async fn upload_existing_acls(
@@ -946,7 +1013,11 @@ async fn send_priority_if_small(
     path: &Path,
     ws: &WsHandle,
 ) -> Result<bool> {
-    let meta = tokio::fs::metadata(path).await?;
+    let meta = match tokio::fs::metadata(path).await {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
     if !meta.is_file() {
         return Ok(false);
     }
@@ -984,7 +1055,11 @@ async fn send_priority_if_small(
         return Ok(false);
     }
 
-    let bytes = tokio::fs::read(path).await?;
+    let bytes = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
     let etag = format!("{:x}", md5_compute(&bytes));
     let ack_timeout = Duration::from_secs(5);
     match ws
