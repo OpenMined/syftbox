@@ -5,6 +5,7 @@
 SyftBox is a privacy-preserving compute platform that enables secure data sharing and computation across distributed datasites.
 
 ## Documentation
+
 - [Access Logging System](./access-logging.md)
 - [Access Control List (ACL) System](./acl-system.md)
   - [Overview](./acl-system.md#overview)

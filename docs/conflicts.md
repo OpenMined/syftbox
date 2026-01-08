@@ -122,12 +122,12 @@ Resolution depends on timestamps:
 
 The sync journal (`sync.db`) stores the last successfully synced state:
 
-| Field | Purpose |
-|-------|---------|
-| `path` | File path relative to datasites |
-| `etag` | MD5 hash of last synced content |
-| `size` | File size in bytes |
-| `lastModified` | Timestamp of last sync |
+| Field          | Purpose                         |
+| -------------- | ------------------------------- |
+| `path`         | File path relative to datasites |
+| `etag`         | MD5 hash of last synced content |
+| `size`         | File size in bytes              |
+| `lastModified` | Timestamp of last sync          |
 
 The journal enables three-way merge by providing the "common ancestor" state.
 
@@ -147,6 +147,7 @@ just sbdev-test-conflict
 ```
 
 Tests include:
+
 - `TestSimultaneousWrite` - Two clients edit same file
 - `TestDivergentEdits` - Offline client reconnects with changes
 - `TestThreeWayConflict` - Three clients edit simultaneously
