@@ -43,10 +43,10 @@ WebSockets natively support binary frames, so SyftBox now supports a binary enco
 
 ### Supported Encodings
 
-| Encoding | WebSocket frame | Notes |
-|---|---|---|
-| `json` (legacy) | Text | `[]byte` fields are base64 (Go `encoding/json` behavior). |
-| `msgpack` (v1) | Binary | Native `[]byte`, no base64. Uses a small envelope. |
+| Encoding        | WebSocket frame | Notes                                                     |
+| --------------- | --------------- | --------------------------------------------------------- |
+| `json` (legacy) | Text            | `[]byte` fields are base64 (Go `encoding/json` behavior). |
+| `msgpack` (v1)  | Binary          | Native `[]byte`, no base64. Uses a small envelope.        |
 
 ### Client Capability Header
 
@@ -138,4 +138,3 @@ To introduce a new encoding or change message structure:
 2. Teach server/client to advertise and negotiate it.
 3. Bump envelope `version` if the wire layout changes.
 4. Keep decoding of older versions/encodings for compatibility.
-

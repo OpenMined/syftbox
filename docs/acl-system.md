@@ -51,23 +51,23 @@ terminal: false
 
 # Rules array - evaluated in order of specificity
 rules:
-  - pattern: "**/*.csv"     # Glob pattern for file matching
+  - pattern: '**/*.csv' # Glob pattern for file matching
     access:
-      admin: []             # Admin users (full control)
-      write: ["user1@example.com"]      # Write permission users
-      read: ["*"]           # Read permission users (* = everyone)
-  
-  - pattern: "private/**"
+      admin: [] # Admin users (full control)
+      write: ['user1@example.com'] # Write permission users
+      read: ['*'] # Read permission users (* = everyone)
+
+  - pattern: 'private/**'
     access:
-      admin: []             # Only datasite owner can access it.
-      write: []             # No read access
-      read: []              # No write access 
-  
-  - pattern: "**"           # Default rule (catch-all)
+      admin: [] # Only datasite owner can access it.
+      write: [] # No read access
+      read: [] # No write access
+
+  - pattern: '**' # Default rule (catch-all)
     access:
       admin: []
       write: []
-      read: ["user2@example.com", "user3@example.com"]
+      read: ['user2@example.com', 'user3@example.com']
 ```
 
 ### Special Tokens
@@ -82,23 +82,24 @@ The ACL system supports glob pattern matching in access lists, allowing you to g
 
 ```yaml
 rules:
-  - pattern: "company_docs/**"
+  - pattern: 'company_docs/**'
     access:
-      read: ["*@company.com"]      # All users with @company.com domain
-      write: ["*@company.com"]     # All users with @company.com domain
-  
-  - pattern: "admin_docs/**"
+      read: ['*@company.com'] # All users with @company.com domain
+      write: ['*@company.com'] # All users with @company.com domain
+
+  - pattern: 'admin_docs/**'
     access:
-      read: ["admin@company.com", "ceo@company.com"]
-      write: ["admin@company.com"]
-  
-  - pattern: "public/**"
+      read: ['admin@company.com', 'ceo@company.com']
+      write: ['admin@company.com']
+
+  - pattern: 'public/**'
     access:
-      read: ["*"]                  # Everyone
-      write: ["*@company.com"]     # Only company users can write
+      read: ['*'] # Everyone
+      write: ['*@company.com'] # Only company users can write
 ```
 
 **Supported Domain Patterns:**
+
 - `*@company.com` - Any user with @company.com domain
 - `*@*.company.com` - Any user with any subdomain of company.com
 - `admin@*.company.com` - Admin users in any subdomain
@@ -110,6 +111,7 @@ rules:
 ### Core Service Structure
 
 #### ACLService
+
 The main service orchestrating all ACL operations:
 
 ```go
@@ -123,6 +125,7 @@ type ACLService struct {
 ### Tree Components
 
 #### ACLTree
+
 N-ary tree structure for hierarchical rule storage:
 
 ```go
@@ -132,6 +135,7 @@ type ACLTree struct {
 ```
 
 #### ACLNode
+
 Each node represents a path segment in the tree:
 
 ```go
@@ -148,6 +152,7 @@ type ACLNode struct {
 ```
 
 Example node structure in memory:
+
 ```
 root (path: "/", owner: "")
 ├── alice (path: "alice", owner: "alice")
@@ -162,6 +167,7 @@ root (path: "/", owner: "")
 ```
 
 #### ACLRule
+
 Compiled rule with resolved patterns and matcher:
 
 ```go
@@ -176,6 +182,7 @@ type ACLRule struct {
 ### Rule Specification Structures
 
 #### RuleSet
+
 Represents a complete ACL file:
 
 ```go
@@ -187,6 +194,7 @@ type RuleSet struct {
 ```
 
 #### Rule
+
 Individual access rule from YAML:
 
 ```go
@@ -199,6 +207,7 @@ type Rule struct {
 ```
 
 #### Access
+
 Permission sets for different operations:
 
 ```go
@@ -215,6 +224,7 @@ type Access struct {
 ```
 
 #### AccessLevel
+
 Bitwise flags for permission levels:
 
 ```go
@@ -231,6 +241,7 @@ const (
 ### Pattern Matching System
 
 #### Matcher Interface
+
 The ACL system uses a pluggable matcher interface for different pattern types:
 
 ```go
@@ -255,6 +266,7 @@ const (
 ```
 
 #### Exact Matcher
+
 For direct path matching:
 
 ```go
@@ -268,6 +280,7 @@ type ExactMatcher struct {
 ```
 
 #### Glob Matcher
+
 For standard glob pattern matching:
 
 ```go
@@ -282,6 +295,7 @@ type GlobMatcher struct {
 ```
 
 #### Template Matcher
+
 For dynamic pattern resolution:
 
 ```go
@@ -294,6 +308,7 @@ type TemplateMatcher struct {
 ```
 
 #### Template Data
+
 Available variables for template resolution:
 
 ```go
@@ -307,6 +322,7 @@ type templateData struct {
 ```
 
 #### Template Functions
+
 Built-in functions for template manipulation:
 
 ```go
@@ -342,52 +358,54 @@ The ACL system supports dynamic template patterns using Go's text/template synta
 
 ```yaml
 rules:
-  - pattern: "private_{{.UserEmail}}/**"
+  - pattern: 'private_{{.UserEmail}}/**'
     access:
-      read: ["USER"]  # Only the user whose email matches the pattern
-      write: ["USER"]
-  
-  - pattern: "hash_{{.UserHash}}/**"
+      read: ['USER'] # Only the user whose email matches the pattern
+      write: ['USER']
+
+  - pattern: 'hash_{{.UserHash}}/**'
     access:
-      read: ["USER"]
-  
-  - pattern: "year_{{.Year}}/month_{{.Month}}/**"
+      read: ['USER']
+
+  - pattern: 'year_{{.Year}}/month_{{.Month}}/**'
     access:
-      read: ["*"]
+      read: ['*']
 ```
 
 #### Available Template Variables
 
 **`TokenUser='USER'` is applicable to ALL template variables** and can be used in access lists with any template pattern:
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `{{.UserEmail}}` | User's email address | `alice@example.com` |
-| `{{.UserHash}}` | SHA256 hash of user email (8 chars) | `a1b2c3d4` |
-| `{{.Year}}` | Current year (4 digits) | `2024` |
-| `{{.Month}}` | Current month (2 digits) | `12` |
-| `{{.Date}}` | Current day (2 digits) | `25` |
+| Variable         | Description                         | Example             |
+| ---------------- | ----------------------------------- | ------------------- |
+| `{{.UserEmail}}` | User's email address                | `alice@example.com` |
+| `{{.UserHash}}`  | SHA256 hash of user email (8 chars) | `a1b2c3d4`          |
+| `{{.Year}}`      | Current year (4 digits)             | `2024`              |
+| `{{.Month}}`     | Current month (2 digits)            | `12`                |
+| `{{.Date}}`      | Current day (2 digits)              | `25`                |
 
 #### Template Functions
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `{{upper .UserEmail}}` | Convert to uppercase | `ALICE@EXAMPLE.COM` |
-| `{{lower .UserEmail}}` | Convert to lowercase | `alice@example.com` |
-| `{{sha2 .UserEmail}}` | Full SHA256 hash | `a1b2c3d4e5f6...` |
-| `{{sha2 .UserEmail 8}}` | Truncated SHA256 hash | `a1b2c3d4` |
+| Function                | Description           | Example             |
+| ----------------------- | --------------------- | ------------------- |
+| `{{upper .UserEmail}}`  | Convert to uppercase  | `ALICE@EXAMPLE.COM` |
+| `{{lower .UserEmail}}`  | Convert to lowercase  | `alice@example.com` |
+| `{{sha2 .UserEmail}}`   | Full SHA256 hash      | `a1b2c3d4e5f6...`   |
+| `{{sha2 .UserEmail 8}}` | Truncated SHA256 hash | `a1b2c3d4`          |
 
 ### USER Token Resolution
 
 The `USER` token dynamically resolves to the requesting user's ID during access evaluation. **Important**: The behavior of `USER` token depends on the pattern context:
 
-#### **With Template Patterns (e.g., `{UserEmail}/**`)**
+#### **With Template Patterns (e.g., `{UserEmail}/**`)\*\*
+
 - `TokenUser` provides **user segregation** and **individual access control**
 - Example: `"private_{{.UserEmail}}/**"` with `read: ["USER"]`
 - This creates **user-specific private spaces** where each user can only access their own directory
 - `USER` token resolves to the requesting user's email, ensuring isolation
 
-#### **With Universal Patterns (e.g., `**`)**
+#### **With Universal Patterns (e.g., `**`)\*\*
+
 - `TokenUser` becomes **equivalent to TokenEveryone** (`*`)
 - Example: `"**"` with `read: ["USER"]`
 - This grants access to **any authenticated user**, not just the requesting user
@@ -395,18 +413,19 @@ The `USER` token dynamically resolves to the requesting user's ID during access 
 
 ```yaml
 rules:
-  - pattern: "personal/**"
+  - pattern: 'personal/**'
     access:
-      read: ["USER"]      # Resolves to requesting user's email
-      write: ["USER"]
-  
-  - pattern: "shared/**"
+      read: ['USER'] # Resolves to requesting user's email
+      write: ['USER']
+
+  - pattern: 'shared/**'
     access:
-      read: ["USER", "bob@example.com"]  # USER + specific user
-      write: ["alice@example.com"]
+      read: ['USER', 'bob@example.com'] # USER + specific user
+      write: ['alice@example.com']
 ```
 
 **Example Resolution:**
+
 - User `carol@example.com` requests access to `personal/file.txt`
 - `USER` token resolves to `carol@example.com`
 - Access check: `carol@example.com` ∈ `["carol@example.com"]` → **ALLOW**
@@ -429,12 +448,14 @@ func (r *ACLRule) resolveAccessList(accessList mapset.Set[string], userID string
 ```
 
 **Key Features:**
+
 - **Dynamic Resolution**: USER token is resolved at access time, not at rule compilation
 - **Non-Destructive**: Original rule is not modified, resolution happens per request
 - **Efficient**: Uses set operations for fast token replacement
 - **Flexible**: Can be combined with other user IDs in the same access list
 
 **Security Implications:**
+
 - **Template Patterns**: Provide **true user isolation** and **multi-tenancy**
 - **Universal Patterns**: `USER` token provides **authentication requirement** but not **authorization isolation**
 - **Best Practice**: Use template patterns for user-specific resources, avoid `USER` with `**` for sensitive data
@@ -480,7 +501,7 @@ When a user attempts to read a file (e.g., `bob` reading `/alice/public/data.csv
        [1] pattern: "**", access: {read: ["bob@example.com", "carol@example.com"]}
    └─> Test pattern "alice/public/**/*.csv" against "alice/public/data.csv"
        → MATCH! Check access...
-   └─> Is "bob@example.com" in read set ["*"]? 
+   └─> Is "bob@example.com" in read set ["*"]?
        → YES ("*" = everyone)
 
 6. CACHE UPDATE & RETURN
@@ -529,7 +550,7 @@ When a user attempts to write a file (e.g., `carol` creating `/alice/shared/repo
 
 3. ACL FILE CHECK
    └─> Is path "syft.pub.yaml"? NO → Continue with normal check
-   
+
 4. TREE LOOKUP (with caching)
    └─> Cache miss → Tree traversal
    └─> Path segments: ["alice", "shared", "report.txt"]
@@ -592,8 +613,8 @@ Rules are sorted by a specificity score to ensure most specific patterns match f
 ```go
 // Example calculation for pattern "public/**/*.csv"
 baseScore := len("public/**/*.csv")*2 + strings.Count("public/**/*.csv", "/")*10
-          = 15*2 + 2*10 
-          = 30 + 20 
+          = 15*2 + 2*10
+          = 30 + 20
           = 50
 
 // Apply wildcard penalties
@@ -614,9 +635,10 @@ if hasTemplatePattern(pattern) {
 ```
 
 **Scoring Formula Breakdown:**
+
 - **Base Score**: `2 × Length + 10 × DirectoryCount`
 - **Template Bonus**: `+50` for any pattern containing `{{...}}`
-- **Wildcard Penalties**: 
+- **Wildcard Penalties**:
   - `-20` for leading wildcards (`*`, `**`)
   - `-10` for non-leading wildcards (`*`)
   - `-2` for other wildcard characters (`?`, `[abc]`, `{...}`)
@@ -638,7 +660,7 @@ if hasTemplatePattern(pattern) {
 "{{.UserEmail}}/*" → 2(18) + 10(1) + 50 = 78
 
 // Complex nested template
-"alice@email.com/{{.UserEmail}}/ben@email.com/{{.UserHash}}/*" 
+"alice@email.com/{{.UserEmail}}/ben@email.com/{{.UserHash}}/*"
 → 2(60) + 10(3) + 50 = 192
 
 // Universal patterns (special cases)
@@ -705,7 +727,7 @@ STEP 2: Tree Lookup
 
 STEP 3: Pattern Matching
 - Test "alice/public/**" against "alice/public/data.csv"
-  → MATCH! 
+  → MATCH!
 
 STEP 4: Access Check
 - Check if "bob@example.com" has read access
@@ -763,16 +785,19 @@ Terminal nodes are a powerful feature that prevents the ACL system from looking 
 ### Benefits of Terminal Nodes
 
 #### 1. **Simplified Permission Management**
+
 - **Single Source of Truth**: One ACL file controls an entire directory tree
 - **No Override Surprises**: Subdirectories cannot accidentally override parent rules
 - **Easier Auditing**: All permissions defined in one place at the top level
 
 #### 2. **Performance Optimization**
+
 - **Faster Lookups**: Stops tree traversal early, no need to check deeper paths
 - **Cache Efficiency**: Fewer ACL files to load and evaluate
 - **Reduced Memory**: Only one ruleset needs to be compiled for entire subtree
 
 #### 3. **Security Guarantees**
+
 - **Enforced Boundaries**: Subdirectories cannot escalate privileges
 - **Prevent Accidental Exposure**: No risk of a subdirectory ACL making data public
 - **Centralized Control**: Owner maintains complete control from one location
@@ -783,30 +808,32 @@ The most common and recommended use is to simplify and secure a writeable or ver
 
 ```yaml
 # /alice/syft.pub.yaml
-terminal: true  # This file controls EVERYTHING below
+terminal: true # This file controls EVERYTHING below
 rules:
-  - pattern: "public/**"
+  - pattern: 'public/**'
     access:
-      read: ["*"]           # Public folder is globally readable
-  
-  - pattern: "shared/**"
-    access:
-      read: ["bob@example.com", "carol@example.com"]  # Individual team members
-      write: ["alice@example.com"]  # Owner only
+      read: ['*'] # Public folder is globally readable
 
-  - pattern: "**"           # Everything else is private
+  - pattern: 'shared/**'
+    access:
+      read: ['bob@example.com', 'carol@example.com'] # Individual team members
+      write: ['alice@example.com'] # Owner only
+
+  - pattern: '**' # Everything else is private
     access:
       read: []
       write: []
 ```
 
 **Security Benefits:**
+
 - **No Subdirectory Overrides**: Even if someone creates a `syft.pub.yaml` file in a subdirectory, it won't be evaluated
 - **Exploit Prevention**: Malicious programs cannot escalate permissions by creating ACL files in subdirectories
 - **Centralized Control**: All permissions are controlled from one location at the top level
 - **Audit Trail**: Easy to review all permissions in a single file
 
 **Important Implementation Details:**
+
 - Child ACL files can still exist in the tree structure (for performance), but they are completely ignored during permission checks
 - The system stops looking for ACL rules as soon as it encounters a terminal node
 - This creates a hard security boundary that cannot be bypassed by subdirectory ACL files
@@ -821,20 +848,21 @@ Consider this YAML configuration and resulting data structures:
 # /alice/projects/syft.pub.yaml
 terminal: false
 rules:
-  - pattern: "docs/**/*.md"
+  - pattern: 'docs/**/*.md'
     access:
-      read: ["*"]
-      write: ["alice@example.com", "bob@example.com"]
-  - pattern: "src/**"
+      read: ['*']
+      write: ['alice@example.com', 'bob@example.com']
+  - pattern: 'src/**'
     access:
-      read: ["alice@example.com", "bob@example.com", "carol@example.com"]
-      write: ["alice@example.com"]
-  - pattern: "**"
+      read: ['alice@example.com', 'bob@example.com', 'carol@example.com']
+      write: ['alice@example.com']
+  - pattern: '**'
     access:
-      read: ["alice@example.com"]
+      read: ['alice@example.com']
 ```
 
 **Resulting ACLNode Structure:**
+
 ```go
 &ACLNode{
     path:     "alice/projects",
@@ -889,15 +917,15 @@ rules:
 # /alice/uploads/syft.pub.yaml
 terminal: true
 rules:
-  - pattern: "user_{{.UserEmail}}/**"
+  - pattern: 'user_{{.UserEmail}}/**'
     access:
-      read: ["USER"]
-      write: ["USER"]
-  - pattern: "public/**"
+      read: ['USER']
+      write: ['USER']
+  - pattern: 'public/**'
     access:
-      read: ["*"]
-      write: ["alice@example.com"]
-  - pattern: "**"
+      read: ['*']
+      write: ['alice@example.com']
+  - pattern: '**'
     access:
       read: []
       write: []
@@ -934,14 +962,14 @@ isWriter := access.Write.Contains(user.ID)  // true
 ```yaml
 # /alice/shared/syft.pub.yaml
 rules:
-  - pattern: "team/**"
+  - pattern: 'team/**'
     access:
-      read: ["alice@example.com", "bob@example.com", "carol@example.com"]
-      write: ["alice@example.com"]
-  - pattern: "public/**"
+      read: ['alice@example.com', 'bob@example.com', 'carol@example.com']
+      write: ['alice@example.com']
+  - pattern: 'public/**'
     access:
-      read: ["*"]
-      write: ["alice@example.com"]
+      read: ['*']
+      write: ['alice@example.com']
 ```
 
 **When user "bob@example.com" tries to read "/alice/shared/team/report.pdf":**
@@ -1063,10 +1091,10 @@ deleted := cache.DeletePrefix(path)  // Clears all entries under "alice/projects
 // - "alice/projects/docs/readme.md:carol@example.com:1"
 // - "alice/projects/data.csv:alice@example.com:4"
 
-slog.Debug("updated rule set", 
-    "path", node.path, 
-    "version", node.version, 
-    "cache.deleted", deleted, 
+slog.Debug("updated rule set",
+    "path", node.path,
+    "version", node.version,
+    "cache.deleted", deleted,
     "cache.count", cache.Count())
 ```
 
@@ -1137,7 +1165,8 @@ type Limits struct {
 }
 ```
 
-**Note:** 
+**Note:**
+
 - Limits are not configurable through YAML files and are excluded from YAML serialization
 - Limits functionality is implemented in the code but uses hardcoded default values
 
@@ -1147,11 +1176,10 @@ type Limits struct {
 # Limit uploads from external contributors
 terminal: false
 rules:
-  - pattern: "contributions/**"
+  - pattern: 'contributions/**'
     access:
-      write: ["*"]  # Anyone can contribute
-      read: ["alice@example.com", "bob@example.com"]
-
+      write: ['*'] # Anyone can contribute
+      read: ['alice@example.com', 'bob@example.com']
 ```
 
 #### Example: Restricted Upload Area
@@ -1160,10 +1188,10 @@ rules:
 # Public upload area with access control
 terminal: true
 rules:
-  - pattern: "uploads/temp/**"
+  - pattern: 'uploads/temp/**'
     access:
-      write: ["*"]
-      read: ["alice@example.com"]
+      write: ['*']
+      read: ['alice@example.com']
 ```
 
 #### Limits Enforcement
@@ -1248,10 +1276,12 @@ datasites/
 ```
 
 **Automatic ACL Creation:**
+
 - **Root User Directory**: Private access (no access for anyone except owner)
 - **Public Directory**: Public read access (readable by everyone)
 
 **When This Happens:**
+
 - During workspace setup (`w.Setup()`)
 - Only if ACL files don't already exist
 - Creates exactly two default ACL files
@@ -1261,6 +1291,7 @@ datasites/
 For any **new folders created by users**, ACL rules must be created manually. The automatic creation only applies to the initial workspace setup.
 
 **Example:**
+
 ```
 alice/
 ├── syft.pub.yaml              # ✅ Created automatically (private)
@@ -1278,16 +1309,17 @@ The automatically created root ACL uses private access by default:
 
 ```yaml
 # datasites/alice/syft.pub.yaml (created automatically)
-terminal: false  # Non-terminal allows subdirectories to define their own ACLs
+terminal: false # Non-terminal allows subdirectories to define their own ACLs
 rules:
-  - pattern: "**"
+  - pattern: '**'
     access:
-      admin: []    # Owner has implicit admin access
-      write: []    # No one can write by default
-      read: []     # No one can read by default
+      admin: [] # Owner has implicit admin access
+      write: [] # No one can write by default
+      read: [] # No one can read by default
 ```
 
 **Key Points:**
+
 - Owner (alice) has implicit full access to all their files
 - All content is private by default (principle of least privilege)
 - Non-terminal by default to allow flexibility (users can add subdirectory ACLs)
@@ -1299,16 +1331,17 @@ The automatically created public ACL provides global read access:
 
 ```yaml
 # datasites/alice/public/syft.pub.yaml (created automatically)
-terminal: false  # Non-terminal allows further customization if needed
+terminal: false # Non-terminal allows further customization if needed
 rules:
-  - pattern: "**"
+  - pattern: '**'
     access:
-      admin: []    # Owner maintains admin control
-      write: []    # No public writes (owner can still write)
-      read: ["*"]  # Everyone can read
+      admin: [] # Owner maintains admin control
+      write: [] # No public writes (owner can still write)
+      read: ['*'] # Everyone can read
 ```
 
 **Convention Benefits:**
+
 - Clear separation between private and public data
 - Familiar pattern (similar to ~/public_html in web servers)
 - Safe default: must explicitly move data to public/
@@ -1320,19 +1353,20 @@ While the default setup uses non-terminal ACLs for flexibility, many users prefe
 
 ```yaml
 # datasites/alice/syft.pub.yaml - Simplified approach
-terminal: true  # One file controls everything
+terminal: true # One file controls everything
 rules:
-  - pattern: "public/**"
+  - pattern: 'public/**'
     access:
-      read: ["*"]     # Public folder readable by all
-  
-  - pattern: "**"     # Everything else private
+      read: ['*'] # Public folder readable by all
+
+  - pattern: '**' # Everything else private
     access:
       read: []
       write: []
 ```
 
 **Benefits of Terminal Root:**
+
 - Simpler mental model
 - Better performance
 - No accidental permission leaks in subdirectories
@@ -1341,6 +1375,7 @@ rules:
 ### Common Patterns
 
 #### 1. **Shared Project Structure**
+
 ```
 alice/
 ├── syft.pub.yaml              # Private root (auto-created)
@@ -1357,37 +1392,39 @@ alice/
 ```
 
 #### 2. **Template-Based User Isolation**
+
 ```yaml
 # /alice/uploads/syft.pub.yaml
 terminal: true
 rules:
-  - pattern: "user_{{.UserEmail}}/**"
+  - pattern: 'user_{{.UserEmail}}/**'
     access:
-      read: ["USER"]
-      write: ["USER"]
-  - pattern: "public/**"
+      read: ['USER']
+      write: ['USER']
+  - pattern: 'public/**'
     access:
-      read: ["*"]
-      write: ["alice@example.com"]
-  - pattern: "**"
+      read: ['*']
+      write: ['alice@example.com']
+  - pattern: '**'
     access:
       read: []
       write: []
 ```
 
 #### 3. **Time-Based Access Control**
+
 ```yaml
 # /alice/archives/syft.pub.yaml
 terminal: true
 rules:
-  - pattern: "{{.Year}}/{{.Month}}/**"
+  - pattern: '{{.Year}}/{{.Month}}/**'
     access:
-      read: ["*"]
-      write: ["alice@example.com"]
-  - pattern: "**"
+      read: ['*']
+      write: ['alice@example.com']
+  - pattern: '**'
     access:
-      read: ["alice@example.com"]
-      write: ["alice@example.com"]
+      read: ['alice@example.com']
+      write: ['alice@example.com']
 ```
 
 ### Security Recommendations
@@ -1457,32 +1494,36 @@ rules:
 - Time-based permissions
 - Hash-based user identification
 
-
 ### Best Practices for Advanced Permissions
 
 1. **Template Security**
+
    - Always validate template patterns before deployment
    - Use specific patterns rather than broad wildcards
    - Test template resolution with various user inputs
 
 2. **Time-Based Patterns**
+
    - Consider timezone implications for global organizations
    - Plan for year transitions and edge cases
    - Use consistent date formatting across patterns
 
 3. **Domain-Based Access Control**
+
    - Use specific domain patterns (`*@company.com`) rather than broad ones (`*@*.com`)
    - Test domain patterns with various email formats
    - Consider subdomain organization for better access control
    - Document domain patterns clearly for maintenance
 
 4. **Performance Considerations**
+
    - Limit the number of template rules per ACL file
    - Use terminal nodes for large directory trees
    - Monitor cache performance with template-heavy configurations
    - Domain pattern matching is efficient but should be used judiciously
 
 5. **Security Considerations**
+
    - Avoid overly broad domain patterns that could grant unintended access
    - Regularly audit domain-based access rules
    - Consider the impact of domain changes on access control
@@ -1499,12 +1540,14 @@ rules:
 The SyftBox ACL system provides a comprehensive, high-performance access control solution with the following key features:
 
 ### Core Features
+
 - **Hierarchical Rule System**: N-ary tree structure for efficient path-based rule lookup
 - **YAML Configuration**: Human-readable ACL files (`syft.pub.yaml`) with clear syntax
 - **Owner-Based Access**: Automatic full access for datasite owners
 - **Terminal Nodes**: Prevent inheritance for simplified security management
 
 ### Advanced Pattern Matching
+
 - **Glob Patterns**: Standard wildcard matching (`*`, `**`, `?`, `[abc]`)
 - **Template Patterns**: Dynamic resolution using Go templates
 - **USER Token**: Automatic resolution to requesting user's ID
@@ -1512,24 +1555,28 @@ The SyftBox ACL system provides a comprehensive, high-performance access control
 - **Domain-Based Access**: Glob patterns in access lists for domain-wide permissions
 
 ### Performance Optimizations
+
 - **LRU Cache with TTL**: 100K entry cache with 1-hour expiration
 - **Parallel Processing**: 16-worker concurrent ACL file fetching
 - **Efficient Tree Traversal**: O(d) complexity where d = path depth
 - **Memory Optimization**: Object pooling and lazy loading
 
 ### Security Features
+
 - **Template Security**: Sanitized variables and limited function set
 - **File Limits**: Size, count, and type restrictions
 - **Path Depth Limits**: 255-level maximum to prevent attacks
 - **ACL File Protection**: Automatic elevation to admin level
 
 ### Access Levels
+
 - **Read** (Level 1): View file contents and metadata
 - **Create** (Level 2): Create new files
 - **Write** (Level 4): Modify/delete files
 - **Admin** (Level 8): Full control including ACL modifications
 
 ### Integration Points
+
 - **Blob Service**: Real-time ACL file updates
 - **Sync Engine**: Permission validation for file operations
 - **WebSocket Events**: Real-time notifications and cache invalidation
