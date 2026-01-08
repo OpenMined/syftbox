@@ -38,7 +38,7 @@ func TestCopyLocalWindowsRenameRetry(t *testing.T) {
 		runtimeGOOS = originalGOOS
 	})
 
-	err = copyLocal(src, dst)
+	err = copyLocalWithTmp(src, dst, tempDir)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, renameCalls, "expected a retry after fs.ErrExist")
@@ -69,7 +69,7 @@ func TestCopyLocalRenameErrorCleanup(t *testing.T) {
 		runtimeGOOS = originalGOOS
 	})
 
-	err = copyLocal(src, dst)
+	err = copyLocalWithTmp(src, dst, tempDir)
 	require.Error(t, err, "rename errors on non-Windows should bubble up")
 
 	content, err := os.ReadFile(dst)

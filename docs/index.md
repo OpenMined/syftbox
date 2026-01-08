@@ -5,6 +5,7 @@
 SyftBox is a privacy-preserving compute platform that enables secure data sharing and computation across distributed datasites.
 
 ## Documentation
+
 - [Access Logging System](./access-logging.md)
 - [Access Control List (ACL) System](./acl-system.md)
   - [Overview](./acl-system.md#overview)
@@ -33,6 +34,12 @@ SyftBox is a privacy-preserving compute platform that enables secure data sharin
   - [Practical Examples](./send-handler.md#practical-examples)
   - [Implementation Guide](./send-handler.md#implementation-guide)
   - [Reference Materials](./send-handler.md#reference-materials)
+- [WebSockets](./websockets.md)
+  - [Overview](./websockets.md#overview)
+  - [Message Model](./websockets.md#message-model)
+  - [Encoding and Negotiation](./websockets.md#encoding-and-negotiation)
+  - [Message Size Limits](./websockets.md#message-size-limits)
+  - [Priority File Writes](./websockets.md#priority-file-writes)
 - [Sync System](./sync.md)
   - [Overview](./sync.md#overview)
   - [Architecture](./sync.md#architecture)
@@ -44,6 +51,13 @@ SyftBox is a privacy-preserving compute platform that enables secure data sharin
   - [Database Schema](./sync.md#database-schema)
   - [Configuration](./sync.md#configuration)
   - [Event System](./sync.md#event-system)
+- [Conflict Resolution](./conflicts.md)
+  - [Overview](./conflicts.md#overview)
+  - [Conflict Types](./conflicts.md#conflict-types)
+  - [Resolution Strategies](./conflicts.md#resolution-strategies)
+  - [Marker Files](./conflicts.md#marker-files)
+  - [Cross-Datasite Writes](./conflicts.md#cross-datasite-writes)
+  - [Conflict Scenarios](./conflicts.md#conflict-scenarios)
 - [Vanity Domains & Subdomain Routing](./vanity-domains.md)
   - [Overview](./vanity-domains.md#overview)
   - [Configuration](./vanity-domains.md#configuration-file)

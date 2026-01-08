@@ -186,6 +186,43 @@ sbdev-start *ARGS:
     GOCACHE=$(pwd)/.gocache go run ./cmd/devstack start {{ ARGS }}
 
 [group('devstack')]
+sbdev-start-mixed *ARGS:
+    #!/bin/bash
+    set -euo pipefail
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+
+    go_client="alice@example.com"
+    rust_client="bob@example.com"
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --client)
+                go_client="$2"
+                shift 2
+                ;;
+            --client-rust)
+                rust_client="$2"
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    echo "Building Rust client at $rust_bin..."
+    cd rust
+    cargo build --release
+    cd "$root_dir"
+
+    rust_env=$(echo "$rust_client" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]/_/g')
+    env_key="SBDEV_CLIENT_BIN_${rust_env}"
+
+    echo "Starting devstack with Rust client for $rust_client and Go client for $go_client..."
+    env "$env_key=$rust_bin" GOCACHE="$root_dir/.gocache" go run ./cmd/devstack start --client "$go_client" --client "$rust_client" "$@"
+
+[group('devstack')]
 sbdev-stop *ARGS:
     GOCACHE=$(pwd)/.gocache go run ./cmd/devstack stop {{ ARGS }}
 
@@ -196,6 +233,30 @@ sbdev-status *ARGS:
 [group('devstack')]
 sbdev-logs *ARGS:
     GOCACHE=$(pwd)/.gocache go run ./cmd/devstack logs {{ ARGS }}
+
+[group('devstack')]
+sbdev-watch file interval="0.5":
+    #!/bin/bash
+    set -euo pipefail
+
+    if [ ! -f "{{ file }}" ]; then
+        echo "env file not found: {{ file }}" >&2
+        echo "expected format:" >&2
+        echo "  SYFTBOX_CLIENT_URL=http://127.0.0.1:PORT" >&2
+        echo "  SYFTBOX_CLIENT_TOKEN=FULL_TOKEN" >&2
+        exit 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "{{ file }}"
+
+    if [ -z "${SYFTBOX_CLIENT_URL:-}" ] || [ -z "${SYFTBOX_CLIENT_TOKEN:-}" ]; then
+        echo "env file missing SYFTBOX_CLIENT_URL or SYFTBOX_CLIENT_TOKEN" >&2
+        exit 1
+    fi
+
+    echo "Watching ${SYFTBOX_CLIENT_URL}/v1/status every {{ interval }}s"
+    watch -n "{{ interval }}" "curl -s -H 'Authorization: Bearer ${SYFTBOX_CLIENT_TOKEN}' ${SYFTBOX_CLIENT_URL}/v1/status | jq .runtime"
 
 [group('devstack')]
 sbdev-nuke:
@@ -220,7 +281,45 @@ sbdev-test-perf *ARGS:
     set -eou pipefail
     echo "Running devstack performance tests..."
     cd cmd/devstack
-    go test -v -timeout 30m {{ ARGS }}
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests"
+    fi
+    echo "Using sandbox: $SANDBOX_DIR"
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+    fi
+    rm -rf "$SANDBOX_DIR" || true
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" go test -v -timeout 30m -tags integration {{ ARGS }}
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+[group('devstack')]
+sbdev-test-perf-rust *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running devstack performance tests with Rust client..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests"
+    fi
+    echo "Using sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration {{ ARGS }}
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
 
 [group('devstack')]
 sbdev-test-perf-profile *ARGS:
@@ -228,7 +327,51 @@ sbdev-test-perf-profile *ARGS:
     set -eou pipefail
     echo "Running performance tests with profiling enabled..."
     cd cmd/devstack
-    PERF_PROFILE=1 go test -v -timeout 30m {{ ARGS }}
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests-profile"
+    fi
+    echo "Using sandbox: $SANDBOX_DIR"
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+        # Retry removal a few times in case devstack processes are still exiting.
+        for _ in 1 2 3; do
+            rm -rf "$SANDBOX_DIR" 2>/dev/null && break
+            sleep 0.5
+        done
+        rm -rf "$SANDBOX_DIR" || true
+    fi
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 go test -v -timeout 30m -tags integration {{ ARGS }}
+    echo ""
+    echo "Profiles saved to: cmd/devstack/profiles/"
+    echo "View flame graphs: go tool pprof -http=:8080 cmd/devstack/profiles/{test}/cpu.prof"
+
+[group('devstack')]
+sbdev-test-perf-profile-rust *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running performance tests with profiling enabled (Rust client)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/perf-tests-profile"
+    fi
+    echo "Using sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Profiles saved to: cmd/devstack/profiles/"
     echo "View flame graphs: go tool pprof -http=:8080 cmd/devstack/profiles/{test}/cpu.prof"
@@ -237,11 +380,44 @@ sbdev-test-perf-profile *ARGS:
 sbdev-test-perf-sandbox *ARGS:
     #!/bin/bash
     set -eou pipefail
-    sandbox_path="$(pwd)/sandbox"
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) sandbox_path="$PERF_TEST_SANDBOX" ;;
+            *) sandbox_path="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        sandbox_path="$REPO_ROOT/.test-sandbox/perf-sandbox"
+    fi
     echo "Running performance tests with persistent sandbox: $sandbox_path"
-    mkdir -p "$sandbox_path"
+    rm -rf "$sandbox_path"
     cd cmd/devstack
-    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m {{ ARGS }}
+    PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m -tags integration {{ ARGS }}
+    echo ""
+    echo "Test files preserved in: $sandbox_path"
+    echo "Files from alice: $sandbox_path/alice@example.com/datasites/datasites/alice@example.com/public/"
+    echo "Files synced to bob: $sandbox_path/bob@example.com/datasites/datasites/alice@example.com/public/"
+
+[group('devstack')]
+sbdev-test-perf-sandbox-rust *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    root_dir="$(pwd)"
+    REPO_ROOT="$root_dir"
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) sandbox_path="$PERF_TEST_SANDBOX" ;;
+            *) sandbox_path="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        sandbox_path="$REPO_ROOT/.test-sandbox/perf-sandbox"
+    fi
+    echo "Running performance tests with persistent sandbox (Rust client): $sandbox_path"
+    rm -rf "$sandbox_path"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$sandbox_path" go test -v -timeout 30m -tags integration {{ ARGS }}
     echo ""
     echo "Test files preserved in: $sandbox_path"
     echo "Files from alice: $sandbox_path/alice@example.com/datasites/alice@example.com/public/"
@@ -264,28 +440,605 @@ sbdev-test-cleanup:
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
 [group('devstack')]
+sbdev-test-all mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+
+    echo "Running devstack integration suite (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/all-tests}"
+    echo "Sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    cd cmd/devstack
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "TestACKNACKMechanism|TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestWebSocketReconnectAfterServerRestart|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestJournalGapSpuriousConflict|TestJournalGapHealing|TestFileModificationDuringSync|TestWebSocketLatency|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestLargeFileTransfer|TestConcurrentUploads|TestManySmallFiles|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress"
+    echo ""
+    echo "✅ Devstack integration suite completed (mode=$MODE)! Sandbox preserved at: $SANDBOX_DIR"
+sbdev-test-acl:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS=${1:-1}
+    shift || true
+    echo "Running ACL race condition test ($RUNS time(s))..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    # Resolve sandbox base path
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *)  BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/acl-test"
+    fi
+
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLRaceCondition "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
+sbdev-test-acl-prop:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS=${1:-1}
+    shift || true
+    echo "Running ACL propagation regression test ($RUNS time(s))..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    # Resolve sandbox base path
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *)  BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/acl-prop"
+    fi
+
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLPropagationUpdates "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
+sbdev-test-acl-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running ACL race condition test with Rust client..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/acl-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLRaceCondition
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+[group('devstack')]
+sbdev-test-acl-prop-rust:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS=${1:-1}
+    shift || true
+    echo "Running ACL propagation regression test with Rust client ($RUNS time(s))..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *)  BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/acl-prop"
+    fi
+
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestACLPropagationUpdates "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
+sbdev-test-cleanup-rust:
+    #!/bin/bash
+    set -euo pipefail
+    echo "Cleaning up test sandbox..."
+    cd cmd/devstack
+    go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
+
+[group('devstack')]
 sbdev-test-ws:
     #!/bin/bash
     set -eou pipefail
     echo "Running WebSocket latency test..."
     cd cmd/devstack
-    go test -v -timeout 10m -run TestWebSocketLatency
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/ws-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestWebSocketLatency
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+[group('devstack')]
+sbdev-test-ws-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running WebSocket latency test with Rust client..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/ws-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestWebSocketLatency
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+[group('devstack')]
+sbdev-test-large-sync:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large file sync test (daemon end-to-end)..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
 
 [group('devstack')]
 sbdev-test-large:
-    #!/bin/bash
-    set -eou pipefail
-    echo "Running large file transfer test..."
-    cd cmd/devstack
-    go test -v -timeout 30m -run TestLargeFileTransfer
+    just sbdev-test-large-sync
 
 [group('devstack')]
-sbdev-test-concurrent:
+sbdev-test-large-upload-daemon:
     #!/bin/bash
     set -eou pipefail
-    echo "Running concurrent upload test..."
+    echo "Running large upload via daemon test..."
     cd cmd/devstack
-    go test -v -timeout 15m -run TestConcurrentUploads
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload"
+    fi
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+    fi
+    rm -rf "$SANDBOX_DIR" || true
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemon
+
+[group('devstack')]
+sbdev-test-large-upload:
+    just sbdev-test-large-upload-daemon
+
+[group('devstack')]
+sbdev-test-large-upload-daemon-stress:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large upload via daemon stress test (kill/restart/resume)..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload-stress"
+    fi
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+        for _ in 1 2 3; do
+            rm -rf "$SANDBOX_DIR" 2>/dev/null && break
+            sleep 0.5
+        done
+        rm -rf "$SANDBOX_DIR" || true
+    fi
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemonStress
+
+[group('devstack')]
+sbdev-test-large-upload-stress:
+    just sbdev-test-large-upload-daemon-stress
+
+[group('devstack')]
+sbdev-test-large-upload-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large upload via daemon test with Rust client..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemon
+
+[group('devstack')]
+sbdev-test-large-upload-daemon-stress-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large upload via daemon stress test with Rust client (kill/restart/resume)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-upload-stress"
+    fi
+    if [ -d "$SANDBOX_DIR" ]; then
+        chmod -R u+w "$SANDBOX_DIR" 2>/dev/null || true
+        for _ in 1 2 3; do
+            rm -rf "$SANDBOX_DIR" 2>/dev/null && break
+            sleep 0.5
+        done
+        rm -rf "$SANDBOX_DIR" || true
+    fi
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 60m -tags integration -run TestLargeUploadViaDaemonStress
+
+[group('devstack')]
+sbdev-test-progress-api:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Progress API demo..."
+    echo "This demo shows the sync status and upload management APIs in action."
+    echo "Features: status tracking, progress bars, pause/resume, error handling, auth"
+    echo ""
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/progress-api-demo"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestProgressAPIDemo
+
+[group('devstack')]
+sbdev-test-progress-api-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Progress API demo with Rust client..."
+    echo "This demo shows the sync status and upload management APIs in action."
+    echo "Features: status tracking, progress bars, pause/resume, error handling, auth"
+    echo ""
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/progress-api-demo"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestProgressAPIDemo
+
+[group('devstack')]
+sbdev-watch-test recipe interval="0.5" env_file="":
+    #!/bin/bash
+    set -euo pipefail
+
+    REPO_ROOT="$(pwd)"
+    if [ -z "{{ env_file }}" ]; then
+        ENV_FILE="$REPO_ROOT/.test-sandbox/watch.env"
+    else
+        ENV_FILE="{{ env_file }}"
+    fi
+    rm -f "$ENV_FILE"
+
+    echo "Starting test recipe: {{ recipe }}"
+    SBDEV_WATCH_ENV="$ENV_FILE" just "{{ recipe }}" &
+    TEST_PID=$!
+
+    # Wait for env file to appear (max ~30s)
+    for i in $(seq 1 120); do
+        if [ -f "$ENV_FILE" ] && grep -q "SYFTBOX_CLIENT_URL=" "$ENV_FILE" && grep -q "SYFTBOX_CLIENT_TOKEN=" "$ENV_FILE"; then
+            break
+        fi
+        sleep 0.25
+    done
+
+    if [ ! -f "$ENV_FILE" ]; then
+        echo "Env file was not created by test; tailing test output only." >&2
+        wait "$TEST_PID"
+        exit 1
+    fi
+
+    echo "Env file ready at $ENV_FILE"
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    echo "Watching runtime status every {{ interval }}s until test exits (Ctrl-C to stop early)..."
+
+    cleanup() {
+        echo ""
+        echo "Stopping test (pid $TEST_PID)"
+        kill "$TEST_PID" 2>/dev/null || true
+        wait "$TEST_PID" 2>/dev/null || true
+        exit 0
+    }
+    trap cleanup INT TERM
+
+    while kill -0 "$TEST_PID" 2>/dev/null; do
+        curl -s -H "Authorization: Bearer ${SYFTBOX_CLIENT_TOKEN}" "${SYFTBOX_CLIENT_URL}/v1/status" | jq .runtime
+        sleep "{{ interval }}"
+    done
+
+    echo "Test finished; stopping watch."
+    wait "$TEST_PID" 2>/dev/null || true
+
+[group('devstack')]
+sbdev-test-large-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running large file transfer test with Rust client..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/large-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 30m -tags integration -run TestLargeFileTransfer
+
+[group('devstack')]
+sbdev-test-concurrent mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+
+    echo "Running concurrent upload test (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/concurrent-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -v -timeout 15m -tags integration -run TestConcurrentUploads
+
+[group('devstack')]
+sbdev-test-conflict:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running conflict resolution tests (simultaneous writes, divergent edits, etc.)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/conflict-test"
+    fi
+
+    # Run all conflict tests in one go test process; harness resets state per test.
+    RUN_REGEX="TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery"
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^(${RUN_REGEX})$" "$@" || exit 1
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
+sbdev-test-conflict-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running conflict resolution tests with Rust client..."
+    RUNS=${1:-1}
+    shift || true
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/conflict-test"
+    fi
+
+    TESTS=("TestSimultaneousWrite" "TestDivergentEdits" "TestThreeWayConflict" "TestConflictDuringACLChange" "TestNestedPathConflict")
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        for TEST in "${TESTS[@]}"; do
+            echo "Running $TEST..."
+            rm -rf "$SANDBOX_DIR"
+            SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^${TEST}$" "$@" || exit 1
+        done
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+[group('devstack')]
+sbdev-test-concurrent-rust:
+    #!/bin/bash
+    # Back-compat shim: call unified recipe with rust mode
+    just sbdev-test-concurrent mode="rust"
+
+[group('devstack')]
+sbdev-test-nested-loop RUNS='10' *ARGS:
+    #!/bin/bash
+    set -eou pipefail
+    RUNS_RAW="{{RUNS}}"
+    if [[ "$RUNS_RAW" == RUNS=* ]]; then
+        RUNS_RAW="${RUNS_RAW#RUNS=}"
+    fi
+    if ! [[ "$RUNS_RAW" =~ ^[0-9]+$ ]] || [ "$RUNS_RAW" -lt 1 ]; then
+        echo "Usage: just sbdev-test-nested-loop [RUNS] [go test args...]"
+        echo "RUNS must be a positive integer (got: '$RUNS_RAW')"
+        exit 2
+    fi
+    RUNS="$RUNS_RAW"
+    echo "Running all integration tests up to $RUNS times (stop on first failure)..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/all-tests-loop"
+    fi
+    # Default test set for this loop (avoids the longest/most expensive tests).
+    RUN_REGEX="TestACLRaceCondition|TestWebSocketLatency|TestLargeFileTransfer|TestConcurrentUploads|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestManySmallFiles|TestACKNACKMechanism"
+
+    # Parse optional go test args. (If the caller uses `just ... -- <args>`, strip the leading `--`.)
+    ARGS=( {{ ARGS }} )
+    if [ "${#ARGS[@]}" -gt 0 ] && [ "${ARGS[0]}" = "--" ]; then
+        ARGS=("${ARGS[@]:1}")
+    fi
+
+    # Kill any orphaned processes from previous runs using this sandbox
+    if pgrep -f "$SANDBOX_DIR" > /dev/null 2>&1; then
+        echo "Killing orphaned processes from previous runs..."
+        pkill -f "$SANDBOX_DIR" 2>/dev/null || true
+        sleep 1
+    fi
+    for ((i = 1; i <= RUNS; i++)); do
+        echo "=== Run $i/$RUNS (sandbox: $SANDBOX_DIR) ==="
+        pkill -f "$SANDBOX_DIR" 2>/dev/null || true
+        sleep 0.5
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run "^(${RUN_REGEX})$" "${ARGS[@]}" || {
+            echo "FAILED on run $i (sandbox preserved at $SANDBOX_DIR)"
+            exit 1
+        }
+    done
+    echo "PASSED all $RUNS runs"
 
 [group('devstack')]
 sbdev-test-many:
@@ -293,7 +1046,179 @@ sbdev-test-many:
     set -eou pipefail
     echo "Running many small files test..."
     cd cmd/devstack
-    go test -v -timeout 15m -run TestManySmallFiles
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/batch-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run TestManySmallFiles
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+sbdev-test-ack:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running ACK/NACK mechanism test..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/ack-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 5m -tags integration -run TestACKNACKMechanism
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+sbdev-test-profile:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running performance profiling test with CPU/memory tracking..."
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/profile-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" PERF_PROFILE=1 GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestProfilePerformance
+    echo ""
+    echo "✅ Profile data saved to: cmd/devstack/profiles/performance_profile/"
+    echo "   - cpu.prof (CPU profile)"
+    echo "   - trace.out (execution trace)"
+    echo "   - mem.prof (memory profile)"
+    echo ""
+    echo "Generate flame graphs with: just sbdev-flamegraph"
+
+sbdev-test-race:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running race condition tests (delete during download, ACL during upload, etc.)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/race-test"
+    fi
+
+    # Run all race tests in one go test process; harness resets state per test.
+    RUN_REGEX="TestDeleteDuringDownload|TestACLChangeDuringUpload|TestOverwriteDuringDownload|TestDeleteDuringTempRename"
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run "^(${RUN_REGEX})$" "$@" || exit 1
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+sbdev-test-chaos:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running chaos sync test (3 clients, random ops)..."
+    RUNS=${1:-1}
+    shift || true
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) BASE_SANDBOX="$PERF_TEST_SANDBOX" ;;
+            *) BASE_SANDBOX="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        BASE_SANDBOX="$REPO_ROOT/.test-sandbox/chaos-test"
+    fi
+    for i in $(seq 1 "$RUNS"); do
+        if [ "$RUNS" -gt 1 ]; then
+            SANDBOX_DIR="${BASE_SANDBOX}-${i}"
+            echo "Run $i/$RUNS using sandbox: $SANDBOX_DIR"
+        else
+            SANDBOX_DIR="$BASE_SANDBOX"
+            echo "Using sandbox: $SANDBOX_DIR"
+        fi
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 10m -tags integration -run TestChaosSync "$@"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+sbdev-flamegraph:
+    #!/bin/bash
+    set -eou pipefail
+    cd cmd/devstack/profiles/performance_profile
+    echo "Generating flame graphs from profiling data..."
+    echo ""
+    echo "🔥 CPU Flame Graph:"
+    echo "   go tool pprof -http=:8080 cpu.prof"
+    echo ""
+    echo "🔥 Memory Flame Graph:"
+    echo "   go tool pprof -http=:8081 mem.prof"
+    echo ""
+    echo "🔥 Execution Trace (detailed timeline):"
+    echo "   go tool trace trace.out"
+    echo ""
+    echo "Interactive CPU profile analysis starting..."
+    go tool pprof -http=:8080 cpu.prof
+
+[group('devstack')]
+sbdev-test-many-rust:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running many small files test with Rust client..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    cd rust && cargo build --release && cd "$root_dir"
+    cd cmd/devstack
+    REPO_ROOT="$(pwd)/../.."
+    if [ -n "${PERF_TEST_SANDBOX:-}" ]; then
+        case "$PERF_TEST_SANDBOX" in
+            /*) SANDBOX_DIR="$PERF_TEST_SANDBOX" ;;
+            *) SANDBOX_DIR="$REPO_ROOT/$PERF_TEST_SANDBOX" ;;
+        esac
+    else
+        SANDBOX_DIR="$REPO_ROOT/.test-sandbox/batch-test"
+    fi
+    rm -rf "$SANDBOX_DIR"
+    SBDEV_CLIENT_BIN="$rust_bin" PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 15m -tags integration -run TestManySmallFiles
+    echo "Test artifacts preserved at: $SANDBOX_DIR"
+
+[group('devstack')]
+sbdev-test-rust *ARGS:
+    #!/bin/bash
+    set -euo pipefail
+    root_dir="$(pwd)"
+    rust_client_path="$root_dir/rust/target/release/syftbox-rs"
+
+    echo "Building Rust client at $rust_client_path..."
+    cd rust
+    cargo build --release
+    cd "$root_dir"
+
+    echo "Running devstack tests with Rust client..."
+    SBDEV_CLIENT_BIN="$rust_client_path" \
+    GOCACHE="$root_dir/.gocache" \
+    go test -v -timeout 30m -tags integration ./cmd/devstack {{ ARGS }}
 
 [group('dev')]
 test:

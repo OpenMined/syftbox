@@ -114,6 +114,7 @@ type startOptions struct {
 	useDockerMinio  bool
 	keepData        bool
 	skipSyncCheck   bool
+	skipClientDaemons bool
 	reset           bool
 }
 
@@ -208,14 +209,16 @@ func runStart(args []string) error {
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
-
+	serverBin := addExe(filepath.Join(binDir, "server"))
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(clientBin, "./cmd/client", clientBuildTags); err != nil {
-		return fmt.Errorf("build client: %w", err)
+	var defaultClientBin string
+	if !opts.skipClientDaemons {
+		defaultClientBin, err = resolveClientBinary(binDir, "./cmd/client", clientBuildTags)
+		if err != nil {
+			return fmt.Errorf("build client: %w", err)
+		}
 	}
 
 	serverPort := opts.serverPort
@@ -281,9 +284,21 @@ func runStart(args []string) error {
 			}
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
-		if err != nil {
-			return fmt.Errorf("start client %s: %w", email, err)
+		var cState clientState
+		if opts.skipClientDaemons {
+			cState, err = initClient(opts.root, email, serverURL, port)
+			if err != nil {
+				return fmt.Errorf("init client %s: %w", email, err)
+			}
+		} else {
+			clientBin, err := clientBinaryForEmail(email, i, defaultClientBin)
+			if err != nil {
+				return fmt.Errorf("client bin for %s: %w", email, err)
+			}
+			cState, err = startClient(clientBin, opts.root, email, serverURL, port)
+			if err != nil {
+				return fmt.Errorf("start client %s: %w", email, err)
+			}
 		}
 		clients = append(clients, cState)
 	}
@@ -310,11 +325,15 @@ func runStart(args []string) error {
 	fmt.Printf("  Server: %s (pid %d)\n", serverURL, sState.PID)
 	fmt.Printf("  MinIO:  http://127.0.0.1:%d (console http://127.0.0.1:%d)\n", mState.APIPort, mState.ConsolePort)
 	for _, c := range clients {
-		fmt.Printf("  Client: %s (daemon http://127.0.0.1:%d pid %d)\n", c.Email, c.Port, c.PID)
+		if c.PID > 0 {
+			fmt.Printf("  Client: %s (daemon http://127.0.0.1:%d pid %d)\n", c.Email, c.Port, c.PID)
+		} else {
+			fmt.Printf("  Client: %s (config only; control-plane http://127.0.0.1:%d)\n", c.Email, c.Port)
+		}
 	}
 	fmt.Printf("State: %s\n", statePath)
 
-	if !opts.skipSyncCheck {
+	if !opts.skipSyncCheck && !opts.skipClientDaemons {
 		if err := runSyncCheck(opts.root, opts.clients); err != nil {
 			fmt.Printf("Sync check warning (continuing): %v\n", err)
 		}
@@ -359,6 +378,8 @@ func parseStartFlags(args []string) (startOptions, error) {
 			opts.keepData = true
 		case "--skip-sync-check":
 			opts.skipSyncCheck = true
+		case "--skip-client-daemons":
+			opts.skipClientDaemons = true
 		case "--reset":
 			opts.reset = true
 		default:
@@ -371,24 +392,140 @@ func parseStartFlags(args []string) (startOptions, error) {
 
 func buildBinary(outPath, pkg, tags string) error {
 	args := []string{"build", "-tags", tags, "-o", outPath, pkg}
+	if os.Getenv("SBDEV_REBUILD_ALL") == "1" {
+		// Full rebuild is opt-in to keep test runs fast in CI/dev
+		args = append(args[:1], append([]string{"-a"}, args[1:]...)...)
+	}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func ensureMinioBinary(binDir string) (string, error) {
-	if path, err := exec.LookPath(minioBinaryName); err == nil {
+func resolveClientBinary(binDir, pkg, tags string) (string, error) {
+	if override := os.Getenv("SBDEV_CLIENT_BIN"); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve: %w", err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory: %s", path)
+		}
 		return path, nil
 	}
 
+	clientBin := filepath.Join(binDir, "syftbox")
+	clientBin = addExe(clientBin)
+	if err := buildBinary(clientBin, pkg, tags); err != nil {
+		return "", err
+	}
+	return clientBin, nil
+}
+
+func clientBinaryForEmail(email string, idx int, defaultBin string) (string, error) {
+	envKey := envKeyForEmail(email)
+	if override := os.Getenv(envKey); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve for %s: %w", email, err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat for %s: %w", email, err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory for %s: %s", email, path)
+		}
+		return path, nil
+	}
+
+	// Global override for all clients.
+	if override := os.Getenv("SBDEV_CLIENT_BIN"); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve: %w", err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory: %s", path)
+		}
+		return path, nil
+	}
+
+	mode := strings.ToLower(os.Getenv("SBDEV_CLIENT_MODE"))
+	rustBin := os.Getenv("SBDEV_RUST_CLIENT_BIN")
+	switch mode {
+	case "rust":
+		if rustBin == "" {
+			return "", fmt.Errorf("SBDEV_CLIENT_MODE=rust requires SBDEV_RUST_CLIENT_BIN")
+		}
+		return rustBin, nil
+	case "mixed":
+		if idx%2 == 1 { // second client gets rust; third is go, etc.
+			if rustBin == "" {
+				return "", fmt.Errorf("SBDEV_CLIENT_MODE=mixed requires SBDEV_RUST_CLIENT_BIN")
+			}
+			return rustBin, nil
+		}
+	}
+
+	return defaultBin, nil
+}
+
+func envKeyForEmail(email string) string {
+	normalized := strings.ToUpper(email)
+	normalized = strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, normalized)
+	return fmt.Sprintf("SBDEV_CLIENT_BIN_%s", normalized)
+}
+
+func ensureMinioBinary(binDir string) (string, error) {
+	// On Windows, the binary has .exe extension
+	binaryName := minioBinaryName
+	if runtime.GOOS == "windows" {
+		binaryName = minioBinaryName + ".exe"
+	}
+
+	if path, err := exec.LookPath(binaryName); err == nil {
+		return path, nil
+	}
+
+	// check sbdev cache (~/.sbdev/bin/minio) if present
+	sbdevPath := filepath.Join(os.Getenv("HOME"), ".sbdev", "bin", binaryName)
+	if _, err := os.Stat(sbdevPath); err == nil {
+		return sbdevPath, nil
+	}
+
 	// check global cache
-	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", minioBinaryName)
+	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", binaryName)
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	}
 
-	target := filepath.Join(binDir, minioBinaryName)
+	target := filepath.Join(binDir, binaryName)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
@@ -426,11 +563,17 @@ func downloadMinio(dest string) error {
 		} else {
 			platform = "linux-amd64"
 		}
+	case "windows":
+		platform = "windows-amd64"
 	default:
 		return fmt.Errorf("unsupported platform for minio download: %s/%s", osName, arch)
 	}
 
-	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, minioBinaryName)
+	binaryName := minioBinaryName
+	if osName == "windows" {
+		binaryName = minioBinaryName + ".exe"
+	}
+	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, binaryName)
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(url) //nolint:gosec
 	if err != nil {
@@ -518,10 +661,15 @@ func startMinio(mode, binPath, root string, apiPort, consolePort int, keepData b
 	cmd.Stderr = f
 
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		return minioState{}, err
 	}
 
 	if err := waitForMinio(apiPort); err != nil {
+		// MinIO may have failed to bind to the selected port; ensure the process is stopped
+		// so subsequent test runs can retry cleanly.
+		_ = killProcess(cmd.Process.Pid)
+		_ = f.Close()
 		return minioState{}, fmt.Errorf("minio health: %w", err)
 	}
 
@@ -690,10 +838,25 @@ func stopMinio(ms minioState) {
 }
 
 func writeServerConfig(path string, port, minioPort int, dataDir, logDir string) error {
+	httpCfg := map[string]any{
+		"addr": fmt.Sprintf("127.0.0.1:%d", port),
+	}
+
+	if v := os.Getenv("SBDEV_HTTP_READ_TIMEOUT"); v != "" {
+		httpCfg["read_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_WRITE_TIMEOUT"); v != "" {
+		httpCfg["write_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_IDLE_TIMEOUT"); v != "" {
+		httpCfg["idle_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_READ_HEADER_TIMEOUT"); v != "" {
+		httpCfg["read_header_timeout"] = v
+	}
+
 	cfg := map[string]any{
-		"http": map[string]any{
-			"addr": fmt.Sprintf("127.0.0.1:%d", port),
-		},
+		"http": httpCfg,
 		"blob": map[string]any{
 			"bucket_name": defaultBucket,
 			"region":      defaultRegion,
@@ -719,6 +882,62 @@ func writeServerConfig(path string, port, minioPort int, dataDir, logDir string)
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func initClient(root, email, serverURL string, port int) (clientState, error) {
+	emailDir := filepath.Join(root, email)
+	homeDir := emailDir
+	configDir := filepath.Join(homeDir, ".syftbox")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return clientState{}, err
+	}
+	dataDir := emailDir
+	// Ensure encrypted and shadow roots exist under the workspace root.
+	if err := os.MkdirAll(filepath.Join(dataDir, "datasites"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "unencrypted"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	logDir := filepath.Join(homeDir, ".syftbox", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return clientState{}, err
+	}
+
+	clientURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	configPath := filepath.Join(configDir, "config.json")
+	cfg := map[string]any{
+		"data_dir":     dataDir,
+		"email":        email,
+		"server_url":   serverURL,
+		"client_url":   clientURL,
+		"client_token": "",
+	}
+	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return clientState{}, err
+	}
+	if err := os.WriteFile(configPath, cfgData, 0o644); err != nil {
+		return clientState{}, err
+	}
+
+	logFile := filepath.Join(emailDir, "client-daemon.log")
+	// Create/truncate the log file so tooling that expects it can still tail it.
+	if err := os.WriteFile(logFile, []byte("client daemon not started (skip-client-daemons)\n"), 0o644); err != nil {
+		return clientState{}, err
+	}
+
+	return clientState{
+		Email:     email,
+		PID:       0,
+		Port:      port,
+		Config:    configPath,
+		DataPath:  dataDir,
+		LogPath:   logFile,
+		HomePath:  homeDir,
+		BinPath:   "",
+		ServerURL: serverURL,
+	}, nil
 }
 
 func startClient(binPath, root, email, serverURL string, port int) (clientState, error) {
@@ -825,7 +1044,7 @@ func runSyncCheck(root string, emails []string) error {
 	}
 
 	for _, email := range emails[1:] {
-		// Each client syncs alice's public dir to their local datasites/alice@example.com/public/
+		// Each client syncs alice's public dir to their local <root>/<client>/<sender>/public
 		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
@@ -840,7 +1059,7 @@ func runSyncCheck(root string, emails []string) error {
 }
 
 func publicPath(root, email string) string {
-	// Workspace root is <root>/<email>; actual public dir lives under datasites/<user>/public
+	// Workspace root is <root>/<email>; actual public dir lives under <root>/<email>/datasites/<email>/public
 	return filepath.Join(root, email, "datasites", email, "public")
 }
 
@@ -1211,6 +1430,9 @@ func processExists(pid int) bool {
 }
 
 func killProcess(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
@@ -1232,7 +1454,11 @@ func killProcess(pid int) error {
 func getFreePort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, err
+		// Some sandboxed environments disallow binding to loopback explicitly; fall back to any interface.
+		ln, err = net.Listen("tcp", ":0")
+		if err != nil {
+			return 0, err
+		}
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port, nil

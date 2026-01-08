@@ -24,9 +24,26 @@ func TestDevstackIntegration(t *testing.T) {
 		t.Skip("skipping devstack integration on Windows runner")
 	}
 
-	// Setup test directory
-	tmpDir := t.TempDir()
-	stackRoot := filepath.Join(tmpDir, "teststack")
+	// Repository root (go up two levels from cmd/devstack)
+	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
+	if err != nil {
+		t.Fatalf("find repo root: %v", err)
+	}
+
+	// Setup test directory; allow overriding via PERF_TEST_SANDBOX for persisted artifacts.
+	var stackRoot string
+	if sandbox := os.Getenv("PERF_TEST_SANDBOX"); sandbox != "" {
+		if filepath.IsAbs(sandbox) {
+			stackRoot = sandbox
+		} else {
+			stackRoot = filepath.Join(repoRoot, sandbox)
+		}
+		t.Logf("Using PERF_TEST_SANDBOX: %s", stackRoot)
+	} else {
+		tmpDir := t.TempDir()
+		stackRoot = filepath.Join(tmpDir, "teststack")
+		t.Logf("Using temporary directory: %s", stackRoot)
+	}
 
 	// Test parameters
 	emails := []string{"alice@example.com", "bob@example.com"}
@@ -40,13 +57,21 @@ func TestDevstackIntegration(t *testing.T) {
 	}
 
 	// Resolve absolute path
-	var err error
 	opts.root, err = filepath.Abs(opts.root)
 	if err != nil {
 		t.Fatalf("resolve root: %v", err)
 	}
 
 	t.Logf("Starting devstack at %s", opts.root)
+
+	// Stop any existing stack for this root before starting
+	preflightCleanup(opts.root, t)
+
+	// Ensure cleanup runs even if test fails
+	t.Cleanup(func() {
+		t.Logf("Stopping devstack...")
+		_ = stopStack(opts.root)
+	})
 
 	// Create root directory
 	if err := os.MkdirAll(opts.root, 0o755); err != nil {
@@ -65,13 +90,7 @@ func TestDevstackIntegration(t *testing.T) {
 
 	// Build binaries
 	serverBin := addExe(filepath.Join(binDir, "server"))
-	clientBin := addExe(filepath.Join(binDir, "syftbox"))
-
-	// Find repository root (go up two levels from cmd/devstack)
-	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
-	if err != nil {
-		t.Fatalf("find repo root: %v", err)
-	}
+	clientBin := filepath.Join(binDir, "syftbox")
 
 	t.Logf("Building server binary...")
 	serverPkg := filepath.Join(repoRoot, "cmd", "server")
@@ -81,7 +100,8 @@ func TestDevstackIntegration(t *testing.T) {
 
 	t.Logf("Building client binary...")
 	clientPkg := filepath.Join(repoRoot, "cmd", "client")
-	if err := buildBinary(clientBin, clientPkg, clientBuildTags); err != nil {
+	clientBin, err = resolveClientBinary(binDir, clientPkg, clientBuildTags)
+	if err != nil {
 		t.Fatalf("build client: %v", err)
 	}
 
@@ -146,7 +166,11 @@ func TestDevstackIntegration(t *testing.T) {
 			port = clientPortStart + i
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
+		if err != nil {
+			t.Fatalf("client bin for %s: %v", email, err)
+		}
+		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
 			t.Fatalf("start client %s: %v", email, err)
 		}
@@ -184,7 +208,7 @@ func TestDevstackIntegration(t *testing.T) {
 
 	t.Logf("✅ Sync check passed - files replicated successfully")
 
-	// Verify the probe file exists
+	// Verify the probe file exists (under <root>/<client>/datasites/<src>/public/)
 	src := emails[0]
 	for _, email := range emails[1:] {
 		// Check that bob has alice's public files
@@ -197,12 +221,6 @@ func TestDevstackIntegration(t *testing.T) {
 		if len(entries) < 1 {
 			t.Fatalf("expected at least 1 file in %s, got %d", targetDir, len(entries))
 		}
-	}
-
-	// Cleanup
-	t.Logf("Stopping devstack...")
-	if err := stopStack(opts.root); err != nil {
-		t.Fatalf("stop stack: %v", err)
 	}
 
 	t.Logf("✅ Devstack integration test completed successfully")
