@@ -588,8 +588,7 @@ mod tests {
 
         // Skip uninstall test on Windows - file locking makes directory removal unreliable
         // even with retries. The uninstall logic works; it's the filesystem cleanup that's flaky.
-        #[cfg(not(windows))]
-        {
+        if cfg!(not(windows)) {
             let id = uninstall_app(&cfg, "local.demo-app").unwrap();
             assert_eq!(id, "local.demo-app");
             let apps = list_apps(&cfg).unwrap();
