@@ -53,7 +53,7 @@ mod unix_tests {
         let saw_control_plane = wait_for(Duration::from_secs(3), || {
             std::fs::read_to_string(&log_path)
                 .ok()
-                .map(|s| s.contains("msg=\"control plane start\"") && s.contains(" token="))
+                .map(|s| s.contains("control plane starting") && s.contains("token="))
                 .unwrap_or(false)
         });
         assert!(saw_control_plane, "expected control plane start in log");

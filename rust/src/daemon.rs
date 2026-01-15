@@ -84,12 +84,36 @@ pub async fn run_daemon_with_shutdown(
         http_stats.clone(),
     )?;
 
-    let control = ControlPlane::start(
+    let control_result = ControlPlane::start(
         &http_addr,
         Some(http_token),
         http_stats,
         Some(shutdown.clone()),
     )?;
+
+    let control = control_result.control_plane;
+    let actual_addr = control_result.bound_addr;
+
+    // Update config with actual bound address (important if we fell back to a different port)
+    let actual_client_url = format!("http://{}", actual_addr);
+    let configured_url = cfg.client_url.clone().unwrap_or_default();
+    if configured_url != actual_client_url {
+        crate::logging::info_kv(
+            "control plane bound to different port than configured",
+            &[
+                ("configured", &configured_url),
+                ("actual", &actual_client_url),
+            ],
+        );
+        cfg.client_url = Some(actual_client_url);
+        // Save updated config so external clients know the actual port
+        if let Err(e) = cfg.save() {
+            crate::logging::error(format!(
+                "failed to save updated config with actual control plane address: {}",
+                e
+            ));
+        }
+    }
 
     // TODO: wire websocket events; keep None until implemented.
     let datasites_root = cfg.data_dir.join("datasites");
