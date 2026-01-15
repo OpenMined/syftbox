@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    fs, io,
+    env, fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -115,7 +115,7 @@ impl Client {
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
 
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
-        let _workspace_lock = crate::workspace::WorkspaceLock::try_lock(&data_dir)?;
+        let _workspace_lock = maybe_lock_workspace(&data_dir)?;
         // Ensure any existing ACLs are present on the server before normal sync begins.
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
         ACL_READY.store(true, Ordering::SeqCst);
@@ -168,7 +168,7 @@ impl Client {
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
 
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
-        let _workspace_lock = crate::workspace::WorkspaceLock::try_lock(&data_dir)?;
+        let _workspace_lock = maybe_lock_workspace(&data_dir)?;
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
         ACL_READY.store(true, Ordering::SeqCst);
 
@@ -195,6 +195,19 @@ impl Client {
 
         Ok(())
     }
+}
+
+fn maybe_lock_workspace(data_dir: &Path) -> Result<Option<crate::workspace::WorkspaceLock>> {
+    let skip_dir = env::var("SYFTBOX_SKIP_WORKSPACE_LOCK_DATA_DIR").ok();
+    if skip_dir
+        .as_deref()
+        .map(|d| d == data_dir.to_string_lossy().as_ref())
+        .unwrap_or(false)
+    {
+        crate::logging::info("Skipping workspace lock (embedded lock held)");
+        return Ok(None);
+    }
+    Ok(Some(crate::workspace::WorkspaceLock::try_lock(data_dir)?))
 }
 
 impl Client {
