@@ -58,7 +58,8 @@ fn login_already_logged_in_prints_config() {
     assert!(stdout.contains("Already logged in"));
     assert!(stdout.contains("SYFTBOX DATASITE CONFIG"));
     assert!(stdout.contains(email));
-    assert!(stdout.contains(&data_dir_str));
+    // CLI outputs native path format, so check for the original path (not the JSON-escaped version)
+    assert!(stdout.contains(&data_dir.display().to_string()));
 }
 
 #[test]
