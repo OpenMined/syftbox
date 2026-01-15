@@ -30,7 +30,10 @@ jobs:
 
   devstack-chaos:
     name: Chaos Test
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
 
     steps:
@@ -40,13 +43,18 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24.3'
-        cache: true
+        cache: ${{ matrix.os != 'windows-latest' }}
+
+    - name: Download dependencies (Windows only)
+      if: matrix.os == 'windows-latest'
+      run: go mod download
 
     - name: Install just
       uses: extractions/setup-just@v2
 
     - name: Run chaos test (1 minute)
       run: CHAOS_DURATION=1m just sbdev-test-chaos
+      shell: bash
 
   rust-integration:
     name: Rust Integration Tests
