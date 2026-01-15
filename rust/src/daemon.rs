@@ -154,7 +154,16 @@ pub fn start_threaded(cfg: Config, opts: DaemonOptions) -> Result<ThreadedDaemon
                     shutdown_task.notify_waiters();
                 });
 
-                run_daemon_with_shutdown(cfg, opts, shutdown).await
+                let result = run_daemon_with_shutdown(cfg, opts, shutdown).await;
+                match &result {
+                    Ok(()) => {
+                        crate::logging::info("daemon thread exited cleanly");
+                    }
+                    Err(e) => {
+                        crate::logging::error(format!("daemon thread exited with error: {e:?}"));
+                    }
+                }
+                result
             })
         })
         .context("spawn syftbox daemon thread")?;
