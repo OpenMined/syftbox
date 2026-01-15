@@ -320,6 +320,8 @@ mod control_plane_tests {
         std::fs::create_dir_all(&tmp).unwrap();
 
         let cfg_path = tmp.join("config.json");
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         std::fs::write(
             &cfg_path,
             format!(
@@ -328,7 +330,7 @@ mod control_plane_tests {
                   "data_dir":"{}",
                   "server_url":"https://syftbox.net"
                 }}"#,
-                tmp.join("data").display()
+                data_dir
             ),
         )
         .unwrap();

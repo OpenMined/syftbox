@@ -522,7 +522,8 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         let cfg_path = tmp.join("config.json");
-        let data_dir = tmp.join("data");
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         let json = format!(
             r#"{{
                 "email": "Alice@Example.com",
@@ -530,7 +531,7 @@ mod tests {
                 "server_url": "http://127.0.0.1:8080",
                 "client_url": "http://127.0.0.1:7938"
             }}"#,
-            data_dir.display()
+            data_dir
         );
         fs::write(&cfg_path, json).unwrap();
 

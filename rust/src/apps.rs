@@ -538,6 +538,8 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
 
         let cfg_path = tmp.join("config.json");
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.display().to_string().replace('\\', "/");
         std::fs::write(
             &cfg_path,
             format!(
@@ -546,7 +548,7 @@ mod tests {
                   "data_dir":"{}",
                   "server_url":"{}"
                 }}"#,
-                tmp.display(),
+                data_dir,
                 Config::default_server_url()
             ),
         )
@@ -698,8 +700,10 @@ mod tests {
             "",
         )
         .unwrap();
+        // Normalize CRLF to LF for cross-platform git compatibility
+        let normalize = |s: String| s.replace("\r\n", "\n");
         assert_eq!(
-            std::fs::read_to_string(dst_branch.join("message.txt")).unwrap(),
+            normalize(std::fs::read_to_string(dst_branch.join("message.txt")).unwrap()),
             "feature\n"
         );
         let _ = std::fs::remove_dir_all(&dst_branch);
@@ -709,7 +713,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dst_tag);
         install_from_git(repo.to_string_lossy().as_ref(), &dst_tag, "", "v1.0.0", "").unwrap();
         assert_eq!(
-            std::fs::read_to_string(dst_tag.join("message.txt")).unwrap(),
+            normalize(std::fs::read_to_string(dst_tag.join("message.txt")).unwrap()),
             "main\n"
         );
         let _ = std::fs::remove_dir_all(&dst_tag);
@@ -726,7 +730,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            std::fs::read_to_string(dst_commit.join("message.txt")).unwrap(),
+            normalize(std::fs::read_to_string(dst_commit.join("message.txt")).unwrap()),
             "main\n"
         );
     }
