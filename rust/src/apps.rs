@@ -511,8 +511,22 @@ fn remove_app_path(path: &Path) -> Result<()> {
         std::fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
         return Ok(());
     }
-    std::fs::remove_dir_all(path).with_context(|| format!("remove {}", path.display()))?;
-    Ok(())
+
+    // On Windows, file handles may still be held briefly after operations complete.
+    // Retry removal a few times with small delays to handle this.
+    let mut last_err = None;
+    for attempt in 0..3 {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap()).with_context(|| format!("remove {}", path.display()))
 }
 
 #[cfg(unix)]

@@ -668,42 +668,52 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
+        // Use cross-platform temp paths
+        let file_data_dir = tmp.join("file-data");
+        let env_data_dir = tmp.join("env-data");
+        let flag_data_dir = tmp.join("flag-data");
+
         let cfg_path = tmp.join("config.json");
+        // Use forward slashes for cross-platform JSON compatibility
+        let file_data_dir_str = file_data_dir.display().to_string().replace('\\', "/");
         fs::write(
             &cfg_path,
-            r#"{
+            format!(
+                r#"{{
               "email": "file@example.com",
-              "data_dir": "/tmp/syftbox-file",
+              "data_dir": "{}",
               "server_url": "https://file.syftbox.net",
               "client_url": "http://file.local:1234",
               "client_token": "file-token"
-            }"#,
+            }}"#,
+                file_data_dir_str
+            ),
         )
         .unwrap();
 
         env::set_var("SYFTBOX_EMAIL", "env@example.com");
-        env::set_var("SYFTBOX_DATA_DIR", "/tmp/syftbox-env");
+        env::set_var("SYFTBOX_DATA_DIR", env_data_dir.to_string_lossy().as_ref());
         env::set_var("SYFTBOX_SERVER_URL", "https://env.syftbox.net");
         env::set_var("SYFTBOX_CLIENT_URL", "http://env.local:5555");
         env::set_var("SYFTBOX_CLIENT_TOKEN", "env-token");
 
         let cfg = Config::load_with_overrides(&cfg_path, ConfigOverrides::default()).unwrap();
         assert_eq!(cfg.email, "env@example.com");
-        assert_eq!(cfg.data_dir, PathBuf::from("/tmp/syftbox-env"));
+        assert_eq!(cfg.data_dir, env_data_dir);
         assert_eq!(cfg.server_url, "https://env.syftbox.net");
         assert_eq!(cfg.client_url.as_deref(), Some("http://env.local:5555"));
         assert_eq!(cfg.client_token.as_deref(), Some("env-token"));
 
         let overrides = ConfigOverrides {
             email: Some("flag@example.com".to_string()),
-            data_dir: Some(PathBuf::from("/tmp/syftbox-flag")),
+            data_dir: Some(flag_data_dir.clone()),
             server_url: Some("https://flag.syftbox.net".to_string()),
             client_url: Some("http://flag.local:9999".to_string()),
             client_token: Some("flag-token".to_string()),
         };
         let cfg = Config::load_with_overrides(&cfg_path, overrides).unwrap();
         assert_eq!(cfg.email, "flag@example.com");
-        assert_eq!(cfg.data_dir, PathBuf::from("/tmp/syftbox-flag"));
+        assert_eq!(cfg.data_dir, flag_data_dir);
         assert_eq!(cfg.server_url, "https://flag.syftbox.net");
         assert_eq!(cfg.client_url.as_deref(), Some("http://flag.local:9999"));
         assert_eq!(cfg.client_token.as_deref(), Some("flag-token"));
