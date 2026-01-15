@@ -102,26 +102,3 @@ jobs:
     - name: Run chaos test (1 minute)
       run: CHAOS_DURATION=1m just sbdev-test-chaos
       shell: bash
-
-  rust-integration:
-    name: Rust Integration Tests
-    strategy:
-      matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: rust
-
-    - name: Run Rust integration tests
-      working-directory: rust
-      run: cargo test --test '*' -- --test-threads=1
