@@ -1001,7 +1001,8 @@ impl LocalScanner {
             if filters.ignore.should_ignore_rel(rel, false) {
                 continue;
             }
-            let key = rel.to_string_lossy().to_string();
+            // Normalize path separators to forward slashes for cross-platform key consistency
+            let key = rel.to_string_lossy().replace('\\', "/");
             if !is_synced_key(&key) {
                 continue;
             }

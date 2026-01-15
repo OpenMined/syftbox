@@ -16,9 +16,26 @@ use uuid::Uuid;
 
 use crate::telemetry::HttpStats;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ControlPlane {
     state: Arc<ControlState>,
+    bound_addr: SocketAddr,
+}
+
+// Manual Debug impl needed because ControlState contains non-Debug types
+impl std::fmt::Debug for ControlState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ControlState")
+            .field("token", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Result of starting the control plane, including the actual bound address.
+#[derive(Debug, Clone)]
+pub struct ControlPlaneStartResult {
+    pub control_plane: ControlPlane,
+    pub bound_addr: SocketAddr,
 }
 
 struct ControlState {
@@ -97,17 +114,89 @@ struct UploadListResponse {
 }
 
 impl ControlPlane {
-    pub fn start(
+    /// Start the control plane HTTP server.
+    ///
+    /// This function will:
+    /// 1. Try to bind to the configured address
+    /// 2. If that fails (e.g., port in use), try binding to port 0 (OS assigns random available port)
+    /// 3. Return the actual bound address so callers know where the server is listening
+    ///
+    /// All operations are logged for debugging.
+    pub async fn start_async(
         addr: &str,
         token: Option<String>,
         http_stats: Arc<HttpStats>,
         shutdown: Option<Arc<Notify>>,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<ControlPlaneStartResult> {
         let token = token.unwrap_or_else(|| Uuid::new_v4().as_simple().to_string());
+
         crate::logging::info_kv(
-            "control plane start",
-            &[("addr", addr), ("token", token.as_str())],
+            "control plane starting",
+            &[("requested_addr", addr), ("token", token.as_str())],
         );
+
+        // Parse the requested address
+        let requested_addr: SocketAddr = match addr.parse() {
+            Ok(a) => a,
+            Err(e) => {
+                crate::logging::error(format!(
+                    "control plane failed to parse address '{}': {} - address must be numeric IP (e.g., 127.0.0.1:7938), not hostname",
+                    addr, e
+                ));
+                return Err(anyhow::anyhow!(
+                    "Invalid address '{}': {} (use numeric IP, not hostname like 'localhost')",
+                    addr,
+                    e
+                ));
+            }
+        };
+
+        // Try to bind to the requested address
+        let (listener, bound_addr) = match tokio::net::TcpListener::bind(requested_addr).await {
+            Ok(listener) => {
+                let bound = listener.local_addr()?;
+                crate::logging::info_kv(
+                    "control plane bound to requested port",
+                    &[("addr", &bound.to_string())],
+                );
+                (listener, bound)
+            }
+            Err(e) => {
+                crate::logging::info_kv(
+                    "control plane requested port unavailable, trying fallback",
+                    &[
+                        ("requested_addr", &requested_addr.to_string()),
+                        ("error", &e.to_string()),
+                    ],
+                );
+
+                // Try port 0 (OS assigns random available port)
+                let fallback_addr: SocketAddr = format!("{}:0", requested_addr.ip()).parse()?;
+                match tokio::net::TcpListener::bind(fallback_addr).await {
+                    Ok(listener) => {
+                        let bound = listener.local_addr()?;
+                        crate::logging::info_kv(
+                            "control plane bound to fallback port",
+                            &[
+                                ("original_request", &requested_addr.to_string()),
+                                ("actual_addr", &bound.to_string()),
+                            ],
+                        );
+                        (listener, bound)
+                    }
+                    Err(fallback_err) => {
+                        crate::logging::error(format!(
+                            "control plane FAILED to bind - both requested port {} and fallback failed: original={}, fallback={}",
+                            requested_addr, e, fallback_err
+                        ));
+                        return Err(anyhow::anyhow!(
+                            "Failed to bind control plane: requested {} failed ({}), fallback to port 0 also failed ({})",
+                            requested_addr, e, fallback_err
+                        ));
+                    }
+                }
+            }
+        };
 
         let state = Arc::new(ControlState {
             token,
@@ -118,8 +207,8 @@ impl ControlPlane {
             http_stats,
         });
 
-        let app = Router::new()
-            .route("/v1/status", get(status))
+        // Create authenticated routes (require Bearer token)
+        let authenticated_routes = Router::new()
             .route("/v1/sync/status", get(sync_status))
             .route("/v1/sync/status/file", get(sync_status_file))
             .route("/v1/sync/events", get(sync_events))
@@ -135,22 +224,64 @@ impl ControlPlane {
                 auth_middleware,
             ));
 
-        let addr: SocketAddr = addr.parse()?;
+        // Health/status endpoint is public (no auth required)
+        // This allows health checks and probes without needing the token
+        let app = Router::new()
+            .route("/v1/status", get(status))
+            .with_state(state.clone())
+            .merge(authenticated_routes);
+
+        // Spawn the server
+        let shutdown_clone = shutdown.clone();
         tokio::spawn(async move {
-            if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-                if let Some(shutdown) = shutdown {
-                    let _ = axum::serve(listener, app)
-                        .with_graceful_shutdown(async move {
-                            shutdown.notified().await;
-                        })
-                        .await;
-                } else {
-                    let _ = axum::serve(listener, app).await;
+            if let Some(shutdown) = shutdown_clone {
+                let result = axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        shutdown.notified().await;
+                    })
+                    .await;
+                if let Err(e) = result {
+                    crate::logging::error(format!("control plane server error: {}", e));
+                }
+            } else {
+                let result = axum::serve(listener, app).await;
+                if let Err(e) = result {
+                    crate::logging::error(format!("control plane server error: {}", e));
                 }
             }
+            crate::logging::info("control plane server stopped");
         });
 
-        Ok(ControlPlane { state })
+        crate::logging::info_kv(
+            "control plane started successfully",
+            &[("bound_addr", &bound_addr.to_string())],
+        );
+
+        Ok(ControlPlaneStartResult {
+            control_plane: ControlPlane { state, bound_addr },
+            bound_addr,
+        })
+    }
+
+    /// Synchronous wrapper for start_async that blocks until binding completes.
+    /// This ensures the port is actually bound before returning.
+    pub fn start(
+        addr: &str,
+        token: Option<String>,
+        http_stats: Arc<HttpStats>,
+        shutdown: Option<Arc<Notify>>,
+    ) -> anyhow::Result<ControlPlaneStartResult> {
+        // We need a runtime to run the async code. Since we're already in a tokio context
+        // (called from daemon), we can use block_in_place to avoid nested runtime issues.
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(Self::start_async(addr, token, http_stats, shutdown))
+        })
+    }
+
+    /// Get the actual address the control plane is bound to.
+    pub fn bound_addr(&self) -> SocketAddr {
+        self.bound_addr
     }
 
     pub async fn wait_sync_now(&self) {
@@ -598,6 +729,7 @@ mod tests {
         });
         let cp = ControlPlane {
             state: state.clone(),
+            bound_addr: "127.0.0.1:7938".parse().unwrap(),
         };
         let id = cp.upsert_upload(
             "alice@example.com/public/demo.bin".into(),

@@ -128,7 +128,9 @@ func assertFileContains(t *testing.T, path, want string) {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	if string(got) != want {
-		t.Fatalf("unexpected file contents in %s: got %q want %q", path, string(got), want)
+	// Normalize CRLF to LF for cross-platform compatibility (git on Windows uses CRLF by default)
+	gotStr := strings.ReplaceAll(string(got), "\r\n", "\n")
+	if gotStr != want {
+		t.Fatalf("unexpected file contents in %s: got %q want %q", path, gotStr, want)
 	}
 }

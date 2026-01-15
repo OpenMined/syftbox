@@ -219,15 +219,16 @@ mod tests {
             "exp": 9999999999_i64
         }));
 
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         let json = format!(
             r#"{{
                 "email": "{email}",
-                "data_dir": "{}",
+                "data_dir": "{data_dir}",
                 "server_url": "{server_url}",
                 "client_url": "http://127.0.0.1:7938",
                 "refresh_token": "{refresh}"
             }}"#,
-            tmp.join("data").display()
         );
         std::fs::write(&cfg_path, json).unwrap();
 
@@ -256,15 +257,16 @@ mod tests {
             "sub": email,
             "exp": 9999999999_i64
         }));
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         let json = format!(
             r#"{{
                 "email": "{email}",
-                "data_dir": "{}",
+                "data_dir": "{data_dir}",
                 "server_url": "http://127.0.0.1:1111",
                 "client_url": "http://127.0.0.1:7938",
                 "refresh_token": "{refresh}"
             }}"#,
-            tmp.join("data").display()
         );
         std::fs::write(&cfg_path, json).unwrap();
 
@@ -291,15 +293,16 @@ mod tests {
             "sub": email,
             "exp": 1_i64
         }));
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         let json = format!(
             r#"{{
                 "email": "{email}",
-                "data_dir": "{}",
+                "data_dir": "{data_dir}",
                 "server_url": "{server_url}",
                 "client_url": "http://127.0.0.1:7938",
                 "refresh_token": "{refresh}"
             }}"#,
-            tmp.join("data").display()
         );
         std::fs::write(&cfg_path, json).unwrap();
 

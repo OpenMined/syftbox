@@ -1,15 +1,15 @@
-name: Go Tests
+name: Tests
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, madhava/biovault ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, madhava/biovault ]
 
 jobs:
-  test:
-    name: unit tests
+  go-test:
+    name: Go Tests
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
@@ -29,5 +29,54 @@ jobs:
       if: matrix.os == 'windows-latest'
       run: go mod download
 
-    - name: Run Tests
+    - name: Run Go Tests
       run: go test -v -cover ./...
+
+  rust-test:
+    name: Rust Tests
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    - name: Run Rust Tests
+      working-directory: rust
+      # NOTE: Some tests have isolation issues, run single-threaded for reliability
+      run: cargo test -- --test-threads=1
+
+  rust-lint:
+    name: Rust Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    - name: Check formatting
+      working-directory: rust
+      run: cargo fmt --all -- --check
+
+    - name: Run Clippy
+      working-directory: rust
+      run: cargo clippy --all-targets --all-features -- -D warnings

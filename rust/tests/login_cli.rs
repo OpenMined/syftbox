@@ -29,17 +29,18 @@ fn login_already_logged_in_prints_config() {
         "sub": email,
         "exp": 9999999999_i64
     }));
+    // Use forward slashes for cross-platform JSON compatibility
+    let data_dir_str = data_dir.display().to_string().replace('\\', "/");
     std::fs::write(
         &cfg_path,
         format!(
             r#"{{
               "email":"{email}",
-              "data_dir":"{}",
+              "data_dir":"{data_dir_str}",
               "server_url":"{server_url}",
               "client_url":"http://127.0.0.1:7938",
               "refresh_token":"{refresh}"
             }}"#,
-            data_dir.display()
         ),
     )
     .unwrap();
@@ -57,7 +58,7 @@ fn login_already_logged_in_prints_config() {
     assert!(stdout.contains("Already logged in"));
     assert!(stdout.contains("SYFTBOX DATASITE CONFIG"));
     assert!(stdout.contains(email));
-    assert!(stdout.contains(&data_dir.display().to_string()));
+    assert!(stdout.contains(&data_dir_str));
 }
 
 #[test]
@@ -77,17 +78,18 @@ fn login_already_logged_in_quiet_has_no_output() {
         "sub": email,
         "exp": 9999999999_i64
     }));
+    // Use forward slashes for cross-platform JSON compatibility
+    let data_dir_str = data_dir.display().to_string().replace('\\', "/");
     std::fs::write(
         &cfg_path,
         format!(
             r#"{{
               "email":"{email}",
-              "data_dir":"{}",
+              "data_dir":"{data_dir_str}",
               "server_url":"{server_url}",
               "client_url":"http://127.0.0.1:7938",
               "refresh_token":"{refresh}"
             }}"#,
-            data_dir.display()
         ),
     )
     .unwrap();

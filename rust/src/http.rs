@@ -114,6 +114,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let cfg_path = tmp.join("config.json");
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         std::fs::write(
             &cfg_path,
             format!(
@@ -123,7 +125,7 @@ mod tests {
                   "server_url":"https://syftbox.net",
                   "refresh_token":"old"
                 }}"#,
-                tmp.join("data").display()
+                data_dir
             ),
         )
         .unwrap();
@@ -171,6 +173,8 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
 
         let cfg_path = tmp.join("config.json");
+        // Use forward slashes for cross-platform JSON compatibility
+        let data_dir = tmp.join("data").display().to_string().replace('\\', "/");
         std::fs::write(
             &cfg_path,
             format!(
@@ -180,7 +184,7 @@ mod tests {
                   "server_url":"http://127.0.0.1:0",
                   "refresh_token":"old"
                 }}"#,
-                tmp.join("data").display()
+                data_dir
             ),
         )
         .unwrap();
