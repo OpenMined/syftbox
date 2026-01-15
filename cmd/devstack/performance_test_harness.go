@@ -163,7 +163,7 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	s.serverBin = filepath.Join(s.binDir, "server")
+	s.serverBin = addExe(filepath.Join(s.binDir, "server"))
 	s.clientBin = filepath.Join(s.binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
@@ -416,7 +416,7 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	}
 
 	// Build binaries
-	serverBin := filepath.Join(binDir, "server")
+	serverBin := addExe(filepath.Join(binDir, "server"))
 	clientBin := filepath.Join(binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
