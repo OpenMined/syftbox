@@ -612,10 +612,13 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         env::set_var("HOME", &tmp);
-        env::set_var("SYFTBOX_CONFIG_PATH", "/tmp/env/config.json");
 
-        let flag_path = Path::new("/tmp/flag/config.json");
-        let resolved = Config::resolve_config_path(Some(flag_path));
+        // Use cross-platform temp paths
+        let env_path = tmp.join("env").join("config.json");
+        let flag_path = tmp.join("flag").join("config.json");
+        env::set_var("SYFTBOX_CONFIG_PATH", &env_path);
+
+        let resolved = Config::resolve_config_path(Some(&flag_path));
         assert_eq!(resolved, flag_path);
     }
 
@@ -628,10 +631,13 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
         env::set_var("HOME", &tmp);
-        env::set_var("SYFTBOX_CONFIG_PATH", "/tmp/env/config.json");
+
+        // Use cross-platform temp path
+        let env_path = tmp.join("env").join("config.json");
+        env::set_var("SYFTBOX_CONFIG_PATH", &env_path);
 
         let resolved = Config::resolve_config_path(None);
-        assert_eq!(resolved, PathBuf::from("/tmp/env/config.json"));
+        assert_eq!(resolved, env_path);
     }
 
     #[test]
