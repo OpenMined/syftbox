@@ -349,8 +349,7 @@ fn app_name_from_url(url: &Url) -> String {
     url.path()
         .trim_matches('/')
         .split('/')
-        .filter(|p| !p.is_empty())
-        .next_back()
+        .rfind(|p| !p.is_empty())
         .unwrap_or_default()
         .to_lowercase()
 }
