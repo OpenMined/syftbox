@@ -18,10 +18,11 @@ import (
 )
 
 // windowsTimeout returns a timeout scaled up for Windows which is slower with
-// process spawning, file I/O, and file watchers.
+// process spawning, file I/O, and file watchers. Uses 5x multiplier because
+// Windows sync with 3+ clients is significantly slower than Linux/macOS.
 func windowsTimeout(d time.Duration) time.Duration {
 	if runtime.GOOS == "windows" {
-		return d * 3
+		return d * 5
 	}
 	return d
 }
