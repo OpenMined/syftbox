@@ -473,7 +473,7 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 	}
 
 	for i, filename := range filenames {
-		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], 10*time.Second); err != nil {
+		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], windowsTimeout(10*time.Second)); err != nil {
 			t.Fatalf("wait for %s: %v", filename, err)
 		}
 	}

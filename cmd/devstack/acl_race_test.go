@@ -71,7 +71,7 @@ func TestACLRaceCondition(t *testing.T) {
 	t.Logf("⏱️  Alice uploaded at T+%v", time.Since(start))
 
 	// Try to receive with generous timeout to see what happens
-	timeout := 10 * time.Second
+	timeout := windowsTimeout(10 * time.Second)
 	err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, timeout)
 
 	latency := time.Since(start)
@@ -121,7 +121,7 @@ func TestACLRaceCondition(t *testing.T) {
 		t.Fatalf("upload failed: %v", err)
 	}
 
-	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename2, md5Hash2, 3*time.Second); err != nil {
+	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename2, md5Hash2, windowsTimeout(3*time.Second)); err != nil {
 		t.Fatalf("sync failed even with ACL ready: %v", err)
 	}
 

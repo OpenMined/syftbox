@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,15 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 	_ "github.com/ncruces/go-sqlite3/embed"
 )
+
+// windowsTimeout returns a timeout scaled up for Windows which is slower with
+// process spawning, file I/O, and file watchers.
+func windowsTimeout(d time.Duration) time.Duration {
+	if runtime.GOOS == "windows" {
+		return d * 3
+	}
+	return d
+}
 
 // journalEntry represents a row from the sync_journal table
 type journalEntry struct {
@@ -87,7 +97,7 @@ func TestSimultaneousWrite(t *testing.T) {
 
 	// Wait for bob to receive initial version
 	t.Log("Step 2: Wait for bob to receive initial file")
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive initial file: %v", err)
 	}
 
@@ -198,7 +208,7 @@ func TestDivergentEdits(t *testing.T) {
 		t.Fatalf("alice upload v1: %v", err)
 	}
 
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
@@ -374,10 +384,10 @@ func TestThreeWayConflict(t *testing.T) {
 
 	// Wait for all to receive
 	t.Log("Step 2: Wait for bob and charlie to receive")
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive: %v", err)
 	}
-	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, 10*time.Second); err != nil {
+	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("charlie didn't receive: %v", err)
 	}
 
@@ -491,7 +501,7 @@ func TestConflictDuringACLChange(t *testing.T) {
 		t.Fatalf("alice upload: %v", err)
 	}
 
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive: %v", err)
 	}
 
@@ -697,7 +707,7 @@ func TestJournalWriteTiming(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
@@ -817,7 +827,7 @@ func TestNonConflictUpdate(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
@@ -836,7 +846,7 @@ func TestNonConflictUpdate(t *testing.T) {
 
 	t.Log("Step 4: Bob receives v2")
 	bobFilePath := filepath.Join(h.bob.dataDir, "datasites", h.alice.email, "public", filename)
-	if err := h.bob.WaitForFile(h.alice.email, filename, v2MD5, 15*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v2MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v2: %v", err)
 	}
 	t.Log("   ✅ Bob received v2")
@@ -917,7 +927,7 @@ func TestRapidSequentialEdits(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
@@ -1021,7 +1031,7 @@ func TestJournalLossRecovery(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, 10*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 

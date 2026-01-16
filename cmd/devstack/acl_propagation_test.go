@@ -105,7 +105,7 @@ rules:
 		if err != nil {
 			t.Fatalf("write public ACL permissive for %s: %v", owner.email, err)
 		}
-		expectPropagation(owner, publicRel, md5Perm, 10*time.Second)
+		expectPropagation(owner, publicRel, md5Perm, windowsTimeout(10*time.Second))
 
 		version++
 		onePeer := clients[(idx+1)%len(clients)]
@@ -122,7 +122,7 @@ rules:
 		if err != nil {
 			t.Fatalf("write public ACL shared for %s: %v", owner.email, err)
 		}
-		expectPropagation(owner, publicRel, md5Shared, 10*time.Second)
+		expectPropagation(owner, publicRel, md5Shared, windowsTimeout(10*time.Second))
 
 		version++
 		ownerOnly := `terminal: false
@@ -138,7 +138,7 @@ rules:
 		if err != nil {
 			t.Fatalf("write public ACL restrictive for %s: %v", owner.email, err)
 		}
-		expectPropagation(owner, publicRel, md5Restrict, 10*time.Second)
+		expectPropagation(owner, publicRel, md5Restrict, windowsTimeout(10*time.Second))
 	}
 
 	// RPC ACL: update and verify propagation
@@ -183,12 +183,12 @@ rules:
 		t.Fatalf("read rpc root acl: %v", err)
 	}
 	md5RPCRoot := fmt.Sprintf("%x", md5.Sum(rootACLData))
-	expectPropagation(h.bob, rpcRootRel, md5RPCRoot, 8*time.Second)
-	expectPropagation(h.bob, rpcRel, md5RPC1, 8*time.Second)
+	expectPropagation(h.bob, rpcRootRel, md5RPCRoot, windowsTimeout(8*time.Second))
+	expectPropagation(h.bob, rpcRel, md5RPC1, windowsTimeout(8*time.Second))
 
 	md5RPC2, err := writeACL(h.bob, rpcRel, rpcACL2)
 	if err != nil {
 		t.Fatalf("write rpc acl2: %v", err)
 	}
-	expectPropagation(h.bob, rpcRel, md5RPC2, 8*time.Second)
+	expectPropagation(h.bob, rpcRel, md5RPC2, windowsTimeout(8*time.Second))
 }

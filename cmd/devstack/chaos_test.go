@@ -732,7 +732,7 @@ rules:
 			// Start download in background
 			downloadDone := make(chan error, 1)
 			go func() {
-				downloadDone <- receiver.WaitForFile(sender.email, name, md5, 15*time.Second)
+				downloadDone <- receiver.WaitForFile(sender.email, name, md5, windowsTimeout(15*time.Second))
 			}()
 
 			// Delete after short delay (while download may be in progress)
@@ -861,7 +861,7 @@ rules:
 			downloadDone := make(chan error, 1)
 			var downloadedMD5 string
 			go func() {
-				err := receiver.WaitForFile(sender.email, name, v1MD5, 15*time.Second)
+				err := receiver.WaitForFile(sender.email, name, v1MD5, windowsTimeout(15*time.Second))
 				if err == nil {
 					// Read what receiver got
 					path := filepath.Join(receiver.dataDir, "datasites", sender.email, "public", name)
@@ -926,9 +926,9 @@ rules:
 				app := parts[1]
 				endpoint := parts[3]
 				filename := parts[len(parts)-1]
-				err = client.WaitForRPCRequest(info.owner, app, endpoint, filename, info.md5, 10*time.Second)
+				err = client.WaitForRPCRequest(info.owner, app, endpoint, filename, info.md5, windowsTimeout(10*time.Second))
 			} else {
-				err = client.WaitForFile(info.owner, info.path, info.md5, 10*time.Second)
+				err = client.WaitForFile(info.owner, info.path, info.md5, windowsTimeout(10*time.Second))
 			}
 			if err != nil {
 				t.Fatalf("convergence failure: %s@%s missing %s (%s): %v",
