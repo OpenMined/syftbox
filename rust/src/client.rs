@@ -3,7 +3,7 @@ use std::{
     env, fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -103,6 +103,7 @@ impl Client {
             .wait_for_healthz(shutdown.clone(), opts.healthz_max_attempts)
             .await?;
         if !healthy {
+            crate::logging::info("shutdown during healthz wait (start_with_options)");
             return Ok(());
         }
 
@@ -113,11 +114,22 @@ impl Client {
         let control = self.control.clone();
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
+        let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
 
+        crate::logging::info_kv(
+            "starting sync (start_with_options)",
+            &[
+                ("data_dir", &data_dir.display().to_string()),
+                ("email", &email),
+            ],
+        );
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
+        crate::logging::info("workspace layout ensured");
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
+        crate::logging::info("workspace locked");
         // Ensure any existing ACLs are present on the server before normal sync begins.
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
+        crate::logging::info("existing ACLs uploaded");
         ACL_READY.store(true, Ordering::SeqCst);
 
         // Seed control-plane sync status so clients can query /v1/sync/status immediately after
@@ -132,12 +144,12 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), shutdown.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
@@ -156,6 +168,7 @@ impl Client {
             .wait_for_healthz(shutdown.clone(), opts.healthz_max_attempts)
             .await?;
         if !healthy {
+            crate::logging::info("shutdown during healthz wait");
             return Ok(());
         }
 
@@ -166,7 +179,15 @@ impl Client {
         let control = self.control.clone();
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
+        let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
 
+        crate::logging::info_kv(
+            "starting sync",
+            &[
+                ("data_dir", &data_dir.display().to_string()),
+                ("email", &email),
+            ],
+        );
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
@@ -181,12 +202,12 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), shutdown.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
@@ -216,6 +237,7 @@ impl Client {
         shutdown: std::sync::Arc<tokio::sync::Notify>,
         max_attempts: Option<usize>,
     ) -> Result<bool> {
+        crate::logging::info("waiting for server healthz");
         let mut attempts = 0;
         loop {
             let res = tokio::select! {
@@ -223,13 +245,29 @@ impl Client {
                 res = self.api.healthz() => res,
             };
             match res {
-                Ok(_) => return Ok(true),
+                Ok(_) => {
+                    crate::logging::info("server healthz ok");
+                    return Ok(true);
+                }
                 Err(err) => {
                     attempts += 1;
                     if let Some(max) = max_attempts {
                         if attempts >= max {
+                            crate::logging::error(format!(
+                                "healthz failed after {} attempts: {err:?}",
+                                attempts
+                            ));
                             return Err(err).context("healthz");
                         }
+                    }
+                    if attempts == 1 || attempts % 10 == 0 {
+                        crate::logging::info_kv(
+                            "healthz retry",
+                            &[
+                                ("attempt", &attempts.to_string()),
+                                ("error", &format!("{err:?}")),
+                            ],
+                        );
                     }
                     tokio::select! {
                         _ = shutdown.notified() => return Ok(false),
@@ -248,6 +286,7 @@ async fn run_sync_loop(
     control: Option<ControlPlane>,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
 ) -> Result<()> {
     let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
     let mut local_scanner = crate::sync::LocalScanner::default();
@@ -266,18 +305,147 @@ async fn run_sync_loop(
             crate::logging::error(format!("sync error: {err:?}"));
         }
 
+        let sleep_for = sync_scheduler.interval();
         if let Some(cp) = &control {
             tokio::select! {
-                _ = sleep(Duration::from_secs(5)) => {}
-                _ = cp.wait_sync_now() => {}
-                _ = sync_kick.notified() => {}
+                _ = sleep(sleep_for) => {}
+                _ = cp.wait_sync_now() => {
+                    sync_scheduler.record_activity();
+                }
+                _ = sync_kick.notified() => {
+                    sync_scheduler.record_activity();
+                }
             }
         } else {
             tokio::select! {
-                _ = sleep(Duration::from_secs(5)) => {}
-                _ = sync_kick.notified() => {}
+                _ = sleep(sleep_for) => {}
+                _ = sync_kick.notified() => {
+                    sync_scheduler.record_activity();
+                }
             }
         }
+    }
+}
+
+const SYNC_INTERVAL_STARTUP: Duration = Duration::from_millis(100);
+const SYNC_INTERVAL_BURST: Duration = Duration::from_millis(100);
+const SYNC_INTERVAL_ACTIVE: Duration = Duration::from_millis(100);
+const SYNC_INTERVAL_MODERATE: Duration = Duration::from_millis(500);
+const SYNC_INTERVAL_IDLE: Duration = Duration::from_secs(1);
+const SYNC_INTERVAL_IDLE2: Duration = Duration::from_secs(2);
+const SYNC_INTERVAL_IDLE3: Duration = Duration::from_secs(5);
+const SYNC_INTERVAL_DEEP_IDLE: Duration = Duration::from_secs(10);
+
+const ACTIVITY_BURST_THRESHOLD: usize = 10;
+const ACTIVITY_ACTIVE_THRESHOLD: usize = 3;
+const ACTIVITY_MODERATE_THRESHOLD: usize = 1;
+const ACTIVITY_WINDOW: Duration = Duration::from_secs(10);
+
+const IDLE_TIMEOUT_1: Duration = Duration::from_secs(5);
+const IDLE_TIMEOUT_2: Duration = Duration::from_secs(15);
+const DEEP_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+const STARTUP_DURATION: Duration = Duration::from_secs(3);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivityLevel {
+    Startup,
+    Burst,
+    Active,
+    Moderate,
+    Idle,
+    Idle2,
+    Idle3,
+    DeepIdle,
+}
+
+struct AdaptiveSyncState {
+    created_at: Instant,
+    last_activity: Instant,
+    events: Vec<Instant>,
+    level: ActivityLevel,
+}
+
+impl AdaptiveSyncState {
+    fn new(now: Instant) -> Self {
+        Self {
+            created_at: now,
+            last_activity: now,
+            events: Vec::with_capacity(ACTIVITY_BURST_THRESHOLD * 2),
+            level: ActivityLevel::Startup,
+        }
+    }
+
+    fn update_activity_level(&mut self, now: Instant) {
+        let event_count = self.events.len();
+        let time_since_activity = now.duration_since(self.last_activity);
+        let time_since_creation = now.duration_since(self.created_at);
+
+        let new_level = if time_since_creation < STARTUP_DURATION {
+            ActivityLevel::Startup
+        } else {
+            match event_count {
+                n if n >= ACTIVITY_BURST_THRESHOLD => ActivityLevel::Burst,
+                n if n >= ACTIVITY_ACTIVE_THRESHOLD => ActivityLevel::Active,
+                n if n >= ACTIVITY_MODERATE_THRESHOLD => ActivityLevel::Moderate,
+                _ => {
+                    if time_since_activity < IDLE_TIMEOUT_1 {
+                        ActivityLevel::Idle
+                    } else if time_since_activity < IDLE_TIMEOUT_2 {
+                        ActivityLevel::Idle2
+                    } else if time_since_activity < DEEP_IDLE_TIMEOUT {
+                        ActivityLevel::Idle3
+                    } else {
+                        ActivityLevel::DeepIdle
+                    }
+                }
+            }
+        };
+
+        self.level = new_level;
+    }
+
+    fn interval(&self) -> Duration {
+        match self.level {
+            ActivityLevel::Startup => SYNC_INTERVAL_STARTUP,
+            ActivityLevel::Burst => SYNC_INTERVAL_BURST,
+            ActivityLevel::Active => SYNC_INTERVAL_ACTIVE,
+            ActivityLevel::Moderate => SYNC_INTERVAL_MODERATE,
+            ActivityLevel::Idle => SYNC_INTERVAL_IDLE,
+            ActivityLevel::Idle2 => SYNC_INTERVAL_IDLE2,
+            ActivityLevel::Idle3 => SYNC_INTERVAL_IDLE3,
+            ActivityLevel::DeepIdle => SYNC_INTERVAL_DEEP_IDLE,
+        }
+    }
+}
+
+struct AdaptiveSyncScheduler {
+    state: std::sync::Mutex<AdaptiveSyncState>,
+}
+
+impl AdaptiveSyncScheduler {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            state: std::sync::Mutex::new(AdaptiveSyncState::new(now)),
+        }
+    }
+
+    fn record_activity(&self) {
+        let now = Instant::now();
+        let mut state = self.state.lock().expect("sync scheduler lock");
+        state.last_activity = now;
+        state.events.push(now);
+        let cutoff = now.checked_sub(ACTIVITY_WINDOW).unwrap_or(now);
+        state.events.retain(|ts| *ts >= cutoff);
+        state.update_activity_level(now);
+    }
+
+    fn interval(&self) -> Duration {
+        let now = Instant::now();
+        let mut state = self.state.lock().expect("sync scheduler lock");
+        state.update_activity_level(now);
+        state.interval()
     }
 }
 
@@ -364,6 +532,7 @@ async fn run_ws_listener(
     email: String,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
     let datasites_root = data_dir.join("datasites");
@@ -459,12 +628,14 @@ async fn run_ws_listener(
         let watcher_ws = ws_handle.clone();
         let watcher_email = email.clone();
         let watcher_shutdown = shutdown.clone();
+        let watcher_scheduler = sync_scheduler.clone();
         let watcher_task = tokio::spawn(async move {
             if let Err(err) = watch_priority_files(
                 &watch_root,
                 &watcher_email,
                 watcher_filters,
                 watcher_kick,
+                watcher_scheduler,
                 watcher_ws,
                 watcher_shutdown,
             )
@@ -755,7 +926,9 @@ async fn upload_existing_acls(
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             if name == "syft.pub.yaml" {
-                let rel = path.strip_prefix(datasites_root)?;
+                let Some(rel) = strip_datasites_prefix(datasites_root, path) else {
+                    continue;
+                };
                 let key = rel.to_string_lossy().to_string();
                 if key.starts_with(my_email) {
                     // Best-effort upload; ignore errors so startup continues.
@@ -779,9 +952,8 @@ fn collect_synced_keys(datasites_root: &Path, filters: &SyncFilters) -> Vec<Stri
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path();
-        let rel = match path.strip_prefix(datasites_root) {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Some(rel) = strip_datasites_prefix(datasites_root, path) else {
+            continue;
         };
         let key = rel.to_string_lossy().replace('\\', "/");
         if key.is_empty() {
@@ -822,6 +994,7 @@ async fn watch_priority_files(
     my_email: &str,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
     ws: WsHandle,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
@@ -859,6 +1032,7 @@ async fn watch_priority_files(
             match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
                 Ok(did_trigger) => {
                     if did_trigger {
+                        sync_scheduler.record_activity();
                         sync_kick.notify_one();
                     }
                 }
@@ -903,6 +1077,9 @@ async fn watch_priority_files(
                 }
 
                 let mut paths: Vec<PathBuf> = pending.drain().collect();
+                if !paths.is_empty() {
+                    sync_scheduler.record_activity();
+                }
                 paths.sort_by(|a, b| {
                     let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
                     let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -918,6 +1095,7 @@ async fn watch_priority_files(
                     match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
                         Ok(did_trigger) => {
                             if did_trigger {
+                                sync_scheduler.record_activity();
                                 sync_kick.notify_one();
                             }
                         }
@@ -929,6 +1107,7 @@ async fn watch_priority_files(
                 match poll_priority_changes(root, my_email, &filters, &ws, &mut seen_mtime_ns).await {
                     Ok(did_trigger) => {
                         if did_trigger {
+                            sync_scheduler.record_activity();
                             sync_kick.notify_one();
                         }
                     }
@@ -1034,12 +1213,13 @@ async fn send_priority_if_small(
         return Ok(false);
     }
 
-    let rel = path
-        .strip_prefix(root)
-        .with_context(|| format!("strip prefix {}", path.display()))?;
+    let rel = match strip_datasites_prefix(root, path) {
+        Some(rel) => rel,
+        None => return Ok(false),
+    };
     let rel_str = rel.to_string_lossy().to_string();
 
-    if filters.ignore.should_ignore_rel(rel, false) {
+    if filters.ignore.should_ignore_rel(&rel, false) {
         return Ok(false);
     }
     if !rel_str.starts_with(&format!("{my_email}/")) {
@@ -1050,9 +1230,10 @@ async fn send_priority_if_small(
         return Ok(false);
     }
 
-    let is_priority = filters.priority.should_prioritize_rel(rel, false);
+    let is_priority = filters.priority.should_prioritize_rel(&rel, false);
     if !is_priority {
-        return Ok(false);
+        // Non-priority changes should still wake the sync loop.
+        return Ok(true);
     }
 
     let size = meta.len();
@@ -1090,6 +1271,24 @@ async fn send_priority_if_small(
             Ok(true)
         }
     }
+}
+
+fn strip_datasites_prefix(root: &Path, path: &Path) -> Option<PathBuf> {
+    // Try original paths first (fast path)
+    if let Ok(rel) = path.strip_prefix(root) {
+        return Some(rel.to_path_buf());
+    }
+    // Fall back to canonicalized paths to handle macOS /tmp -> /private/tmp symlinks
+    let root_resolved = resolve_path(root);
+    let path_resolved = resolve_path(path);
+    path_resolved
+        .strip_prefix(&root_resolved)
+        .ok()
+        .map(|p| p.to_path_buf())
+}
+
+fn resolve_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]

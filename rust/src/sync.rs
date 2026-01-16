@@ -959,6 +959,28 @@ fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {
     filters.ignore.should_ignore_rel(Path::new(key), false) || SyncFilters::is_marked_rel_path(key)
 }
 
+fn strip_datasites_prefix(datasites_root: &Path, path: &Path) -> Result<PathBuf> {
+    if let Ok(rel) = path.strip_prefix(datasites_root) {
+        return Ok(rel.to_path_buf());
+    }
+    let root_resolved = resolve_path(datasites_root);
+    let path_resolved = resolve_path(path);
+    path_resolved
+        .strip_prefix(&root_resolved)
+        .map(|rel| rel.to_path_buf())
+        .with_context(|| {
+            format!(
+                "strip prefix {} from {}",
+                root_resolved.display(),
+                path.display()
+            )
+        })
+}
+
+fn resolve_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 #[derive(Clone, Debug)]
 struct LocalScanCacheEntry {
     size: i64,
@@ -995,10 +1017,9 @@ impl LocalScanner {
                 continue;
             }
             let path = entry.path();
-            let rel = path
-                .strip_prefix(datasites_root)
+            let rel = strip_datasites_prefix(datasites_root, path)
                 .with_context(|| format!("strip prefix {}", path.display()))?;
-            if filters.ignore.should_ignore_rel(rel, false) {
+            if filters.ignore.should_ignore_rel(&rel, false) {
                 continue;
             }
             // Normalize path separators to forward slashes for cross-platform key consistency

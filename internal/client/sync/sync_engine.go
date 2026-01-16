@@ -110,8 +110,9 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	// start the watcher
 	slog.Info("starting file watcher")
 	se.watcher.FilterPaths(func(path string) bool {
-		// ignore all files that are ignored, not priority or that are marked
-		return se.isIgnoredFile(path) || !se.isPriorityFile(path) || IsMarkedPath(path)
+		// Ignore only files that are explicitly ignored or marked.
+		// Non-priority files still count as local activity for sync scheduling.
+		return se.isIgnoredFile(path) || IsMarkedPath(path)
 	})
 	if err := se.watcher.Start(ctx); err != nil {
 		return fmt.Errorf("file watcher: %w", err)
@@ -796,14 +797,17 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 				return
 			}
 			path := event.Path()
-
-			// this is already filtered
 			relPath, _ := se.workspace.DatasiteRelPath(path)
-			slog.Info("watcher detected priority file", "path", relPath, "event", event.Event())
 
 			// Record activity for adaptive sync
 			se.adaptiveScheduler.RecordActivity()
 
+			if !se.isPriorityFile(path) {
+				slog.Debug("watcher detected non-priority file", "path", relPath, "event", event.Event())
+				continue
+			}
+
+			slog.Info("watcher detected priority file", "path", relPath, "event", event.Event())
 			go se.handlePriorityUpload(path)
 		}
 	}

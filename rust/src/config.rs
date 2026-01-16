@@ -345,7 +345,11 @@ fn absolutize_path(path: &Path) -> PathBuf {
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(expanded)
     };
-    clean_lexical(&abs)
+    let cleaned = clean_lexical(&abs);
+    // On macOS, /tmp is a symlink to /private/tmp. Canonicalize to resolve symlinks
+    // so all path comparisons use consistent forms. Fall back to cleaned path if
+    // canonicalization fails (e.g., path doesn't exist yet).
+    std::fs::canonicalize(&cleaned).unwrap_or(cleaned)
 }
 
 fn expand_tilde(path: &Path) -> PathBuf {
