@@ -973,6 +973,10 @@ func (c *ClientHelper) WaitForRPCRequest(senderEmail, appName, endpoint, filenam
 				if expectedMD5 != "" {
 					content, err := os.ReadFile(fullPath)
 					if err != nil {
+						// On Windows, file may be locked during sync; retry
+						if isSharingViolation(err) {
+							continue
+						}
 						return fmt.Errorf("read file: %w", err)
 					}
 
