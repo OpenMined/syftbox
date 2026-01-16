@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -104,6 +105,42 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 
 	// mark as completed
 	se.syncStatus.SetCompleted(syncRelPath)
+
+	// If this was an ACL file, generate and send updated manifests
+	// TODO: Re-enable after fixing timing issues
+	// if aclspec.IsACLFile(relPath) {
+	// 	go se.broadcastACLManifests(relPath)
+	// }
+}
+
+func (se *SyncEngine) broadcastACLManifests(aclRelPath string) {
+	// Extract datasite from path (e.g., "alice@example.com/public/syft.pub.yaml" -> "alice@example.com")
+	parts := strings.SplitN(aclRelPath, "/", 2)
+	if len(parts) == 0 {
+		return
+	}
+	datasite := parts[0]
+
+	// Only broadcast manifests for our own datasite
+	if datasite != se.workspace.Owner {
+		return
+	}
+
+	generator := NewACLManifestGenerator(se.workspace.DatasitesDir)
+	manifests, err := generator.GenerateManifests(datasite)
+	if err != nil {
+		slog.Error("sync manifest generation failed", "datasite", datasite, "error", err)
+		return
+	}
+
+	for hash, manifest := range manifests {
+		msg := syftmsg.NewACLManifestMessage(manifest)
+		if err := se.sdk.Events.Send(msg); err != nil {
+			slog.Error("sync manifest send failed", "datasite", datasite, "forHash", hash, "error", err)
+		} else {
+			slog.Info("sync manifest sent", "datasite", datasite, "for", manifest.For, "forHash", hash, "aclCount", len(manifest.ACLOrder))
+		}
+	}
 }
 
 func (se *SyncEngine) canPrioritize(path string) error {

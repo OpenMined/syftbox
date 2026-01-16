@@ -83,6 +83,63 @@ pub struct MsgpackFileWrite {
 }
 
 #[derive(Debug, Clone)]
+pub struct ACLEntry {
+    pub path: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ACLManifest {
+    pub version: i32,
+    pub datasite: String,
+    pub for_user: String,
+    pub for_hash: String,
+    pub generated: String,
+    pub acl_order: Vec<ACLEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonACLEntry {
+    pub path: String,
+    pub hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonACLManifest {
+    pub version: i32,
+    pub datasite: String,
+    #[serde(rename = "for")]
+    pub for_user: String,
+    pub for_hash: String,
+    pub generated: String,
+    pub acl_order: Vec<JsonACLEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MsgpackACLEntry {
+    #[serde(rename = "Path")]
+    pub path: String,
+    #[serde(rename = "Hash")]
+    pub hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MsgpackACLManifest {
+    #[serde(rename = "Version")]
+    pub version: i32,
+    #[serde(rename = "Datasite")]
+    pub datasite: String,
+    #[serde(rename = "For")]
+    pub for_user: String,
+    #[serde(rename = "ForHash")]
+    pub for_hash: String,
+    #[serde(rename = "Generated")]
+    pub generated: String,
+    #[serde(rename = "ACLOrder")]
+    pub acl_order: Vec<MsgpackACLEntry>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Ack {
     pub original_id: String,
 }
@@ -164,6 +221,7 @@ pub enum Decoded {
     Http(HttpMsg),
     Ack(Ack),
     Nack(Nack),
+    ACLManifest(ACLManifest),
     Other { id: String, typ: u16 },
 }
 
@@ -329,6 +387,24 @@ fn decode_wire(wire: WireMessage) -> Result<Decoded> {
                 error: nack.error,
             }))
         }
+        8 => {
+            let m: MsgpackACLManifest = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::ACLManifest(ACLManifest {
+                version: m.version,
+                datasite: m.datasite,
+                for_user: m.for_user,
+                for_hash: m.for_hash,
+                generated: m.generated,
+                acl_order: m
+                    .acl_order
+                    .into_iter()
+                    .map(|e| ACLEntry {
+                        path: e.path,
+                        hash: e.hash,
+                    })
+                    .collect(),
+            }))
+        }
         _ => Ok(Decoded::Other {
             id: wire.id,
             typ: wire.typ,
@@ -370,6 +446,25 @@ fn decode_json_msg(msg: Message) -> Result<Decoded> {
             Ok(Decoded::Nack(Nack {
                 original_id: nack.original_id,
                 error: nack.error,
+            }))
+        }
+        // MsgACLManifest
+        8 => {
+            let m: JsonACLManifest = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::ACLManifest(ACLManifest {
+                version: m.version,
+                datasite: m.datasite,
+                for_user: m.for_user,
+                for_hash: m.for_hash,
+                generated: m.generated,
+                acl_order: m
+                    .acl_order
+                    .into_iter()
+                    .map(|e| ACLEntry {
+                        path: e.path,
+                        hash: e.hash,
+                    })
+                    .collect(),
             }))
         }
         _ => Ok(Decoded::Other {

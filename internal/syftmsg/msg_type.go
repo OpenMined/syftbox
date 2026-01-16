@@ -13,6 +13,7 @@ const (
 	MsgNack
 	MsgHttp
 	MsgFileNotify
+	MsgACLManifest
 )
 
 func (t MessageType) String() string {
@@ -33,6 +34,8 @@ func (t MessageType) String() string {
 		return "HTTP"
 	case MsgFileNotify:
 		return "FILE_NOTIFY"
+	case MsgACLManifest:
+		return "ACL_MANIFEST"
 	default:
 		return fmt.Sprintf("???(%d)", t)
 	}

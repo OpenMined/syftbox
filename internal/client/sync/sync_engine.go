@@ -47,6 +47,7 @@ type SyncEngine struct {
 	lastSyncTime      time.Time
 	lastSyncNs        atomic.Int64
 	adaptiveScheduler *AdaptiveSyncScheduler
+	aclStaging        *ACLStagingManager
 	wg                sync.WaitGroup
 	muSync            sync.Mutex
 }
@@ -72,7 +73,7 @@ func NewSyncEngine(
 	resumeDir := filepath.Join(workspace.MetadataDir, "upload_sessions")
 	uploadRegistry := NewUploadRegistry(resumeDir)
 
-	return &SyncEngine{
+	se := &SyncEngine{
 		sdk:               sdk,
 		workspace:         workspace,
 		watcher:           watcher,
@@ -83,7 +84,11 @@ func NewSyncEngine(
 		syncStatus:        syncStatus,
 		uploadRegistry:    uploadRegistry,
 		adaptiveScheduler: adaptiveScheduler,
-	}, nil
+	}
+
+	se.aclStaging = NewACLStagingManager(se.onACLSetReady)
+
+	return se, nil
 }
 
 func (se *SyncEngine) Start(ctx context.Context) error {
@@ -779,6 +784,8 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				go se.handlePriorityDownload(msg)
 			case syftmsg.MsgHttp:
 				go se.processHttpMessage(msg)
+			case syftmsg.MsgACLManifest:
+				go se.handleACLManifest(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -816,4 +823,46 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 func (se *SyncEngine) handleSystem(msg *syftmsg.Message) {
 	systemMsg := msg.Data.(syftmsg.System)
 	slog.Info("handle socket message", "msgType", msg.Type, "msgId", msg.Id, "serverVersion", systemMsg.SystemVersion)
+}
+
+func (se *SyncEngine) handleACLManifest(msg *syftmsg.Message) {
+	manifest, ok := msg.Data.(*syftmsg.ACLManifest)
+	if !ok {
+		slog.Error("invalid ACL manifest data type")
+		return
+	}
+
+	slog.Info("received ACL manifest", "datasite", manifest.Datasite, "for", manifest.For, "forHash", manifest.ForHash, "aclCount", len(manifest.ACLOrder))
+
+	se.aclStaging.SetManifest(manifest)
+}
+
+func (se *SyncEngine) onACLSetReady(datasite string, acls []*StagedACL) {
+	slog.Info("ACL set ready, applying in order", "datasite", datasite, "count", len(acls))
+
+	tmpDir := filepath.Join(se.workspace.Root, ".syft-tmp")
+
+	for _, acl := range acls {
+		relPath := filepath.Join(acl.Path, "syft.pub.yaml")
+		absPath := se.workspace.DatasiteAbsPath(relPath)
+
+		se.watcher.IgnoreOnce(absPath)
+
+		if err := writeFileWithIntegrityCheck(tmpDir, absPath, acl.Content, acl.ETag); err != nil {
+			slog.Error("ACL staging write failed", "path", absPath, "error", err)
+			continue
+		}
+
+		se.journal.Set(&FileMetadata{
+			Path:         SyncPath(relPath),
+			ETag:         acl.ETag,
+			LocalETag:    acl.ETag,
+			Size:         int64(len(acl.Content)),
+			LastModified: time.Now(),
+		})
+
+		slog.Info("ACL applied", "path", acl.Path)
+	}
+
+	slog.Info("ACL set application complete", "datasite", datasite)
 }

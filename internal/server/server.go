@@ -28,11 +28,12 @@ const (
 
 // Server represents the main application server and its dependencies
 type Server struct {
-	config *Config
-	server *http.Server
-	db     *sqlx.DB
-	hub    *ws.WebsocketHub
-	svc    *Services
+	config        *Config
+	server        *http.Server
+	db            *sqlx.DB
+	hub           *ws.WebsocketHub
+	svc           *Services
+	manifestStore *ws.ManifestStore
 }
 
 // New creates a new server instance with the provided configuration
@@ -52,13 +53,15 @@ func New(config *Config) (*Server, error) {
 	}
 
 	hub := ws.NewHub()
+	manifestStore := ws.NewManifestStore()
 	httpHandler := SetupRoutes(config, services, hub)
 
 	return &Server{
-		config: config,
-		db:     sqliteDb,
-		hub:    hub,
-		svc:    services,
+		config:        config,
+		db:            sqliteDb,
+		hub:           hub,
+		svc:           services,
+		manifestStore: manifestStore,
 		server: &http.Server{
 			Addr:    config.HTTP.Addr,
 			Handler: httpHandler,
@@ -202,6 +205,8 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 	switch msg.Message.Type {
 	case syftmsg.MsgFileWrite:
 		s.handleFileWrite(msg)
+	case syftmsg.MsgACLManifest:
+		s.handleACLManifest(msg)
 	default:
 		slog.Info("unhandled message", "msgType", msg.Message.Type)
 	}
@@ -313,5 +318,45 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 		slog.Info("wsmsg handler broadcast", msgGroup, "to", to)
 
 		return true
+	})
+}
+
+func (s *Server) handleACLManifest(msg *ws.ClientMessage) {
+	manifest, ok := msg.Message.Data.(*syftmsg.ACLManifest)
+	if !ok {
+		slog.Error("wsmsg handler invalid manifest data type")
+		return
+	}
+
+	from := msg.ClientInfo.User
+	msgGroup := slog.Group("wsmsg", "id", msg.Message.Id, "type", msg.Message.Type, "connId", msg.ConnID, "from", from, "datasite", manifest.Datasite, "for", manifest.For, "forHash", manifest.ForHash)
+
+	// Only accept manifests from the datasite owner
+	if manifest.Datasite != from {
+		slog.Warn("wsmsg manifest rejected - not owner", msgGroup)
+		return
+	}
+
+	// Store the manifest
+	s.manifestStore.Store(manifest)
+	slog.Info("wsmsg manifest stored", msgGroup, "aclCount", len(manifest.ACLOrder))
+
+	// Route the manifest to the appropriate user(s)
+	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
+		to := info.User
+
+		// Don't send back to sender
+		if to == from {
+			return false
+		}
+
+		// Check if this manifest is for this user
+		toHash := syftmsg.HashPrincipal(to)
+		if manifest.ForHash == toHash || manifest.ForHash == "public" {
+			slog.Info("wsmsg manifest routed", msgGroup, "to", to)
+			return true
+		}
+
+		return false
 	})
 }

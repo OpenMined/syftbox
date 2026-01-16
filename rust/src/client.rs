@@ -29,15 +29,17 @@ use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use crate::acl_staging::{ACLStagingManager, StagedACL};
 use crate::config::Config;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
 use crate::http::ApiClient;
 use crate::sync::{
-    download_keys, ensure_parent_dirs, sync_once_with_control, write_file_resolving_conflicts,
+    compute_local_etag, download_keys, ensure_parent_dirs, sync_once_with_control,
+    write_file_resolving_conflicts,
 };
 use crate::wsproto::{
-    Decoded, Encoding, FileWrite, HttpMsg, MsgpackFileWrite, WS_MAX_MESSAGE_BYTES,
+    ACLManifest, Decoded, Encoding, FileWrite, HttpMsg, MsgpackFileWrite, WS_MAX_MESSAGE_BYTES,
 };
 
 static ACL_READY: AtomicBool = AtomicBool::new(false);
@@ -504,6 +506,12 @@ async fn run_ws_listener(
     if !datasites_root.exists() {
         fs::create_dir_all(&datasites_root)?;
     }
+
+    let datasites_root_for_staging = datasites_root.clone();
+    let data_dir_for_staging = data_dir.clone();
+    let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
+        on_acl_set_ready(&datasites_root_for_staging, &data_dir_for_staging, &datasite, acls);
+    }));
     let ws_url = Url::parse(
         &server_url
             .replace("http://", "ws://")
@@ -643,10 +651,10 @@ async fn run_ws_listener(
             let Some(msg) = msg else { break };
             match msg {
                 Ok(Message::Text(txt)) => {
-                    handle_ws_message(&api, &datasites_root, &txt, None, &pending).await;
+                    handle_ws_message(&api, &datasites_root, &data_dir, &txt, None, &pending, &acl_staging).await;
                 }
                 Ok(Message::Binary(bin)) => {
-                    handle_ws_message(&api, &datasites_root, "", Some(&bin), &pending).await;
+                    handle_ws_message(&api, &datasites_root, &data_dir, "", Some(&bin), &pending, &acl_staging).await;
                 }
                 _ => {}
             }
@@ -670,9 +678,11 @@ async fn run_ws_listener(
 async fn handle_ws_message(
     api: &ApiClient,
     datasites_root: &Path,
+    data_dir: &Path,
     raw_text: &str,
     raw_bin: Option<&[u8]>,
     pending: &PendingAcks,
+    acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) {
     let decoded = match raw_bin {
         Some(bin) => crate::wsproto::decode_binary(bin),
@@ -694,13 +704,52 @@ async fn handle_ws_message(
                 let _ = sender.send(Err(anyhow::anyhow!("NACK received: {}", nack.error)));
             }
         }
-        Decoded::FileWrite(file) => handle_ws_file_write(api, datasites_root, file).await,
+        Decoded::FileWrite(file) => {
+            handle_ws_file_write(api, datasites_root, data_dir, file, acl_staging).await
+        }
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
+        Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),
         Decoded::Other { id, typ } => drop((id, typ)),
     }
 }
 
-async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: FileWrite) {
+async fn handle_ws_file_write(
+    api: &ApiClient,
+    datasites_root: &Path,
+    data_dir: &Path,
+    file: FileWrite,
+    acl_staging: &std::sync::Arc<ACLStagingManager>,
+) {
+    // Check if this is an ACL file and we have a pending manifest
+    let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
+    if is_acl_file {
+        if let Some(datasite) = file.path.split('/').next() {
+            if acl_staging.has_pending_manifest(datasite) {
+                // Get the ACL directory path (the parent of syft.pub.yaml)
+                let acl_dir = if file.path.contains('/') {
+                    let path = std::path::Path::new(&file.path);
+                    path.parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| datasite.to_string())
+                } else {
+                    datasite.to_string()
+                };
+
+                // If we have content, stage it
+                if let Some(ref content) = file.content {
+                    if acl_staging.stage_acl(datasite, &acl_dir, content.clone(), file.etag.clone())
+                    {
+                        crate::logging::info(format!(
+                            "ACL staged for ordered application datasite={} path={}",
+                            datasite, acl_dir
+                        ));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(content) = file.content {
         // Go treats empty content as a push notification (no embedded bytes) when length>0.
         // Avoid writing empty files; download the blob instead.
@@ -725,16 +774,14 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
             crate::logging::error(format!("ws write error: {err:?}"));
         } else if ws_should_update_journal() {
-            if let Some(data_dir) = datasites_root.parent() {
-                let _ = crate::sync::journal_upsert_direct(
-                    data_dir,
-                    &file.path,
-                    &etag,
-                    &local_etag,
-                    file.length,
-                    chrono::Utc::now().timestamp(),
-                );
-            }
+            let _ = crate::sync::journal_upsert_direct(
+                data_dir,
+                &file.path,
+                &etag,
+                &local_etag,
+                file.length,
+                chrono::Utc::now().timestamp(),
+            );
         }
         return;
     }
@@ -742,23 +789,21 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         if let Err(err) = write_bytes(datasites_root, &file.path, &[]) {
             crate::logging::error(format!("ws write error: {err:?}"));
         } else if ws_should_update_journal() {
-            if let Some(data_dir) = datasites_root.parent() {
-                // MD5 of empty content (matches server ETag semantics in devstack).
-                let local_etag = format!("{:x}", md5_compute([]));
-                let etag = if file.etag.is_empty() {
-                    local_etag.clone()
-                } else {
-                    file.etag.clone()
-                };
-                let _ = crate::sync::journal_upsert_direct(
-                    data_dir,
-                    &file.path,
-                    &etag,
-                    &local_etag,
-                    0,
-                    chrono::Utc::now().timestamp(),
-                );
-            }
+            // MD5 of empty content (matches server ETag semantics in devstack).
+            let local_etag = format!("{:x}", md5_compute([]));
+            let etag = if file.etag.is_empty() {
+                local_etag.clone()
+            } else {
+                file.etag.clone()
+            };
+            let _ = crate::sync::journal_upsert_direct(
+                data_dir,
+                &file.path,
+                &etag,
+                &local_etag,
+                0,
+                chrono::Utc::now().timestamp(),
+            );
         }
         return;
     }
@@ -769,6 +814,69 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         Err(err) => {
             crate::logging::error(format!("ws download error: {err:?}"));
         }
+    }
+}
+
+fn handle_ws_acl_manifest(manifest: ACLManifest, acl_staging: &std::sync::Arc<ACLStagingManager>) {
+    crate::logging::info(format!(
+        "acl manifest received datasite={} for={} forHash={} aclCount={}",
+        manifest.datasite,
+        manifest.for_user,
+        manifest.for_hash,
+        manifest.acl_order.len()
+    ));
+    acl_staging.set_manifest(manifest);
+}
+
+fn on_acl_set_ready(datasites_root: &Path, data_dir: &Path, datasite: &str, acls: Vec<StagedACL>) {
+    crate::logging::info(format!(
+        "applying {} ACLs in order for datasite={}",
+        acls.len(),
+        datasite
+    ));
+
+    let tmp_dir = data_dir.join(".syft-tmp");
+    if let Err(err) = fs::create_dir_all(&tmp_dir) {
+        crate::logging::error(format!("failed to create tmp dir: {err:?}"));
+        return;
+    }
+
+    for acl in acls {
+        let acl_file_path = format!("{}/syft.pub.yaml", acl.path);
+        let abs_path = datasites_root.join(&acl_file_path);
+
+        if let Err(err) = ensure_parent_dirs(&abs_path) {
+            crate::logging::error(format!(
+                "failed to create parent dirs for {}: {err:?}",
+                acl_file_path
+            ));
+            continue;
+        }
+
+        if let Err(err) = write_file_resolving_conflicts(&abs_path, &acl.content) {
+            crate::logging::error(format!("failed to write ACL {}: {err:?}", acl_file_path));
+            continue;
+        }
+
+        // Update the sync journal
+        let size = acl.content.len() as i64;
+        let local_etag = compute_local_etag(&abs_path, size).unwrap_or_default();
+        let etag = if acl.etag.is_empty() {
+            local_etag.clone()
+        } else {
+            acl.etag.clone()
+        };
+
+        let _ = crate::sync::journal_upsert_direct(
+            data_dir,
+            &acl_file_path,
+            &etag,
+            &local_etag,
+            size,
+            chrono::Utc::now().timestamp(),
+        );
+
+        crate::logging::info(format!("applied ACL {}", acl_file_path));
     }
 }
 
