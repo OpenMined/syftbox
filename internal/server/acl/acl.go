@@ -114,6 +114,12 @@ func (s *ACLService) CanAccess(req *ACLRequest) error {
 		return nil
 	}
 
+	// ACL files are metadata; allow any user to read them to avoid chicken-and-egg.
+	if aclspec.IsACLFile(req.Path) && req.Level == AccessRead {
+		s.cache.Set(req, true)
+		return nil
+	}
+
 	// check against access cache
 	canAccess, exists := s.cache.Get(req)
 	if exists {

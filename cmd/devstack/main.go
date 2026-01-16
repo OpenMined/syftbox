@@ -664,6 +664,7 @@ func startMinio(mode, binPath, root string, apiPort, consolePort int, keepData b
 		_ = f.Close()
 		return minioState{}, err
 	}
+	_ = f.Close()
 
 	if err := waitForMinio(apiPort); err != nil {
 		// MinIO may have failed to bind to the selected port; ensure the process is stopped
@@ -811,8 +812,10 @@ func startServer(binPath, relayRoot string, port, minioPort int) (serverState, e
 	cmd.Dir = relayRoot
 
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		return serverState{}, err
 	}
+	_ = f.Close()
 
 	return serverState{
 		PID:      cmd.Process.Pid,
@@ -994,8 +997,10 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	)
 
 	if err := cmd.Start(); err != nil {
+		_ = lf.Close()
 		return clientState{}, err
 	}
+	_ = lf.Close()
 
 	return clientState{
 		Email:     email,

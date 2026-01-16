@@ -462,9 +462,73 @@ sbdev-test-all mode="go":
     echo "Sandbox: $SANDBOX_DIR"
     rm -rf "$SANDBOX_DIR"
     cd cmd/devstack
-    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "TestACKNACKMechanism|TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestWebSocketReconnectAfterServerRestart|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestJournalGapSpuriousConflict|TestJournalGapHealing|TestFileModificationDuringSync|TestWebSocketLatency|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestLargeFileTransfer|TestConcurrentUploads|TestManySmallFiles|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "TestACKNACKMechanism|TestDevstackIntegration|TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestWebSocketReconnectAfterServerRestart|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestJournalGapSpuriousConflict|TestJournalGapHealing|TestFileModificationDuringSync|TestWebSocketLatency|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestLargeFileTransfer|TestConcurrentUploads|TestManySmallFiles|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress"
     echo ""
     echo "✅ Devstack integration suite completed (mode=$MODE)! Sandbox preserved at: $SANDBOX_DIR"
+[group('devstack')]
+sbdev-test-all-serial mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+
+    echo "Running devstack integration suite one test at a time (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    BASE_SANDBOX="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/all-tests-serial}"
+    echo "Sandbox base: $BASE_SANDBOX"
+
+    TESTS=(
+        TestACKNACKMechanism
+        TestDevstackIntegration
+        TestACLEnablesDownload
+        TestACLPropagationUpdates
+        TestACLRaceCondition
+        TestWebSocketReconnectAfterServerRestart
+        TestSimultaneousWrite
+        TestDivergentEdits
+        TestThreeWayConflict
+        TestConflictDuringACLChange
+        TestNestedPathConflict
+        TestJournalWriteTiming
+        TestNonConflictUpdate
+        TestRapidSequentialEdits
+        TestJournalLossRecovery
+        TestJournalGapSpuriousConflict
+        TestJournalGapHealing
+        TestFileModificationDuringSync
+        TestWebSocketLatency
+        TestProgressAPI
+        TestProgressAPIWithUpload
+        TestProgressAPIDemo
+        TestLargeFileTransfer
+        TestConcurrentUploads
+        TestManySmallFiles
+        TestLargeUploadViaDaemon
+        TestLargeUploadViaDaemonStress
+    )
+
+    cd cmd/devstack
+    for TEST in "${TESTS[@]}"; do
+        SANDBOX_DIR="$BASE_SANDBOX/$TEST"
+        echo "=== $TEST (sandbox: $SANDBOX_DIR) ==="
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "^${TEST}$"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+    echo ""
+    echo "Devstack integration serial suite completed (mode=$MODE)! Sandbox preserved at: $BASE_SANDBOX"
+
 sbdev-test-acl:
     #!/bin/bash
     set -eou pipefail
