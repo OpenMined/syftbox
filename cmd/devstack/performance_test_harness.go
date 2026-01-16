@@ -1,9 +1,9 @@
 package main
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/rand"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +11,9 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -163,7 +165,7 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	s.serverBin = filepath.Join(s.binDir, "server")
+	s.serverBin = addExe(filepath.Join(s.binDir, "server"))
 	s.clientBin = filepath.Join(s.binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
@@ -416,7 +418,7 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	}
 
 	// Build binaries
-	serverBin := filepath.Join(binDir, "server")
+	serverBin := addExe(filepath.Join(binDir, "server"))
 	clientBin := filepath.Join(binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
@@ -428,9 +430,9 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	if err := buildBinary(serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
 		return stackState{}, fmt.Errorf("build server: %w", err)
 	}
-		if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
-			return stackState{}, fmt.Errorf("build client: %w", err)
-		}
+	if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+		return stackState{}, fmt.Errorf("build client: %w", err)
+	}
 
 	// Allocate ports (ensure MinIO API and console ports differ).
 	// MinIO can occasionally fail to bind if a port becomes occupied between selection and start,
@@ -445,44 +447,44 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 		return stackState{}, fmt.Errorf("minio binary unavailable: %w", err)
 	}
 
-		var mState minioState
-		var minioErr error
-		for attempt := 0; attempt < 5; attempt++ {
-			var err error
-			minioAPIPort, err = getFreePort()
-			if err != nil {
-				minioErr = fmt.Errorf("allocate minio api port: %w", err)
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
+	var mState minioState
+	var minioErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		var err error
+		minioAPIPort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio api port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		minioConsolePort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio console port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
 			minioConsolePort, err = getFreePort()
 			if err != nil {
 				minioErr = fmt.Errorf("allocate minio console port: %w", err)
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
-			for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
-				minioConsolePort, err = getFreePort()
-				if err != nil {
-					minioErr = fmt.Errorf("allocate minio console port: %w", err)
-					break
-				}
-			}
-			if minioConsolePort == minioAPIPort {
-				minioErr = fmt.Errorf("unable to allocate distinct minio ports")
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
-
-			mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
-			if minioErr == nil {
 				break
 			}
-			t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
 		}
-		if minioErr != nil {
-			return stackState{}, fmt.Errorf("start minio: %w", minioErr)
+		if minioConsolePort == minioAPIPort {
+			minioErr = fmt.Errorf("unable to allocate distinct minio ports")
+			time.Sleep(200 * time.Millisecond)
+			continue
 		}
+
+		mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
+		if minioErr == nil {
+			break
+		}
+		t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
+	}
+	if minioErr != nil {
+		return stackState{}, fmt.Errorf("start minio: %w", minioErr)
+	}
 
 	// Setup bucket
 	if err := setupBucket(mState.APIPort); err != nil {
@@ -502,11 +504,11 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	// Start clients
 	t.Logf("Starting clients...")
 	var clients []clientState
-		for i, email := range opts.clients {
-			port, _ := getFreePort()
-			binForEmail, err := clientBinaryForEmail(email, i, clientBin)
-			if err != nil {
-				t.Fatalf("client bin for %s: %v", email, err)
+	for i, email := range opts.clients {
+		port, _ := getFreePort()
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
+		if err != nil {
+			t.Fatalf("client bin for %s: %v", email, err)
 		}
 		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
@@ -733,6 +735,9 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 				if os.IsNotExist(err) {
 					continue
 				}
+				if isSharingViolation(err) {
+					continue
+				}
 				return fmt.Errorf("read file: %w", err)
 			}
 
@@ -756,6 +761,18 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	}
 
 	return fmt.Errorf("timeout waiting for file %s (last seen MD5=%s)", fullPath, lastMD5)
+}
+
+func isSharingViolation(err error) bool {
+	if err == nil || runtime.GOOS != "windows" {
+		return false
+	}
+	if errors.Is(err, syscall.Errno(32)) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "used by another process") ||
+		strings.Contains(lower, "sharing violation")
 }
 
 // CreateDefaultACLs creates the default root and public ACL files like the real client

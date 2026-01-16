@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -19,9 +18,6 @@ import (
 func TestDevstackIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
-	}
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping devstack integration on Windows runner")
 	}
 
 	// Repository root (go up two levels from cmd/devstack)
