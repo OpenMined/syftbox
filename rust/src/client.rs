@@ -103,7 +103,6 @@ impl Client {
             .wait_for_healthz(shutdown.clone(), opts.healthz_max_attempts)
             .await?;
         if !healthy {
-            crate::logging::info("shutdown during healthz wait (start_with_options)");
             return Ok(());
         }
 
@@ -116,20 +115,10 @@ impl Client {
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
         let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
 
-        crate::logging::info_kv(
-            "starting sync (start_with_options)",
-            &[
-                ("data_dir", &data_dir.display().to_string()),
-                ("email", &email),
-            ],
-        );
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
-        crate::logging::info("workspace layout ensured");
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
-        crate::logging::info("workspace locked");
         // Ensure any existing ACLs are present on the server before normal sync begins.
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
-        crate::logging::info("existing ACLs uploaded");
         ACL_READY.store(true, Ordering::SeqCst);
 
         // Seed control-plane sync status so clients can query /v1/sync/status immediately after
@@ -168,7 +157,6 @@ impl Client {
             .wait_for_healthz(shutdown.clone(), opts.healthz_max_attempts)
             .await?;
         if !healthy {
-            crate::logging::info("shutdown during healthz wait");
             return Ok(());
         }
 
@@ -181,13 +169,6 @@ impl Client {
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
         let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
 
-        crate::logging::info_kv(
-            "starting sync",
-            &[
-                ("data_dir", &data_dir.display().to_string()),
-                ("email", &email),
-            ],
-        );
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
@@ -237,7 +218,6 @@ impl Client {
         shutdown: std::sync::Arc<tokio::sync::Notify>,
         max_attempts: Option<usize>,
     ) -> Result<bool> {
-        crate::logging::info("waiting for server healthz");
         let mut attempts = 0;
         loop {
             let res = tokio::select! {
@@ -245,29 +225,13 @@ impl Client {
                 res = self.api.healthz() => res,
             };
             match res {
-                Ok(_) => {
-                    crate::logging::info("server healthz ok");
-                    return Ok(true);
-                }
+                Ok(_) => return Ok(true),
                 Err(err) => {
                     attempts += 1;
                     if let Some(max) = max_attempts {
                         if attempts >= max {
-                            crate::logging::error(format!(
-                                "healthz failed after {} attempts: {err:?}",
-                                attempts
-                            ));
                             return Err(err).context("healthz");
                         }
-                    }
-                    if attempts == 1 || attempts % 10 == 0 {
-                        crate::logging::info_kv(
-                            "healthz retry",
-                            &[
-                                ("attempt", &attempts.to_string()),
-                                ("error", &format!("{err:?}")),
-                            ],
-                        );
                     }
                     tokio::select! {
                         _ = shutdown.notified() => return Ok(false),
@@ -525,6 +489,7 @@ impl WsHandle {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_ws_listener(
     api: ApiClient,
     server_url: String,
