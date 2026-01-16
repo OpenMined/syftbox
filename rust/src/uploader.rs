@@ -96,7 +96,7 @@ impl<'a> ResumableUploader<'a> {
         file_path: &Path,
         size: i64,
     ) -> Result<Self> {
-        let resume_dir = data_dir.join(".data").join("upload-cache");
+        let resume_dir = data_dir.join(".data").join("upload-sessions");
         fs::create_dir_all(&resume_dir).ok();
 
         let fingerprint = default_fingerprint(file_path, size);
@@ -388,10 +388,10 @@ impl<'a> ResumableUploader<'a> {
     }
 
     fn session_path(&self) -> PathBuf {
-        let digest = format!(
-            "{:x}",
-            md5::compute(format!("{}|{}", self.key, self.file_path.display()))
-        );
+        use sha1::{Digest, Sha1};
+        let mut hasher = Sha1::new();
+        hasher.update(format!("{}|{}", self.key, self.file_path.display()));
+        let digest = format!("{:x}", hasher.finalize());
         self.resume_dir.join(format!("{digest}.json"))
     }
 
