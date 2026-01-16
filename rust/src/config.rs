@@ -543,7 +543,9 @@ mod tests {
         assert_eq!(cfg.email, "alice@example.com");
         assert_eq!(cfg.server_url, "http://127.0.0.1:8080");
         assert_eq!(cfg.client_url.as_deref(), Some("http://127.0.0.1:7938"));
-        assert_eq!(cfg.config_path.as_ref().unwrap(), &cfg_path);
+        // Canonicalize cfg_path to match how Config stores it (resolves symlinks like /var -> /private/var on macOS)
+        let canonical_cfg_path = fs::canonicalize(&cfg_path).unwrap_or_else(|_| cfg_path.clone());
+        assert_eq!(cfg.config_path.as_ref().unwrap(), &canonical_cfg_path);
         assert!(cfg.data_dir.is_absolute());
     }
 
@@ -660,7 +662,10 @@ mod tests {
         fs::write(&candidate, "{}").unwrap();
 
         let resolved = Config::resolve_config_path(None);
-        assert_eq!(resolved, candidate);
+        // Canonicalize candidate to match how resolve_config_path returns paths (resolves symlinks)
+        let canonical_candidate =
+            fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+        assert_eq!(resolved, canonical_candidate);
     }
 
     #[test]
