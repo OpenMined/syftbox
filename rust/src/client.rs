@@ -201,13 +201,33 @@ fn maybe_lock_workspace(data_dir: &Path) -> Result<Option<crate::workspace::Work
     let skip_dir = env::var("SYFTBOX_SKIP_WORKSPACE_LOCK_DATA_DIR").ok();
     if skip_dir
         .as_deref()
-        .map(|d| d == data_dir.to_string_lossy().as_ref())
+        .map(|d| paths_match_for_skip_lock(d, data_dir))
         .unwrap_or(false)
     {
         crate::logging::info("Skipping workspace lock (embedded lock held)");
         return Ok(None);
     }
     Ok(Some(crate::workspace::WorkspaceLock::try_lock(data_dir)?))
+}
+
+fn paths_match_for_skip_lock(skip_dir: &str, data_dir: &Path) -> bool {
+    let skip = normalize_path_for_compare(skip_dir);
+    let data = normalize_path_for_compare(&data_dir.to_string_lossy());
+    skip == data
+}
+
+fn normalize_path_for_compare(raw: &str) -> String {
+    let mut out = raw.replace('\\', "/");
+    if let Some(stripped) = out.strip_prefix("//?/") {
+        out = stripped.to_string();
+    }
+    while out.ends_with('/') {
+        out.pop();
+    }
+    if cfg!(windows) {
+        out = out.to_ascii_lowercase();
+    }
+    out
 }
 
 impl Client {
