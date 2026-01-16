@@ -834,6 +834,9 @@ func (se *SyncEngine) handleACLManifest(msg *syftmsg.Message) {
 
 	slog.Info("received ACL manifest", "datasite", manifest.Datasite, "for", manifest.For, "forHash", manifest.ForHash, "aclCount", len(manifest.ACLOrder))
 
+	// Store manifest for future ordered application
+	// Currently ACL files are written immediately on receipt, but this allows
+	// us to re-apply them in topological order when all expected ACLs arrive
 	se.aclStaging.SetManifest(manifest)
 }
 

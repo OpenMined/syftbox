@@ -510,7 +510,12 @@ async fn run_ws_listener(
     let datasites_root_for_staging = datasites_root.clone();
     let data_dir_for_staging = data_dir.clone();
     let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
-        on_acl_set_ready(&datasites_root_for_staging, &data_dir_for_staging, &datasite, acls);
+        on_acl_set_ready(
+            &datasites_root_for_staging,
+            &data_dir_for_staging,
+            &datasite,
+            acls,
+        );
     }));
     let ws_url = Url::parse(
         &server_url
@@ -651,10 +656,28 @@ async fn run_ws_listener(
             let Some(msg) = msg else { break };
             match msg {
                 Ok(Message::Text(txt)) => {
-                    handle_ws_message(&api, &datasites_root, &data_dir, &txt, None, &pending, &acl_staging).await;
+                    handle_ws_message(
+                        &api,
+                        &datasites_root,
+                        &data_dir,
+                        &txt,
+                        None,
+                        &pending,
+                        &acl_staging,
+                    )
+                    .await;
                 }
                 Ok(Message::Binary(bin)) => {
-                    handle_ws_message(&api, &datasites_root, &data_dir, "", Some(&bin), &pending, &acl_staging).await;
+                    handle_ws_message(
+                        &api,
+                        &datasites_root,
+                        &data_dir,
+                        "",
+                        Some(&bin),
+                        &pending,
+                        &acl_staging,
+                    )
+                    .await;
                 }
                 _ => {}
             }
@@ -690,8 +713,13 @@ async fn handle_ws_message(
     };
     let decoded = match decoded {
         Ok(d) => d,
-        Err(_) => return,
+        Err(e) => {
+            crate::logging::error(format!("ws decode error: {e:?}"));
+            return;
+        }
     };
+
+    crate::logging::info(format!("ws message decoded type={:?}", &decoded));
 
     match decoded {
         Decoded::Ack(ack) => {
@@ -720,7 +748,8 @@ async fn handle_ws_file_write(
     file: FileWrite,
     acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) {
-    // Check if this is an ACL file and we have a pending manifest
+    // Stage ACL for potential ordered application, but don't block the write
+    // When all ACLs arrive, on_acl_set_ready will re-apply them in order
     let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
     if is_acl_file {
         if let Some(datasite) = file.path.split('/').next() {
@@ -735,16 +764,9 @@ async fn handle_ws_file_write(
                     datasite.to_string()
                 };
 
-                // If we have content, stage it
+                // Stage the ACL but continue to write it immediately
                 if let Some(ref content) = file.content {
-                    if acl_staging.stage_acl(datasite, &acl_dir, content.clone(), file.etag.clone())
-                    {
-                        crate::logging::info(format!(
-                            "ACL staged for ordered application datasite={} path={}",
-                            datasite, acl_dir
-                        ));
-                        return;
-                    }
+                    acl_staging.stage_acl(datasite, &acl_dir, content.clone(), file.etag.clone());
                 }
             }
         }
@@ -1328,18 +1350,26 @@ async fn send_priority_if_small(
     };
     let etag = format!("{:x}", md5_compute(&bytes));
     let ack_timeout = Duration::from_secs(5);
+    crate::logging::info(format!(
+        "priority send attempting path={} size={} is_acl={}",
+        rel_str, size, is_acl
+    ));
     match ws
         .send_filewrite_with_ack(rel_str.clone(), etag, size as i64, bytes, ack_timeout)
         .await
     {
         Ok(()) => {
+            crate::logging::info(format!(
+                "priority send SUCCESS path={} is_acl={}",
+                rel_str, is_acl
+            ));
             if is_acl {
                 ACL_READY.store(true, Ordering::SeqCst);
             }
             Ok(true)
         }
         Err(err) => {
-            crate::logging::error(format!("priority send ack error: {err:?}"));
+            crate::logging::error(format!("priority send ack error for {}: {err:?}", rel_str));
             // Fallback: let normal sync handle it ASAP.
             Ok(true)
         }

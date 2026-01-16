@@ -107,10 +107,9 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 	se.syncStatus.SetCompleted(syncRelPath)
 
 	// If this was an ACL file, generate and send updated manifests
-	// TODO: Re-enable after fixing timing issues
-	// if aclspec.IsACLFile(relPath) {
-	// 	go se.broadcastACLManifests(relPath)
-	// }
+	if aclspec.IsACLFile(relPath) {
+		go se.broadcastACLManifests(relPath)
+	}
 }
 
 func (se *SyncEngine) broadcastACLManifests(aclRelPath string) {

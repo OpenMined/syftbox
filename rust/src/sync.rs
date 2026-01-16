@@ -56,13 +56,29 @@ CREATE TABLE IF NOT EXISTS sync_journal (
     local_etag TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL,
     size INTEGER NOT NULL,
-    last_modified TEXT NOT NULL
+    last_modified TEXT NOT NULL,
+    completed_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_path ON sync_journal(path);
 CREATE INDEX IF NOT EXISTS idx_journal_etag ON sync_journal(etag);
 CREATE INDEX IF NOT EXISTS idx_journal_last_modified ON sync_journal(last_modified);
 "#;
+
+/// Ensure the completed_at column exists (migration for existing databases).
+fn ensure_completed_at_column(conn: &rusqlite::Connection) -> Result<()> {
+    let has_column: bool = conn
+        .prepare("SELECT completed_at FROM sync_journal LIMIT 1")
+        .is_ok();
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE sync_journal ADD COLUMN completed_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .context("add completed_at column")?;
+    }
+    Ok(())
+}
 
 pub(crate) struct SyncJournal {
     db_path: PathBuf,
@@ -83,10 +99,11 @@ impl SyncJournal {
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
         ensure_local_etag_column(&conn).context("migrate sync journal")?;
+        ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
         let mut state = JournalState::default();
         let mut stmt = conn.prepare(
-            "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal",
+            "SELECT path, size, etag, local_etag, version, last_modified, completed_at FROM sync_journal",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -96,6 +113,7 @@ impl SyncJournal {
             let local_etag: String = row.get(3)?;
             let version: String = row.get(4)?;
             let last_modified: String = row.get(5)?;
+            let completed_at: i64 = row.get(6)?;
 
             let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
             state.files.insert(
@@ -106,7 +124,7 @@ impl SyncJournal {
                     size,
                     last_modified: lm_epoch,
                     version,
-                    completed_at: 0,
+                    completed_at,
                 },
             );
         }
@@ -129,10 +147,11 @@ impl SyncJournal {
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
         ensure_local_etag_column(&conn).context("migrate sync journal")?;
+        ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
         let mut next = HashMap::new();
         let mut stmt = conn.prepare(
-            "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal",
+            "SELECT path, size, etag, local_etag, version, last_modified, completed_at FROM sync_journal",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -142,14 +161,9 @@ impl SyncJournal {
             let local_etag: String = row.get(3)?;
             let version: String = row.get(4)?;
             let last_modified: String = row.get(5)?;
+            let completed_at: i64 = row.get(6)?;
 
             let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
-            let completed_at = self
-                .state
-                .files
-                .get(&path)
-                .map(|m| m.completed_at)
-                .unwrap_or(0);
             next.insert(
                 path,
                 FileMetadata {
@@ -179,6 +193,7 @@ impl SyncJournal {
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
         ensure_local_etag_column(&conn).context("migrate sync journal")?;
+        ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
         let tx = conn.transaction().context("begin sync journal tx")?;
         {
@@ -190,7 +205,7 @@ impl SyncJournal {
 
         {
             let mut upsert_stmt = tx.prepare(
-                "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified, completed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for key in &self.dirty {
                 if let Some(meta) = self.state.files.get(key) {
@@ -201,7 +216,8 @@ impl SyncJournal {
                         meta.etag,
                         meta.local_etag,
                         meta.version,
-                        last_modified
+                        last_modified,
+                        meta.completed_at
                     ])?;
                 }
             }
@@ -275,6 +291,7 @@ pub(crate) fn journal_upsert_direct(
     size: i64,
     last_modified_epoch: i64,
 ) -> Result<()> {
+    let completed_at = chrono::Utc::now().timestamp();
     if std::env::var("SYFTBOX_DEBUG_JOURNAL").is_ok() && key.contains("jg-file-") {
         crate::logging::info(format!(
             "debug journal upsert key={key} etag={} size={size}",
@@ -291,11 +308,12 @@ pub(crate) fn journal_upsert_direct(
     conn.execute_batch(SYNC_JOURNAL_SCHEMA)
         .context("init sync journal schema")?;
     ensure_local_etag_column(&conn).context("migrate sync journal")?;
+    ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
     let last_modified = epoch_to_rfc3339(last_modified_epoch);
     conn.execute(
-        "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![key, size, etag, local_etag, "", last_modified],
+        "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified, completed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![key, size, etag, local_etag, "", last_modified, completed_at],
     )
     .context("upsert sync journal row")?;
 
@@ -454,7 +472,17 @@ pub async fn sync_once_with_control(
         let local_created = local_exists && !journal_exists && !remote_exists;
         let remote_created = !local_exists && !journal_exists && remote_exists;
         let local_deleted = !local_exists && journal_exists && remote_exists;
-        let remote_deleted = local_exists && journal_exists && !remote_exists;
+        // remote_deleted: file exists locally and in journal but not remotely.
+        // However, if the journal entry was created very recently (within 30s), it's likely
+        // a file just received via WebSocket push where the remote manifest hasn't caught up yet.
+        // Don't treat such files as remotely deleted.
+        let remote_deleted = local_exists && journal_exists && !remote_exists && {
+            let now = chrono::Utc::now().timestamp();
+            let completed = journal_meta.map(|m| m.completed_at).unwrap_or(0);
+            let age_secs = now.saturating_sub(completed);
+            // Only treat as remote_deleted if the journal entry is older than 30 seconds
+            age_secs > 30
+        };
 
         let local_modified =
             local_exists && has_modified_local(is_owner, local_meta.unwrap(), journal_meta);

@@ -83,12 +83,14 @@ pub struct MsgpackFileWrite {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ACLEntry {
     pub path: String,
     pub hash: String,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ACLManifest {
     pub version: i32,
     pub datasite: String,

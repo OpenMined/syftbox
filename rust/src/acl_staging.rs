@@ -80,7 +80,10 @@ impl ACLStagingManager {
         crate::logging::info(format!(
             "acl staging manifest set datasite={} expectedCount={}",
             datasite,
-            pending.get(&datasite).map(|p| p.expected_count()).unwrap_or(0)
+            pending
+                .get(&datasite)
+                .map(|p| p.expected_count())
+                .unwrap_or(0)
         ));
     }
 
@@ -157,7 +160,12 @@ impl ACLStagingManager {
     pub fn get_pending_paths(&self, datasite: &str) -> Vec<String> {
         let pending = self.pending.lock().expect("acl staging lock");
         match pending.get(datasite) {
-            Some(p) => p.manifest.acl_order.iter().map(|e| e.path.clone()).collect(),
+            Some(p) => p
+                .manifest
+                .acl_order
+                .iter()
+                .map(|e| e.path.clone())
+                .collect(),
             None => Vec::new(),
         }
     }

@@ -40,18 +40,15 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	se.syncStatus.SetSyncing(syncRelPath)
 	slog.Info("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.ETag)
 
-	// Check if this is an ACL file and we have a pending manifest
+	// Stage ACL for potential ordered application, but don't block the write
+	// When all ACLs arrive, onACLSetReady will re-apply them in order
 	if aclspec.IsACLFile(createMsg.Path) {
 		parts := strings.SplitN(createMsg.Path, "/", 2)
 		if len(parts) >= 1 {
 			datasite := parts[0]
 			aclDir := filepath.Dir(createMsg.Path)
 			if se.aclStaging.HasPendingManifest(datasite) {
-				if se.aclStaging.StageACL(datasite, aclDir, createMsg.Content, createMsg.ETag) {
-					slog.Info("ACL staged for ordered application", "datasite", datasite, "path", aclDir)
-					se.syncStatus.SetCompleted(syncRelPath)
-					return
-				}
+				se.aclStaging.StageACL(datasite, aclDir, createMsg.Content, createMsg.ETag)
 			}
 		}
 	}
