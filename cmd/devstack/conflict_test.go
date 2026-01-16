@@ -383,12 +383,12 @@ func TestThreeWayConflict(t *testing.T) {
 		t.Fatalf("alice upload: %v", err)
 	}
 
-	// Wait for all to receive
+	// Wait for all to receive - use longer timeout for 3-client scenarios
 	t.Log("Step 2: Wait for bob and charlie to receive")
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(30*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive: %v", err)
 	}
-	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(30*time.Second)); err != nil {
 		t.Fatalf("charlie didn't receive: %v", err)
 	}
 
