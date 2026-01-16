@@ -58,8 +58,14 @@ fn login_already_logged_in_prints_config() {
     assert!(stdout.contains("Already logged in"));
     assert!(stdout.contains("SYFTBOX DATASITE CONFIG"));
     assert!(stdout.contains(email));
-    // CLI outputs native path format, so check for the original path (not the JSON-escaped version)
-    assert!(stdout.contains(&data_dir.display().to_string()));
+    // CLI may output path with forward slashes (from config) or native format.
+    // Check for either format on Windows.
+    let data_dir_native = data_dir.display().to_string();
+    let data_dir_forward = data_dir_native.replace('\\', "/");
+    assert!(
+        stdout.contains(&data_dir_native) || stdout.contains(&data_dir_forward),
+        "stdout should contain data_dir path: stdout={stdout}, native={data_dir_native}, forward={data_dir_forward}"
+    );
 }
 
 #[test]
