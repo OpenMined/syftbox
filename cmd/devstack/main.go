@@ -574,7 +574,7 @@ func downloadMinio(dest string) error {
 		binaryName = minioBinaryName + ".exe"
 	}
 	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, binaryName)
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Get(url) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("download minio: %w", err)
