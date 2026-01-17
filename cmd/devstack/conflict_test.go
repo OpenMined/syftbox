@@ -17,14 +17,24 @@ import (
 	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
+// isCI returns true if running in a CI environment
+func isCI() bool {
+	return os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != ""
+}
+
 // windowsTimeout returns a timeout scaled up for Windows which is slower with
 // process spawning, file I/O, and file watchers. Uses 5x multiplier because
 // Windows sync with 3+ clients is significantly slower than Linux/macOS.
+// Also applies 2x scaling in CI environments (stacks with Windows for 10x on Windows CI).
 func windowsTimeout(d time.Duration) time.Duration {
+	result := d
 	if runtime.GOOS == "windows" {
-		return d * 5
+		result = result * 5
 	}
-	return d
+	if isCI() {
+		result = result * 2
+	}
+	return result
 }
 
 // journalEntry represents a row from the sync_journal table

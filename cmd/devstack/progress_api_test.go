@@ -509,7 +509,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), windowsTimeout(45*time.Second))
 	defer cancel()
 
 	getWithRetry := func(url string) *http.Response {
