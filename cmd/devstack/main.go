@@ -1029,8 +1029,33 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 
 	// Note: Updating suite.clients is handled by the caller (resetForTest/initPersistent)
 	// which already holds suite.mu. Acquiring the lock here would cause a deadlock.
+	updateStateForClient(root, state)
 
 	return state, nil
+}
+
+func updateStateForClient(root string, client clientState) {
+	state, path, err := readState(root)
+	if err != nil {
+		return
+	}
+
+	updated := false
+	for i := range state.Clients {
+		if state.Clients[i].Email == client.Email {
+			state.Clients[i] = client
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		state.Clients = append(state.Clients, client)
+	}
+
+	if err := writeState(path, state); err != nil {
+		return
+	}
+	_ = saveGlobalState(root, state)
 }
 
 func runSyncCheck(root string, emails []string) error {
@@ -1437,19 +1462,6 @@ func listActiveStacks() error {
 	}
 
 	return nil
-}
-
-// processExists checks if a process is running
-func processExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
 }
 
 func killProcess(pid int) error {

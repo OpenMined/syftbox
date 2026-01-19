@@ -288,6 +288,14 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 			_ = killProcess(c.PID)
 		}
 	}
+	knownPIDs := map[int]struct{}{
+		s.server.PID: {},
+		s.minio.PID:  {},
+	}
+	for _, c := range s.clients {
+		knownPIDs[c.PID] = struct{}{}
+	}
+	killStrayProcessesFromState(t, s.root, knownPIDs)
 
 	// Wipe server and client state on disk while processes are stopped.
 	serverDir := filepath.Join(s.relayRoot, "server")
@@ -381,6 +389,34 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 		serverURL, clients[0].PID, clients[1].PID)
 
 	return nil
+}
+
+func killStrayProcessesFromState(t *testing.T, root string, knownPIDs map[int]struct{}) {
+	t.Helper()
+	state, _, err := readState(root)
+	if err != nil {
+		return
+	}
+
+	maybeKill := func(pid int, label string) {
+		if pid <= 0 {
+			return
+		}
+		if _, ok := knownPIDs[pid]; ok {
+			return
+		}
+		if !processExists(pid) {
+			return
+		}
+		t.Logf("cleanup: stopping stray %s pid %d", label, pid)
+		_ = killProcess(pid)
+	}
+
+	maybeKill(state.Server.PID, "server")
+	maybeKill(state.Minio.PID, "minio")
+	for _, c := range state.Clients {
+		maybeKill(c.PID, fmt.Sprintf("client %s", c.Email))
+	}
 }
 
 func removeAllWithRetry(t *testing.T, path string, label string) error {
