@@ -8,11 +8,23 @@ on:
     branches: [ main, madhava/biovault ]
 
 jobs:
-  # Test ACL propagation with Go client (baseline)
-  go-test-acl-propagation:
-    name: Go TestACLPropagationUpdates (Windows)
-    runs-on: namespace-profile-windows-medium
-    timeout-minutes: 15
+  integration-tests:
+    name: ${{ matrix.mode }} ${{ matrix.group }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows, linux, mac ]
+        mode: [ go, rust ]
+        group: [ core, acl, state, transfer ]
+        include:
+          - os: windows
+            runner: namespace-profile-windows-medium
+          - os: linux
+            runner: namespace-profile-linux-medium
+          - os: mac
+            runner: namespace-profile-mac-medium
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v4
@@ -21,40 +33,18 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24.3'
-        cache: false
+        cache: ${{ matrix.os != 'windows' }}
 
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Run TestACLPropagationUpdates (go client)
-      run: just sbdev-test-single TestACLPropagationUpdates mode=go
-      shell: bash
-
-  # Test ACL propagation with Rust client
-  rust-test-acl-propagation:
-    name: Rust TestACLPropagationUpdates (Windows)
-    runs-on: namespace-profile-windows-medium
-    timeout-minutes: 15
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24.3'
-        cache: false
-
-    - name: Download dependencies
+    - name: Download Go dependencies
+      if: matrix.os == 'windows'
       run: go mod download
 
     - name: Set up Rust
+      if: matrix.mode == 'rust'
       uses: dtolnay/rust-toolchain@stable
 
     - name: Rust cache
+      if: matrix.mode == 'rust'
       uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
@@ -62,6 +52,6 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@v2
 
-    - name: Run TestACLPropagationUpdates (rust client)
-      run: just sbdev-test-single TestACLPropagationUpdates mode=rust
+    - name: Run ${{ matrix.group }} tests (${{ matrix.mode }} client)
+      run: just sbdev-test-group ${{ matrix.group }} mode=${{ matrix.mode }}
       shell: bash
