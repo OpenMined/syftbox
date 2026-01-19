@@ -1,7 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::wsproto::ACLManifest;
+
+/// Grace period after ACL set is applied - protects ACL files from deletion
+/// during the window when remote state might not yet reflect the new ACLs.
+/// This matches Go's behavior in acl_staging.go.
+const ACL_GRACE_PERIOD: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct StagedACL {
@@ -39,6 +45,10 @@ type OnReadyCallback = Arc<dyn Fn(String, Vec<StagedACL>) + Send + Sync>;
 
 pub struct ACLStagingManager {
     pending: Mutex<HashMap<String, PendingACLSet>>,
+    /// Tracks when ACL sets were recently applied per datasite.
+    /// Used to provide a grace window after application to prevent
+    /// spurious deletions before remote state catches up.
+    recent: Mutex<HashMap<String, Instant>>,
     on_ready: Option<OnReadyCallback>,
 }
 
@@ -49,6 +59,7 @@ impl ACLStagingManager {
     {
         Self {
             pending: Mutex::new(HashMap::new()),
+            recent: Mutex::new(HashMap::new()),
             on_ready: Some(Arc::new(on_ready)),
         }
     }
@@ -133,6 +144,16 @@ impl ACLStagingManager {
             ));
             pending.applied = true;
 
+            // Record the time when this ACL set was applied for grace window tracking
+            {
+                let mut recent = self.recent.lock().expect("acl recent lock");
+                recent.insert(datasite.to_string(), Instant::now());
+                crate::logging::info(format!(
+                    "acl staging grace window started datasite={} duration={:?}",
+                    datasite, ACL_GRACE_PERIOD
+                ));
+            }
+
             let ordered_acls: Vec<StagedACL> = pending
                 .manifest
                 .acl_order
@@ -171,26 +192,73 @@ impl ACLStagingManager {
     }
 
     /// Check if a relative path is a pending ACL file that shouldn't be deleted.
-    /// This matches Go's IsPendingACLPath behavior.
+    /// This matches Go's IsPendingACLPath behavior with grace window support.
     pub fn is_pending_acl_path(&self, rel_path: &str) -> bool {
+        // Normalize path separators for Windows compatibility
+        let normalized_path = rel_path.replace('\\', "/");
+
         // Extract datasite from the path (first component, e.g., "alice@example.com")
-        let datasite = match rel_path.split('/').next() {
+        let datasite = match normalized_path.split('/').next() {
             Some(ds) if !ds.is_empty() => ds,
             _ => return false,
         };
 
+        // Check 1: Grace window for ACL files (like Go's m.recent check)
+        // If this is a syft.pub.yaml file and we recently applied ACLs for this datasite,
+        // protect it from deletion during the grace window.
+        if normalized_path.ends_with("/syft.pub.yaml") || normalized_path.ends_with("\\syft.pub.yaml") {
+            let recent = self.recent.lock().expect("acl recent lock");
+            if let Some(applied_at) = recent.get(datasite) {
+                let elapsed = applied_at.elapsed();
+                if elapsed <= ACL_GRACE_PERIOD {
+                    crate::logging::info(format!(
+                        "acl staging grace window protecting path={} datasite={} elapsed={:?} remaining={:?}",
+                        rel_path, datasite, elapsed, ACL_GRACE_PERIOD - elapsed
+                    ));
+                    return true;
+                }
+            }
+        }
+
+        // Check 2: Pending manifest (ACL set not yet fully applied)
         let pending = self.pending.lock().expect("acl staging lock");
         match pending.get(datasite) {
             Some(p) if !p.applied => {
                 // Check if this path matches any expected ACL path
-                p.manifest.acl_order.iter().any(|entry| {
-                    // The entry.path might be just the relative part within the datasite
-                    // or the full path - handle both cases
-                    rel_path == entry.path || rel_path.ends_with(&entry.path)
-                })
+                // Go builds: aclFilePath := normalizedEntry + "/syft.pub.yaml"
+                // Then checks: normalizedPath == aclFilePath || normalizedPath == normalizedEntry
+                let matches = p.manifest.acl_order.iter().any(|entry| {
+                    let normalized_entry = entry.path.replace('\\', "/");
+                    let acl_file_path = format!("{}/syft.pub.yaml", normalized_entry);
+                    normalized_path == acl_file_path || normalized_path == normalized_entry
+                });
+                if matches {
+                    crate::logging::info(format!(
+                        "acl staging pending manifest protecting path={} datasite={}",
+                        rel_path, datasite
+                    ));
+                }
+                matches
             }
             _ => false,
         }
+    }
+
+    /// Prune expired entries from the recent map.
+    /// Called periodically to clean up old grace window entries.
+    #[allow(dead_code)]
+    pub fn prune_expired(&self) {
+        let mut recent = self.recent.lock().expect("acl recent lock");
+        recent.retain(|datasite, applied_at| {
+            let dominated = applied_at.elapsed() <= ACL_GRACE_PERIOD;
+            if !dominated {
+                crate::logging::info(format!(
+                    "acl staging grace window expired datasite={}",
+                    datasite
+                ));
+            }
+            dominated
+        });
     }
 }
 
@@ -274,5 +342,95 @@ mod tests {
             "etag".to_string(),
         );
         assert!(!staged);
+    }
+
+    #[test]
+    fn test_grace_window_protects_acl_files() {
+        let manager = ACLStagingManager::new(|_, _| {});
+
+        let manifest = ACLManifest {
+            version: 1,
+            datasite: "bob@example.com".to_string(),
+            for_user: "charlie@example.com".to_string(),
+            for_hash: "abc123".to_string(),
+            generated: "2024-01-01T00:00:00Z".to_string(),
+            acl_order: vec![
+                ACLEntry {
+                    path: "bob@example.com".to_string(),
+                    hash: "h1".to_string(),
+                },
+                ACLEntry {
+                    path: "bob@example.com/public".to_string(),
+                    hash: "h2".to_string(),
+                },
+            ],
+        };
+
+        // Before manifest, path is not protected
+        assert!(!manager.is_pending_acl_path("bob@example.com/public/syft.pub.yaml"));
+
+        // Set manifest - now pending protection kicks in
+        manager.set_manifest(manifest);
+        assert!(manager.is_pending_acl_path("bob@example.com/public/syft.pub.yaml"));
+
+        // Stage first ACL
+        manager.stage_acl(
+            "bob@example.com",
+            "bob@example.com",
+            b"acl1".to_vec(),
+            "etag1".to_string(),
+        );
+        // Still protected (pending)
+        assert!(manager.is_pending_acl_path("bob@example.com/public/syft.pub.yaml"));
+
+        // Stage second ACL - completes the set, triggers grace window
+        manager.stage_acl(
+            "bob@example.com",
+            "bob@example.com/public",
+            b"acl2".to_vec(),
+            "etag2".to_string(),
+        );
+
+        // Manifest is now applied, but grace window should still protect
+        assert!(!manager.has_pending_manifest("bob@example.com"));
+        // The grace window should protect the ACL file for ACL_GRACE_PERIOD
+        assert!(manager.is_pending_acl_path("bob@example.com/public/syft.pub.yaml"));
+    }
+
+    #[test]
+    fn test_pending_manifest_path_matching() {
+        let manager = ACLStagingManager::new(|_, _| {});
+
+        let manifest = ACLManifest {
+            version: 1,
+            datasite: "alice@example.com".to_string(),
+            for_user: "bob@example.com".to_string(),
+            for_hash: "abc123".to_string(),
+            generated: "2024-01-01T00:00:00Z".to_string(),
+            acl_order: vec![
+                ACLEntry {
+                    path: "alice@example.com".to_string(),
+                    hash: "h1".to_string(),
+                },
+                ACLEntry {
+                    path: "alice@example.com/public".to_string(),
+                    hash: "h2".to_string(),
+                },
+            ],
+        };
+
+        manager.set_manifest(manifest);
+
+        // Should match the ACL file path (entry + /syft.pub.yaml)
+        assert!(manager.is_pending_acl_path("alice@example.com/syft.pub.yaml"));
+        assert!(manager.is_pending_acl_path("alice@example.com/public/syft.pub.yaml"));
+
+        // Should match the entry path itself
+        assert!(manager.is_pending_acl_path("alice@example.com"));
+        assert!(manager.is_pending_acl_path("alice@example.com/public"));
+
+        // Should NOT match unrelated paths
+        assert!(!manager.is_pending_acl_path("alice@example.com/private/syft.pub.yaml"));
+        assert!(!manager.is_pending_acl_path("bob@example.com/public/syft.pub.yaml"));
     }
 }
