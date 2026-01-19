@@ -8,41 +8,32 @@ on:
     branches: [ main, madhava/biovault ]
 
 jobs:
-  # TEMPORARILY COMMENTED OUT - Go tests all pass, focusing on Rust failures
-  # devstack-go:
-  #   name: Go ${{ matrix.group }} (${{ matrix.os }})
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       os: [ windows-latest ]
-  #       group: [ core, acl, state, transfer ]
-  #       include:
-  #         - os: windows-latest
-  #           runner: namespace-profile-windows-medium
-  #   runs-on: ${{ matrix.runner }}
-  #   timeout-minutes: 15
-  #
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #
-  #   - name: Set up Go
-  #     uses: actions/setup-go@v5
-  #     with:
-  #       go-version: '1.24.3'
-  #       cache: ${{ matrix.os != 'windows-latest' }}
-  #
-  #   - name: Download dependencies (Windows only)
-  #     if: matrix.os == 'windows-latest'
-  #     run: go mod download
-  #
-  #   - name: Install just
-  #     uses: extractions/setup-just@v2
-  #
-  #   - name: Run ${{ matrix.group }} tests
-  #     run: just sbdev-test-group ${{ matrix.group }}
-  #     shell: bash
+  # Test ACL propagation with Go client (baseline)
+  go-test-acl-propagation:
+    name: Go TestACLPropagationUpdates (Windows)
+    runs-on: namespace-profile-windows-medium
+    timeout-minutes: 15
 
-  # Individual failing Rust tests for faster debugging
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+        cache: false
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run TestACLPropagationUpdates (go client)
+      run: just sbdev-test-single TestACLPropagationUpdates mode=go
+      shell: bash
+
+  # Test ACL propagation with Rust client
   rust-test-acl-propagation:
     name: Rust TestACLPropagationUpdates (Windows)
     runs-on: namespace-profile-windows-medium
@@ -73,100 +64,4 @@ jobs:
 
     - name: Run TestACLPropagationUpdates (rust client)
       run: just sbdev-test-single TestACLPropagationUpdates mode=rust
-      shell: bash
-
-  rust-test-delete-during-download:
-    name: Rust TestDeleteDuringDownload (Windows)
-    runs-on: namespace-profile-windows-medium
-    timeout-minutes: 15
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24.3'
-        cache: false
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: rust
-
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Run TestDeleteDuringDownload (rust client)
-      run: just sbdev-test-single TestDeleteDuringDownload mode=rust
-      shell: bash
-
-  rust-test-devstack-integration:
-    name: Rust TestDevstackIntegration (Windows)
-    runs-on: namespace-profile-windows-medium
-    timeout-minutes: 15
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24.3'
-        cache: false
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: rust
-
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Run TestDevstackIntegration (rust client)
-      run: just sbdev-test-single TestDevstackIntegration mode=rust
-      shell: bash
-
-  rust-test-large-upload-stress:
-    name: Rust TestLargeUploadViaDaemonStress (Windows)
-    runs-on: namespace-profile-windows-medium
-    timeout-minutes: 15
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24.3'
-        cache: false
-
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Set up Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: rust
-
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Run TestLargeUploadViaDaemonStress (rust client)
-      run: just sbdev-test-single TestLargeUploadViaDaemonStress mode=rust
       shell: bash

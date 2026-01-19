@@ -1245,7 +1245,10 @@ async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<S
     if total_files > 0 {
         crate::logging::info(format!(
             "scan_remote: server returned {} files, ignored={}, filtered={}, kept={}",
-            total_files, ignored_count, filtered_count, out.len()
+            total_files,
+            ignored_count,
+            filtered_count,
+            out.len()
         ));
     }
 
