@@ -57,11 +57,14 @@ func TestACLPropagationUpdates(t *testing.T) {
 		lastLog := time.Now()
 		var lastErr error
 		var lastMD5 string
+		attempts := 0
 		for time.Now().Before(deadline) {
+			attempts++
 			data, err := os.ReadFile(path)
 			if err == nil {
 				gotMD5 := fmt.Sprintf("%x", md5.Sum(data))
 				if gotMD5 == wantMD5 {
+					fmt.Printf("[DEBUG] waitForPath SUCCESS: %s got %s from %s after %d attempts\n", c.email, relPath, sender, attempts)
 					return nil
 				}
 				lastMD5 = gotMD5
@@ -86,11 +89,27 @@ func TestACLPropagationUpdates(t *testing.T) {
 				} else {
 					t.Logf("DEBUG waitForPath: parent dir %s does not exist: %v", parentDir, err)
 				}
+				// Dump sync journal for debugging
+				journalPath := filepath.Join(c.dataDir, ".data", "sync.db")
+				if _, statErr := os.Stat(journalPath); statErr == nil {
+					t.Logf("DEBUG waitForPath: sync journal exists at %s", journalPath)
+				} else {
+					t.Logf("DEBUG waitForPath: sync journal NOT found at %s", journalPath)
+				}
 				lastLog = time.Now()
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		// Final debug on timeout
+		// Final debug on timeout - dump more info
+		fmt.Printf("[DEBUG] waitForPath TIMEOUT: %s waiting for %s from %s after %d attempts\n", c.email, relPath, sender, attempts)
+		// List all datasites directories for this peer
+		datasitesDir := filepath.Join(c.dataDir, "datasites")
+		if entries, err := os.ReadDir(datasitesDir); err == nil {
+			fmt.Printf("[DEBUG] waitForPath TIMEOUT: %s's datasites contains:\n", c.email)
+			for _, e := range entries {
+				fmt.Printf("[DEBUG]   - %s\n", e.Name())
+			}
+		}
 		if lastErr != nil {
 			return fmt.Errorf("timeout waiting for %s (last error: %v)", relPath, lastErr)
 		}

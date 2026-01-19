@@ -1163,14 +1163,49 @@ func waitForDir(path string, timeout time.Duration) error {
 
 func waitForFile(path, want string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	attempts := 0
+	var lastErr error
+	var lastContent string
 	for time.Now().Before(deadline) {
+		attempts++
 		data, err := os.ReadFile(path)
 		if err == nil && (want == "" || string(data) == want) {
+			fmt.Printf("[DEBUG] waitForFile: found %s after %d attempts\n", path, attempts)
 			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastContent = string(data)
+		}
+		// Log every 10 attempts (5 seconds)
+		if attempts%10 == 0 {
+			if lastErr != nil {
+				fmt.Printf("[DEBUG] waitForFile: waiting for %s attempt=%d err=%v\n", path, attempts, lastErr)
+			} else {
+				fmt.Printf("[DEBUG] waitForFile: waiting for %s attempt=%d content_len=%d want_len=%d\n",
+					path, attempts, len(lastContent), len(want))
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("file not found or mismatched: %s", path)
+	// Final debug dump on timeout
+	parentDir := filepath.Dir(path)
+	fmt.Printf("[DEBUG] waitForFile TIMEOUT: path=%s attempts=%d\n", path, attempts)
+	if entries, err := os.ReadDir(parentDir); err == nil {
+		fmt.Printf("[DEBUG] waitForFile TIMEOUT: parent=%s contents:\n", parentDir)
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				fmt.Printf("[DEBUG]   - %s (size=%d)\n", e.Name(), info.Size())
+			} else {
+				fmt.Printf("[DEBUG]   - %s\n", e.Name())
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG] waitForFile TIMEOUT: parent=%s does not exist: %v\n", parentDir, err)
+	}
+	return fmt.Errorf("file not found or mismatched: %s (attempts=%d)", path, attempts)
 }
 
 func waitForServerReady(root string, timeout time.Duration) error {

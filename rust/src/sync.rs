@@ -394,6 +394,15 @@ pub async fn sync_once_with_control(
     let mut local_deletes = Vec::new();
     let mut conflicts = Vec::new();
 
+    // Windows debug: log counts before reconciliation
+    crate::logging::info(format!(
+        "sync reconcile start: local_count={} remote_count={} journal_count={} all_keys={}",
+        local.len(),
+        remote.len(),
+        journal.state.files.len(),
+        all_keys.len()
+    ));
+
     for key in all_keys {
         if !is_synced_key(&key) {
             continue;
@@ -484,6 +493,22 @@ pub async fn sync_once_with_control(
             age_secs > 30
         };
 
+        // Windows debug: log state for files that will be deleted or have interesting state
+        if local_deleted || remote_deleted || (local_exists && remote_exists && !journal_exists) {
+            let now = chrono::Utc::now().timestamp();
+            let completed = journal_meta.map(|m| m.completed_at).unwrap_or(0);
+            let age_secs = now.saturating_sub(completed);
+            let local_etag = local_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            let remote_etag = remote_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            let journal_etag = journal_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            crate::logging::info(format!(
+                "sync state key={} local={} remote={} journal={} local_deleted={} remote_deleted={} age_secs={} local_etag={} remote_etag={} journal_etag={}",
+                key, local_exists, remote_exists, journal_exists,
+                local_deleted, remote_deleted, age_secs,
+                local_etag, remote_etag, journal_etag
+            ));
+        }
+
         let local_modified =
             local_exists && has_modified_local(is_owner, local_meta.unwrap(), journal_meta);
         let remote_modified =
@@ -533,6 +558,16 @@ pub async fn sync_once_with_control(
             local_deletes.push(key);
         }
     }
+
+    // Windows debug: log action summary
+    crate::logging::info(format!(
+        "sync actions: uploads={} downloads={} remote_deletes={} local_deletes={} conflicts={}",
+        upload_keys.len(),
+        download_keys_list.len(),
+        remote_deletes.len(),
+        local_deletes.len(),
+        conflicts.len()
+    ));
 
     // Conflicts: mark local file as conflicted (rename), leave remote unchanged.
     for key in conflicts {
@@ -649,9 +684,17 @@ pub async fn sync_once_with_control(
 
     // Remote deletes
     if !remote_deletes.is_empty() {
+        crate::logging::info(format!(
+            "sync remote_deletes count={} keys={:?}",
+            remote_deletes.len(),
+            remote_deletes
+        ));
         if let Err(err) = api.delete_blobs(&remote_deletes).await {
             crate::logging::error(format!("sync remote delete error: {err:?}"));
         } else {
+            for key in &remote_deletes {
+                crate::logging::info(format!("sync remote_delete success key={}", key));
+            }
             for key in remote_deletes {
                 journal.delete(&key);
             }
@@ -659,14 +702,33 @@ pub async fn sync_once_with_control(
     }
 
     // Local deletes
+    if !local_deletes.is_empty() {
+        crate::logging::info(format!(
+            "sync local_deletes count={} keys={:?}",
+            local_deletes.len(),
+            local_deletes
+        ));
+    }
     for key in local_deletes {
         let abs = datasites_root.join(&key);
+        crate::logging::info(format!(
+            "sync local_delete key={} path={} exists={}",
+            key,
+            abs.display(),
+            abs.exists()
+        ));
         if abs.exists() {
             let meta = fs::metadata(&abs)?;
             if meta.is_dir() {
-                let _ = fs::remove_dir_all(&abs);
+                match fs::remove_dir_all(&abs) {
+                    Ok(()) => crate::logging::info(format!("sync local_delete removed dir key={}", key)),
+                    Err(e) => crate::logging::error(format!("sync local_delete dir failed key={} err={:?}", key, e)),
+                }
             } else {
-                let _ = fs::remove_file(&abs);
+                match fs::remove_file(&abs) {
+                    Ok(()) => crate::logging::info(format!("sync local_delete removed file key={}", key)),
+                    Err(e) => crate::logging::error(format!("sync local_delete file failed key={} err={:?}", key, e)),
+                }
             }
         }
         journal.delete(&key);
@@ -858,20 +920,44 @@ async fn stage_downloads(
 }
 
 async fn commit_staged_downloads(staged: Vec<StagedDownload>) -> Result<()> {
+    crate::logging::info(format!("commit_staged_downloads count={}", staged.len()));
     for item in staged {
-        if item.target.exists() {
+        let target_exists = item.target.exists();
+        crate::logging::info(format!(
+            "commit_staged_download tmp={} target={} target_exists={}",
+            item.tmp.display(),
+            item.target.display(),
+            target_exists
+        ));
+        if target_exists {
             let meta = fs::metadata(&item.target)?;
             if meta.is_dir() {
-                fs::remove_dir_all(&item.target)?;
+                match fs::remove_dir_all(&item.target) {
+                    Ok(()) => crate::logging::info(format!("commit_staged removed dir target={}", item.target.display())),
+                    Err(e) => {
+                        crate::logging::error(format!("commit_staged remove dir failed target={} err={:?}", item.target.display(), e));
+                        return Err(e.into());
+                    }
+                }
             } else {
-                let _ = fs::remove_file(&item.target);
+                match fs::remove_file(&item.target) {
+                    Ok(()) => crate::logging::info(format!("commit_staged removed file target={}", item.target.display())),
+                    Err(e) => crate::logging::error(format!("commit_staged remove file failed (continuing) target={} err={:?}", item.target.display(), e)),
+                }
             }
         }
-        tokio::fs::rename(&item.tmp, &item.target)
-            .await
-            .with_context(|| {
-                format!("rename {} -> {}", item.tmp.display(), item.target.display())
-            })?;
+        match tokio::fs::rename(&item.tmp, &item.target).await {
+            Ok(()) => crate::logging::info(format!("commit_staged rename success target={}", item.target.display())),
+            Err(e) => {
+                crate::logging::error(format!(
+                    "commit_staged rename failed tmp={} target={} err={:?}",
+                    item.tmp.display(),
+                    item.target.display(),
+                    e
+                ));
+                return Err(anyhow::anyhow!("rename {} -> {}: {}", item.tmp.display(), item.target.display(), e));
+            }
+        }
     }
     Ok(())
 }

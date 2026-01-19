@@ -954,12 +954,27 @@ func assertReplicated(t *testing.T, sender *ClientHelper, clients []*ClientHelpe
 func assertNotReplicated(c *ClientHelper, senderEmail, relPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	path := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
+	attempts := 0
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
+		attempts++
+		info, err := os.Stat(path)
+		if err == nil {
+			fmt.Printf("[DEBUG] assertNotReplicated FAIL: %s unexpectedly received %s from %s (size=%d, attempt=%d)\n",
+				c.email, relPath, senderEmail, info.Size(), attempts)
+			// Dump parent directory
+			parentDir := filepath.Dir(path)
+			if entries, err := os.ReadDir(parentDir); err == nil {
+				fmt.Printf("[DEBUG] assertNotReplicated: parent dir %s contents:\n", parentDir)
+				for _, e := range entries {
+					fmt.Printf("[DEBUG]   - %s\n", e.Name())
+				}
+			}
 			return fmt.Errorf("unexpected presence: %s", path)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	fmt.Printf("[DEBUG] assertNotReplicated OK: %s did not receive %s from %s after %d checks\n",
+		c.email, relPath, senderEmail, attempts)
 	return nil
 }
 

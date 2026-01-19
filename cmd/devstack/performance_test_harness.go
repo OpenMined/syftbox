@@ -798,6 +798,9 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	// File syncs to datasites/{sender}/public/{relPath}
 	fullPath := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
 	var lastMD5 string
+	attempts := 0
+	notExistCount := 0
+	sharingViolationCount := 0
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -806,12 +809,20 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	for time.Now().Before(deadline) {
 		select {
 		case <-ticker.C:
+			attempts++
 			content, err := os.ReadFile(fullPath)
 			if err != nil {
 				if os.IsNotExist(err) {
+					notExistCount++
+					// Log every 50 attempts (5 seconds)
+					if notExistCount%50 == 0 {
+						fmt.Printf("[DEBUG] WaitForFile: file not exist after %d checks path=%s\n", notExistCount, fullPath)
+					}
 					continue
 				}
 				if isSharingViolation(err) {
+					sharingViolationCount++
+					fmt.Printf("[DEBUG] WaitForFile: sharing violation #%d path=%s\n", sharingViolationCount, fullPath)
 					continue
 				}
 				return fmt.Errorf("read file: %w", err)
@@ -833,6 +844,21 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 				c.t.Logf("waiting for %s from %s: have md5 %s, want %s", relPath, senderEmail, actualMD5, expectedMD5)
 				lastMD5 = actualMD5
 			}
+		}
+	}
+
+	// Debug: dump parent directory contents on timeout
+	parentDir := filepath.Dir(fullPath)
+	entries, _ := os.ReadDir(parentDir)
+	fmt.Printf("[DEBUG] WaitForFile TIMEOUT: attempts=%d notExist=%d sharingViolation=%d path=%s\n",
+		attempts, notExistCount, sharingViolationCount, fullPath)
+	fmt.Printf("[DEBUG] WaitForFile TIMEOUT: parent=%s contents:\n", parentDir)
+	for _, e := range entries {
+		info, _ := e.Info()
+		if info != nil {
+			fmt.Printf("[DEBUG]   - %s (size=%d, mod=%v)\n", e.Name(), info.Size(), info.ModTime())
+		} else {
+			fmt.Printf("[DEBUG]   - %s\n", e.Name())
 		}
 	}
 

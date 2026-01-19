@@ -768,6 +768,15 @@ async fn handle_ws_file_write(
     file: FileWrite,
     acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) {
+    // Windows debug: log incoming file write
+    crate::logging::info(format!(
+        "ws_file_write path={} etag={} length={} has_content={}",
+        file.path,
+        file.etag,
+        file.length,
+        file.content.is_some()
+    ));
+
     // Stage ACL for potential ordered application, but don't block the write
     // When all ACLs arrive, on_acl_set_ready will re-apply them in order
     let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
@@ -813,17 +822,31 @@ async fn handle_ws_file_write(
         } else {
             file.etag.clone()
         };
+        let local_path = datasites_root.join(&file.path);
+        crate::logging::info(format!(
+            "ws_file_write writing content path={} local_path={} content_len={}",
+            file.path,
+            local_path.display(),
+            content.len()
+        ));
         if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
-            crate::logging::error(format!("ws write error: {err:?}"));
-        } else if ws_should_update_journal() {
-            let _ = crate::sync::journal_upsert_direct(
-                data_dir,
-                &file.path,
-                &etag,
-                &local_etag,
-                file.length,
-                chrono::Utc::now().timestamp(),
-            );
+            crate::logging::error(format!("ws write error path={} err={:?}", file.path, err));
+        } else {
+            crate::logging::info(format!("ws_file_write success path={}", file.path));
+            if ws_should_update_journal() {
+                crate::logging::info(format!(
+                    "ws_file_write journal_upsert path={} etag={} local_etag={}",
+                    file.path, etag, local_etag
+                ));
+                let _ = crate::sync::journal_upsert_direct(
+                    data_dir,
+                    &file.path,
+                    &etag,
+                    &local_etag,
+                    file.length,
+                    chrono::Utc::now().timestamp(),
+                );
+            }
         }
         return;
     }
