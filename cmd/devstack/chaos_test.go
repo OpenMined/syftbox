@@ -21,7 +21,16 @@ func TestChaosSync(t *testing.T) {
 		t.Skip("skipping chaos test in short mode")
 	}
 
-	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// Allow reproducible runs via CHAOS_SEED environment variable
+	seed := time.Now().UnixNano()
+	if seedStr := os.Getenv("CHAOS_SEED"); seedStr != "" {
+		if parsedSeed, err := strconv.ParseInt(seedStr, 10, 64); err == nil {
+			seed = parsedSeed
+			t.Logf("Using CHAOS_SEED from environment: %d", seed)
+		}
+	}
+	t.Logf("Chaos test seed: %d (set CHAOS_SEED=%d to reproduce)", seed, seed)
+	rng := rand.New(rand.NewSource(seed))
 
 	h := NewDevstackHarness(t)
 
@@ -66,13 +75,18 @@ func TestChaosSync(t *testing.T) {
 	}
 
 	// Wait for baseline public ACLs to be present on all peers before chaos begins.
+	t.Logf("[DEBUG] Waiting for baseline ACL propagation...")
 	for _, c := range []*ClientHelper{h.alice, h.bob, charlieHelper} {
-		data, err := os.ReadFile(filepath.Join(c.publicDir, "syft.pub.yaml"))
+		aclPath := filepath.Join(c.publicDir, "syft.pub.yaml")
+		data, err := os.ReadFile(aclPath)
 		if err != nil {
 			t.Fatalf("read baseline acl for %s: %v", c.email, err)
 		}
+		t.Logf("[DEBUG] %s baseline ACL (md5=%s):\n%s", c.email, CalculateMD5(data), string(data))
 		waitForACLPropagation(t, c, []*ClientHelper{h.alice, h.bob, charlieHelper}, string(data), 15*time.Second)
+		t.Logf("[DEBUG] %s baseline ACL propagated successfully to all peers", c.email)
 	}
+	t.Logf("[DEBUG] All baseline ACLs propagated - starting chaos operations")
 
 	clients := []*ClientHelper{h.alice, h.bob, charlieHelper}
 
@@ -178,6 +192,12 @@ func TestChaosSync(t *testing.T) {
 		}
 	}
 
+	actionNames := []string{
+		"new_public", "overwrite", "nested", "rpc", "grant_read",
+		"revoke", "grant_public", "delete", "rapid_acl_flip", "burst_upload",
+		"weird_names", "delete_during_download", "acl_change_during_upload", "overwrite_during_download",
+	}
+
 mainLoop:
 	for i := 0; i < iterations; i++ {
 		if deadlinePassed(deadline) {
@@ -185,6 +205,7 @@ mainLoop:
 			break
 		}
 		action := rng.Intn(14) // 0 new public, 1 overwrite, 2 nested, 3 rpc, 4 grant read, 5 revoke, 6 grant public, 7 delete, 8 rapid ACL flip, 9 burst upload, 10 weird names, 11 delete during download, 12 ACL change during upload, 13 overwrite during download
+		t.Logf("[DEBUG] Iteration %d: action=%d (%s)", i, action, actionNames[action])
 
 		switch action {
 		case 0: // new public file
@@ -1017,9 +1038,36 @@ func waitForACLPropagationWithDeadline(t *testing.T, owner *ClientHelper, client
 		if !deadline.IsZero() && time.Now().After(deadline) {
 			return false
 		}
+		// Debug: log what we're waiting for
+		expectedPath := filepath.Join(c.dataDir, "datasites", owner.email, "public", "syft.pub.yaml")
+		t.Logf("[DEBUG] ACL propagation: waiting for %s to have %s (md5=%s, timeout=%v)", c.email, expectedPath, md5, timeout)
+
 		if err := c.WaitForFile(owner.email, "syft.pub.yaml", md5, timeout); err != nil {
+			// Debug: list what's in the directory
+			parentDir := filepath.Dir(expectedPath)
+			t.Logf("[DEBUG] ACL propagation failed - checking directory %s", parentDir)
+			if entries, readErr := os.ReadDir(parentDir); readErr == nil {
+				t.Logf("[DEBUG] Directory contents (%d files):", len(entries))
+				for _, e := range entries {
+					info, _ := e.Info()
+					if info != nil {
+						t.Logf("[DEBUG]   - %s (size=%d, mod=%v)", e.Name(), info.Size(), info.ModTime())
+					} else {
+						t.Logf("[DEBUG]   - %s", e.Name())
+					}
+				}
+			} else {
+				t.Logf("[DEBUG] Could not read directory: %v", readErr)
+			}
+			// Check if file exists but with different content
+			if data, readErr := os.ReadFile(expectedPath); readErr == nil {
+				actualMD5 := CalculateMD5(data)
+				t.Logf("[DEBUG] File exists but MD5 mismatch: expected=%s actual=%s", md5, actualMD5)
+				t.Logf("[DEBUG] File content:\n%s", string(data))
+			}
 			t.Fatalf("ACL propagation to %s from %s failed: %v", c.email, owner.email, err)
 		}
+		t.Logf("[DEBUG] ACL propagation: %s successfully received ACL from %s", c.email, owner.email)
 	}
 	return true
 }
