@@ -1023,19 +1023,20 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	// Keep the persistent test suite aware of restarted/extra clients.
 	if suite.initialized {
 		if rootAbs, err := filepath.Abs(root); err == nil && rootAbs == suite.root {
-			suite.mu.Lock()
-			updated := false
-			for i := range suite.clients {
-				if suite.clients[i].Email == email {
-					suite.clients[i] = state
-					updated = true
-					break
+			if suite.mu.TryLock() {
+				updated := false
+				for i := range suite.clients {
+					if suite.clients[i].Email == email {
+						suite.clients[i] = state
+						updated = true
+						break
+					}
 				}
+				if !updated {
+					suite.clients = append(suite.clients, state)
+				}
+				suite.mu.Unlock()
 			}
-			if !updated {
-				suite.clients = append(suite.clients, state)
-			}
-			suite.mu.Unlock()
 		}
 	}
 
