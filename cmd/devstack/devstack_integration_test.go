@@ -188,6 +188,10 @@ func TestDevstackIntegration(t *testing.T) {
 	if err := writeState(statePath, &state); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
+	// Also save to global state so waitForServerReady finds the correct port
+	if err := saveGlobalState(opts.root, &state); err != nil {
+		t.Logf("warning: failed to save global state: %v", err)
+	}
 
 	t.Logf("Devstack started successfully")
 	t.Logf("  Server: %s (pid %d)", serverURL, sState.PID)
