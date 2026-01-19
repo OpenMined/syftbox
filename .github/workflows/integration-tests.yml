@@ -15,7 +15,7 @@ jobs:
       matrix:
         os: [ windows, linux, mac ]
         mode: [ go, rust ]
-        group: [ core, acl, state, transfer ]
+        group: [ core, acl, state1, state2, transfer, chaos ]
         include:
           - os: windows
             runner: namespace-profile-windows-medium
