@@ -291,9 +291,14 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 
 	// Wipe server and client state on disk while processes are stopped.
 	serverDir := filepath.Join(s.relayRoot, "server")
-	_ = os.RemoveAll(serverDir)
+	if err := removeAllWithRetry(t, serverDir, "server state"); err != nil {
+		return fmt.Errorf("cleanup server state: %w", err)
+	}
 	for _, email := range s.emails {
-		_ = os.RemoveAll(filepath.Join(s.root, email))
+		emailRoot := filepath.Join(s.root, email)
+		if err := removeAllWithRetry(t, emailRoot, fmt.Sprintf("client state %s", email)); err != nil {
+			return fmt.Errorf("cleanup client state %s: %w", email, err)
+		}
 	}
 
 	// Clear MinIO bucket contents for a clean server state.
@@ -376,6 +381,28 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 		serverURL, clients[0].PID, clients[1].PID)
 
 	return nil
+}
+
+func removeAllWithRetry(t *testing.T, path string, label string) error {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return os.RemoveAll(path)
+	}
+	const maxAttempts = 6
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := os.RemoveAll(path)
+		if err == nil || os.IsNotExist(err) {
+			if attempt > 1 {
+				t.Logf("cleanup: removed %s after %d attempts", label, attempt)
+			}
+			return nil
+		}
+		lastErr = err
+		t.Logf("cleanup: failed to remove %s (attempt %d/%d): %v", label, attempt, maxAttempts, err)
+		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+	}
+	return lastErr
 }
 
 func (s *persistentSuite) newHarnessForTest(t *testing.T, state *stackState) *DevstackTestHarness {
