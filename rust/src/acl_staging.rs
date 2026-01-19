@@ -6,8 +6,13 @@ use crate::wsproto::ACLManifest;
 
 /// Grace period after ACL set is applied - protects ACL files from deletion
 /// during the window when remote state might not yet reflect the new ACLs.
-/// This matches Go's behavior in acl_staging.go.
-const ACL_GRACE_PERIOD: Duration = Duration::from_secs(10);
+/// Extended to 30 seconds to handle cases where:
+/// 1. User A revokes User B's access (takes ~10+ seconds for non-replication check)
+/// 2. User A grants User B access again
+/// 3. User B's grace window from baseline may have expired during step 1
+/// The proper fix is server-side (send empty manifests to users who lose access),
+/// but this longer grace period provides client-side resilience.
+const ACL_GRACE_PERIOD: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct StagedACL {
