@@ -206,7 +206,9 @@ impl ACLStagingManager {
         // Check 1: Grace window for ACL files (like Go's m.recent check)
         // If this is a syft.pub.yaml file and we recently applied ACLs for this datasite,
         // protect it from deletion during the grace window.
-        if normalized_path.ends_with("/syft.pub.yaml") || normalized_path.ends_with("\\syft.pub.yaml") {
+        if normalized_path.ends_with("/syft.pub.yaml")
+            || normalized_path.ends_with("\\syft.pub.yaml")
+        {
             let recent = self.recent.lock().expect("acl recent lock");
             if let Some(applied_at) = recent.get(datasite) {
                 let elapsed = applied_at.elapsed();
