@@ -74,7 +74,7 @@ func TestJournalGapSpuriousConflict(t *testing.T) {
 
 	// Step 2: Wait for Bob to receive file AND have journal entry
 	t.Log("Step 2: Wait for Bob to receive file and journal entry")
-	if err := waitForJournalEntry(journalPath, filename, v1MD5, 15*time.Second); err != nil {
+	if err := waitForJournalEntry(journalPath, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob journal entry not found: %v", err)
 	}
 

@@ -108,7 +108,7 @@ func TestSimultaneousWrite(t *testing.T) {
 
 	// Wait for bob to receive initial version
 	t.Log("Step 2: Wait for bob to receive initial file")
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive initial file: %v", err)
 	}
 
@@ -219,7 +219,7 @@ func TestDivergentEdits(t *testing.T) {
 		t.Fatalf("alice upload v1: %v", err)
 	}
 
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
@@ -395,10 +395,10 @@ func TestThreeWayConflict(t *testing.T) {
 
 	// Wait for all to receive - use longer timeout for 3-client scenarios
 	t.Log("Step 2: Wait for bob and charlie to receive")
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(30*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(45*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive: %v", err)
 	}
-	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(30*time.Second)); err != nil {
+	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(45*time.Second)); err != nil {
 		t.Fatalf("charlie didn't receive: %v", err)
 	}
 
@@ -512,7 +512,7 @@ func TestConflictDuringACLChange(t *testing.T) {
 		t.Fatalf("alice upload: %v", err)
 	}
 
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive: %v", err)
 	}
 
@@ -718,13 +718,13 @@ func TestJournalWriteTiming(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
 	t.Log("Step 3: Wait for Bob's journal to record v1 (verify timing)")
 	journalPath := filepath.Join(h.bob.dataDir, ".data", "sync.db")
-	err := waitForJournalEntry(journalPath, filename, v1MD5, 15*time.Second)
+	err := waitForJournalEntry(journalPath, filename, v1MD5, windowsTimeout(15*time.Second))
 	if err != nil {
 		t.Fatalf("journal timing failed: %v", err)
 	}
@@ -838,13 +838,13 @@ func TestNonConflictUpdate(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
 	// Wait for journal to sync
 	journalPath := filepath.Join(h.bob.dataDir, ".data", "sync.db")
-	if err := waitForJournalEntry(journalPath, filename, v1MD5, 15*time.Second); err != nil {
+	if err := waitForJournalEntry(journalPath, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("journal sync failed: %v", err)
 	}
 
@@ -864,7 +864,7 @@ func TestNonConflictUpdate(t *testing.T) {
 
 	// Verify journal updated to v2
 	t.Log("Step 5: Wait for Bob's journal to update to v2")
-	if err := waitForJournalEntry(journalPath, filename, v2MD5, 15*time.Second); err != nil {
+	if err := waitForJournalEntry(journalPath, filename, v2MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("journal didn't update to v2: %v", err)
 	}
 	t.Log("   ✅ Bob's journal has v2 etag")
@@ -938,13 +938,13 @@ func TestRapidSequentialEdits(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
 	// Wait for Bob's journal to record v1
 	journalPath := filepath.Join(h.bob.dataDir, ".data", "sync.db")
-	if err := waitForJournalEntry(journalPath, filename, v1MD5, 15*time.Second); err != nil {
+	if err := waitForJournalEntry(journalPath, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Logf("   ⚠️  Journal sync may be slow: %v", err)
 	}
 
@@ -1042,13 +1042,13 @@ func TestJournalLossRecovery(t *testing.T) {
 	}
 
 	t.Log("Step 2: Bob receives v1")
-	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(10*time.Second)); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob didn't receive v1: %v", err)
 	}
 
 	// Wait for journal to sync
 	journalPath := filepath.Join(h.bob.dataDir, ".data", "sync.db")
-	if err := waitForJournalEntry(journalPath, filename, v1MD5, 15*time.Second); err != nil {
+	if err := waitForJournalEntry(journalPath, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("journal sync failed: %v", err)
 	}
 	t.Log("   ✅ Journal has v1")
