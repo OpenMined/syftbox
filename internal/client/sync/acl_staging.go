@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
@@ -18,6 +19,7 @@ type PendingACLSet struct {
 	Manifest *syftmsg.ACLManifest
 	Received map[string]*StagedACL // path -> staged ACL
 	Applied  bool
+	Created  time.Time
 }
 
 func (p *PendingACLSet) IsComplete() bool {
@@ -41,18 +43,53 @@ type ACLStagingManager struct {
 	mu       sync.RWMutex
 	pending  map[string]*PendingACLSet // datasite -> pending ACL set
 	onReady  func(datasite string, acls []*StagedACL)
+	recent   map[string]time.Time // datasite -> last ACL activity
+	ttl      time.Duration
+	grace    time.Duration
+	now      func() time.Time
 }
 
-func NewACLStagingManager(onReady func(datasite string, acls []*StagedACL)) *ACLStagingManager {
-	return &ACLStagingManager{
+type ACLStagingOption func(*ACLStagingManager)
+
+func WithACLStagingTTL(ttl time.Duration) ACLStagingOption {
+	return func(m *ACLStagingManager) {
+		m.ttl = ttl
+	}
+}
+
+func WithACLStagingGrace(grace time.Duration) ACLStagingOption {
+	return func(m *ACLStagingManager) {
+		m.grace = grace
+	}
+}
+
+func WithACLStagingNow(now func() time.Time) ACLStagingOption {
+	return func(m *ACLStagingManager) {
+		m.now = now
+	}
+}
+
+func NewACLStagingManager(onReady func(datasite string, acls []*StagedACL), opts ...ACLStagingOption) *ACLStagingManager {
+	m := &ACLStagingManager{
 		pending: make(map[string]*PendingACLSet),
 		onReady: onReady,
+		recent:  make(map[string]time.Time),
+		ttl:     30 * time.Second,
+		grace:   10 * time.Second,
+		now:     time.Now,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 func (m *ACLStagingManager) SetManifest(manifest *syftmsg.ACLManifest) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	now := m.now()
+	m.pruneLocked(now)
 
 	existing := m.pending[manifest.Datasite]
 	if existing != nil && !existing.Applied {
@@ -63,7 +100,9 @@ func (m *ACLStagingManager) SetManifest(manifest *syftmsg.ACLManifest) {
 		Manifest: manifest,
 		Received: make(map[string]*StagedACL),
 		Applied:  false,
+		Created:  now,
 	}
+	m.recordActivityLocked(manifest.Datasite, now)
 
 	slog.Info("acl staging manifest set", "datasite", manifest.Datasite, "expectedCount", len(manifest.ACLOrder))
 }
@@ -71,6 +110,10 @@ func (m *ACLStagingManager) SetManifest(manifest *syftmsg.ACLManifest) {
 func (m *ACLStagingManager) StageACL(datasite, path string, content []byte, etag string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	now := m.now()
+	m.pruneLocked(now)
+	m.recordActivityLocked(datasite, now)
 
 	pending := m.pending[datasite]
 	if pending == nil || pending.Applied {
@@ -118,16 +161,20 @@ func (m *ACLStagingManager) StageACL(datasite, path string, content []byte, etag
 }
 
 func (m *ACLStagingManager) HasPendingManifest(datasite string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.pruneLocked(m.now())
 
 	pending := m.pending[datasite]
 	return pending != nil && !pending.Applied
 }
 
 func (m *ACLStagingManager) GetPendingPaths(datasite string) []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.pruneLocked(m.now())
 
 	pending := m.pending[datasite]
 	if pending == nil {
@@ -142,10 +189,24 @@ func (m *ACLStagingManager) GetPendingPaths(datasite string) []string {
 }
 
 func (m *ACLStagingManager) IsPendingACLPath(path string) bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := m.now()
+	m.pruneLocked(now)
 
 	normalizedPath := strings.ReplaceAll(path, "\\", "/")
+	datasite := pathDatasite(normalizedPath)
+	if datasite == "" {
+		return false
+	}
+
+	if isACLFilePath(normalizedPath) {
+		if last, ok := m.recent[datasite]; ok && now.Sub(last) <= m.grace {
+			return true
+		}
+	}
+
 	for _, pending := range m.pending {
 		if pending == nil || pending.Applied {
 			continue
@@ -159,4 +220,50 @@ func (m *ACLStagingManager) IsPendingACLPath(path string) bool {
 		}
 	}
 	return false
+}
+
+func (m *ACLStagingManager) NoteACLActivity(datasite string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := m.now()
+	m.pruneLocked(now)
+	m.recordActivityLocked(datasite, now)
+}
+
+func (m *ACLStagingManager) recordActivityLocked(datasite string, now time.Time) {
+	if datasite == "" {
+		return
+	}
+	m.recent[datasite] = now
+}
+
+func (m *ACLStagingManager) pruneLocked(now time.Time) {
+	for datasite, pending := range m.pending {
+		if pending == nil {
+			delete(m.pending, datasite)
+			continue
+		}
+		if pending.Applied || now.Sub(pending.Created) > m.ttl {
+			delete(m.pending, datasite)
+		}
+	}
+
+	for datasite, last := range m.recent {
+		if now.Sub(last) > m.grace {
+			delete(m.recent, datasite)
+		}
+	}
+}
+
+func pathDatasite(path string) string {
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[0]
+}
+
+func isACLFilePath(path string) bool {
+	return path == "syft.pub.yaml" || strings.HasSuffix(path, "/syft.pub.yaml")
 }

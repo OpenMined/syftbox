@@ -297,6 +297,12 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 	}
 	killStrayProcessesFromState(t, s.root, knownPIDs)
 
+	// On Windows, wait for file handles to be released after process termination.
+	// Windows holds file locks slightly longer than Unix systems.
+	if runtime.GOOS == "windows" {
+		time.Sleep(2 * time.Second)
+	}
+
 	// Wipe server and client state on disk while processes are stopped.
 	serverDir := filepath.Join(s.relayRoot, "server")
 	if err := removeAllWithRetry(t, serverDir, "server state"); err != nil {
@@ -424,7 +430,8 @@ func removeAllWithRetry(t *testing.T, path string, label string) error {
 	if runtime.GOOS != "windows" {
 		return os.RemoveAll(path)
 	}
-	const maxAttempts = 6
+	// Windows needs more retries and longer delays due to file handle release timing
+	const maxAttempts = 10
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		err := os.RemoveAll(path)
@@ -436,7 +443,7 @@ func removeAllWithRetry(t *testing.T, path string, label string) error {
 		}
 		lastErr = err
 		t.Logf("cleanup: failed to remove %s (attempt %d/%d): %v", label, attempt, maxAttempts, err)
-		time.Sleep(time.Duration(attempt) * 250 * time.Millisecond)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 	}
 	return lastErr
 }
@@ -921,22 +928,16 @@ func (c *ClientHelper) SetupRPCEndpoint(appName, endpoint string) error {
 		return fmt.Errorf("create rpc dir: %w", err)
 	}
 
-	// Ensure an app-level RPC ACL exists so peers can discover endpoints before any requests.
+	// Ensure an app-level RPC ACL exists so peers can discover child ACLs.
+	// This only grants read access to ACL files - actual content permissions
+	// are defined by each endpoint's ACL.
 	rpcRootACL := `rules:
-  - pattern: '**.request'
+  - pattern: '**/syft.pub.yaml'
     access:
       admin: []
       read:
         - '*'
-      write:
-        - '*'
-  - pattern: '**.response'
-    access:
-      admin: []
-      read:
-        - '*'
-      write:
-        - '*'
+      write: []
 `
 	rpcRootPath := filepath.Join(filepath.Dir(rpcPath), "syft.pub.yaml")
 	if err := os.MkdirAll(filepath.Dir(rpcRootPath), 0o755); err != nil {

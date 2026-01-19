@@ -47,6 +47,7 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 		if len(parts) >= 1 {
 			datasite := parts[0]
 			aclDir := filepath.Dir(createMsg.Path)
+			se.aclStaging.NoteACLActivity(datasite)
 			if se.aclStaging.HasPendingManifest(datasite) {
 				se.aclStaging.StageACL(datasite, aclDir, createMsg.Content, createMsg.ETag)
 			}
