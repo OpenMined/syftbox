@@ -62,6 +62,13 @@ const (
 	cmdPrune  command = "prune"
 )
 
+func windowsScaledTimeout(d time.Duration) time.Duration {
+	if runtime.GOOS == "windows" {
+		return d * 5
+	}
+	return d
+}
+
 type stackState struct {
 	Root     string         `json:"root"`
 	Server   serverState    `json:"server"`
@@ -1039,7 +1046,7 @@ func runSyncCheck(root string, emails []string) error {
 	if err := os.MkdirAll(publicDir, 0o755); err != nil {
 		return fmt.Errorf("ensure source public dir: %w", err)
 	}
-	if err := waitForDir(publicDir, 15*time.Second); err != nil {
+	if err := waitForDir(publicDir, windowsScaledTimeout(15*time.Second)); err != nil {
 		fmt.Printf("Sync probe note: source public dir not ready (%s): %v\n", publicDir, err)
 		return nil
 	}
@@ -1051,10 +1058,10 @@ func runSyncCheck(root string, emails []string) error {
 	}
 
 	// Touch the file via the server to trigger notifications
-	if err := waitForServerReady(root, 15*time.Second); err != nil {
+	if err := waitForServerReady(root, windowsScaledTimeout(15*time.Second)); err != nil {
 		return fmt.Errorf("wait for server: %w", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(windowsScaledTimeout(500 * time.Millisecond))
 	if err := triggerDownloadForAll(root, emails, filename); err != nil {
 		fmt.Printf("Sync probe trigger note: %v (continuing)\n", err)
 	}
@@ -1064,7 +1071,7 @@ func runSyncCheck(root string, emails []string) error {
 		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
-		if err := waitForFile(target, content, 45*time.Second); err != nil {
+		if err := waitForFile(target, content, windowsScaledTimeout(45*time.Second)); err != nil {
 			fmt.Printf("Sync probe note: %s did not see probe yet (%v)\n", email, err)
 			return nil
 		}

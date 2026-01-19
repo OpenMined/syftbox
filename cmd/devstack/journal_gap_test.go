@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +56,11 @@ func TestJournalGapSpuriousConflict(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob ACLs: %v", err)
 	}
-	time.Sleep(2 * time.Second)
+	settleTime := 2 * time.Second
+	if runtime.GOOS == "windows" {
+		settleTime = 5 * time.Second
+	}
+	time.Sleep(settleTime)
 
 	// Use public folder for simpler ACL handling
 	filename := "journal-race-test.txt"
@@ -449,8 +454,12 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Let the stack settle.
-	time.Sleep(1 * time.Second)
+	// Let the stack settle. Windows needs more time for MinIO rate limiting.
+	settleTime := 1 * time.Second
+	if runtime.GOOS == "windows" {
+		settleTime = 3 * time.Second
+	}
+	time.Sleep(settleTime)
 
 	const (
 		numFiles = 5
@@ -469,6 +478,9 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 
 		if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
 			t.Fatalf("upload %s: %v", filename, err)
+		}
+		if runtime.GOOS == "windows" {
+			time.Sleep(200 * time.Millisecond)
 		}
 	}
 
