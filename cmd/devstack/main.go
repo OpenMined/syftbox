@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -104,18 +105,18 @@ type clientState struct {
 }
 
 type startOptions struct {
-	root            string
-	clients         []string
-	randomPorts     bool
-	serverPort      int
-	clientPortStart int
-	minioAPIPort    int
-	minioConsole    int
-	useDockerMinio  bool
-	keepData        bool
-	skipSyncCheck   bool
+	root              string
+	clients           []string
+	randomPorts       bool
+	serverPort        int
+	clientPortStart   int
+	minioAPIPort      int
+	minioConsole      int
+	useDockerMinio    bool
+	keepData          bool
+	skipSyncCheck     bool
 	skipClientDaemons bool
-	reset           bool
+	reset             bool
 }
 
 func addExe(path string) string {
@@ -760,6 +761,11 @@ func setupBucket(apiPort int) error {
 		),
 		config.WithRegion(defaultRegion),
 		config.WithLogger(logging.Nop{}),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 10
+			})
+		}),
 	)
 	if err != nil {
 		return err
@@ -1002,7 +1008,7 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	}
 	_ = lf.Close()
 
-	return clientState{
+	state := clientState{
 		Email:     email,
 		PID:       cmd.Process.Pid,
 		Port:      port,
@@ -1012,7 +1018,28 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 		HomePath:  homeDir,
 		BinPath:   binPath,
 		ServerURL: serverURL,
-	}, nil
+	}
+
+	// Keep the persistent test suite aware of restarted/extra clients.
+	if suite.initialized {
+		if rootAbs, err := filepath.Abs(root); err == nil && rootAbs == suite.root {
+			suite.mu.Lock()
+			updated := false
+			for i := range suite.clients {
+				if suite.clients[i].Email == email {
+					suite.clients[i] = state
+					updated = true
+					break
+				}
+			}
+			if !updated {
+				suite.clients = append(suite.clients, state)
+			}
+			suite.mu.Unlock()
+		}
+	}
+
+	return state, nil
 }
 
 func runSyncCheck(root string, emails []string) error {
