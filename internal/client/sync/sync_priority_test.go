@@ -38,7 +38,6 @@ func TestSyncPriorityList_OutsideBaseDir_NotPrioritized(t *testing.T) {
 
 	outside := filepath.Join(t.TempDir(), "x.request")
 	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
-	// filepath.Rel returns a "../" relative path rather than erroring, so
-	// current behavior may still prioritize based on patterns.
-	assert.True(t, priority.ShouldPrioritize(outside))
+	// Paths outside baseDir should not be prioritized
+	assert.False(t, priority.ShouldPrioritize(outside))
 }

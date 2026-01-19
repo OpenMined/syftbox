@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -60,6 +61,13 @@ const (
 	cmdList   command = "list"
 	cmdPrune  command = "prune"
 )
+
+func windowsScaledTimeout(d time.Duration) time.Duration {
+	if runtime.GOOS == "windows" {
+		return d * 5
+	}
+	return d
+}
 
 type stackState struct {
 	Root     string         `json:"root"`
@@ -104,18 +112,18 @@ type clientState struct {
 }
 
 type startOptions struct {
-	root            string
-	clients         []string
-	randomPorts     bool
-	serverPort      int
-	clientPortStart int
-	minioAPIPort    int
-	minioConsole    int
-	useDockerMinio  bool
-	keepData        bool
-	skipSyncCheck   bool
+	root              string
+	clients           []string
+	randomPorts       bool
+	serverPort        int
+	clientPortStart   int
+	minioAPIPort      int
+	minioConsole      int
+	useDockerMinio    bool
+	keepData          bool
+	skipSyncCheck     bool
 	skipClientDaemons bool
-	reset           bool
+	reset             bool
 }
 
 func addExe(path string) string {
@@ -664,6 +672,7 @@ func startMinio(mode, binPath, root string, apiPort, consolePort int, keepData b
 		_ = f.Close()
 		return minioState{}, err
 	}
+	_ = f.Close()
 
 	if err := waitForMinio(apiPort); err != nil {
 		// MinIO may have failed to bind to the selected port; ensure the process is stopped
@@ -759,6 +768,11 @@ func setupBucket(apiPort int) error {
 		),
 		config.WithRegion(defaultRegion),
 		config.WithLogger(logging.Nop{}),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 10
+			})
+		}),
 	)
 	if err != nil {
 		return err
@@ -811,8 +825,10 @@ func startServer(binPath, relayRoot string, port, minioPort int) (serverState, e
 	cmd.Dir = relayRoot
 
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		return serverState{}, err
 	}
+	_ = f.Close()
 
 	return serverState{
 		PID:      cmd.Process.Pid,
@@ -994,10 +1010,12 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	)
 
 	if err := cmd.Start(); err != nil {
+		_ = lf.Close()
 		return clientState{}, err
 	}
+	_ = lf.Close()
 
-	return clientState{
+	state := clientState{
 		Email:     email,
 		PID:       cmd.Process.Pid,
 		Port:      port,
@@ -1007,7 +1025,37 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 		HomePath:  homeDir,
 		BinPath:   binPath,
 		ServerURL: serverURL,
-	}, nil
+	}
+
+	// Note: Updating suite.clients is handled by the caller (resetForTest/initPersistent)
+	// which already holds suite.mu. Acquiring the lock here would cause a deadlock.
+	updateStateForClient(root, state)
+
+	return state, nil
+}
+
+func updateStateForClient(root string, client clientState) {
+	state, path, err := readState(root)
+	if err != nil {
+		return
+	}
+
+	updated := false
+	for i := range state.Clients {
+		if state.Clients[i].Email == client.Email {
+			state.Clients[i] = client
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		state.Clients = append(state.Clients, client)
+	}
+
+	if err := writeState(path, state); err != nil {
+		return
+	}
+	_ = saveGlobalState(root, state)
 }
 
 func runSyncCheck(root string, emails []string) error {
@@ -1023,22 +1071,43 @@ func runSyncCheck(root string, emails []string) error {
 	if err := os.MkdirAll(publicDir, 0o755); err != nil {
 		return fmt.Errorf("ensure source public dir: %w", err)
 	}
-	if err := waitForDir(publicDir, 15*time.Second); err != nil {
-		fmt.Printf("Sync probe note: source public dir not ready (%s): %v\n", publicDir, err)
-		return nil
+	if err := waitForDir(publicDir, windowsScaledTimeout(15*time.Second)); err != nil {
+		return fmt.Errorf("source public dir not ready (%s): %w", publicDir, err)
+	}
+
+	aclPath := filepath.Join(publicDir, "syft.pub.yaml")
+	if err := waitForFile(aclPath, "", windowsScaledTimeout(15*time.Second)); err != nil {
+		return fmt.Errorf("source public ACL not ready (%s): %w", aclPath, err)
+	}
+	aclContent, err := os.ReadFile(aclPath)
+	if err != nil {
+		return fmt.Errorf("read source public ACL (%s): %w", aclPath, err)
+	}
+
+	for _, email := range emails[1:] {
+		peerACL := filepath.Join(root, email, "datasites", src, "public", "syft.pub.yaml")
+		if err := waitForFile(peerACL, string(aclContent), windowsScaledTimeout(30*time.Second)); err != nil {
+			return fmt.Errorf("wait for public ACL from %s on %s: %w", src, email, err)
+		}
 	}
 
 	filePath := filepath.Join(publicDir, filename)
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
-		fmt.Printf("Sync probe note: write failed: %v\n", err)
-		return nil
+		return fmt.Errorf("sync probe write failed: %w", err)
 	}
 
-	// Touch the file via the server to trigger notifications
-	if err := waitForServerReady(root, 15*time.Second); err != nil {
+	// Wait for server to be ready
+	if err := waitForServerReady(root, windowsScaledTimeout(15*time.Second)); err != nil {
 		return fmt.Errorf("wait for server: %w", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+
+	// Wait for Alice's client to upload the probe file to the server
+	blobKey := fmt.Sprintf("%s/public/%s", src, filename)
+	if err := waitForBlobOnServer(root, blobKey, windowsScaledTimeout(30*time.Second)); err != nil {
+		return fmt.Errorf("wait for blob on server: %w", err)
+	}
+
+	// Trigger downloads to speed up sync
 	if err := triggerDownloadForAll(root, emails, filename); err != nil {
 		fmt.Printf("Sync probe trigger note: %v (continuing)\n", err)
 	}
@@ -1048,14 +1117,99 @@ func runSyncCheck(root string, emails []string) error {
 		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
-		if err := waitForFile(target, content, 45*time.Second); err != nil {
-			fmt.Printf("Sync probe note: %s did not see probe yet (%v)\n", email, err)
-			return nil
+		if err := waitForFile(target, content, windowsScaledTimeout(45*time.Second)); err != nil {
+			// Debug: dump client state on failure
+			debugSyncCheckFailure(root, email, src, filename)
+			return fmt.Errorf("sync probe not replicated to %s (%s): %w", email, target, err)
 		}
 	}
 
 	fmt.Printf("Sync check passed (%s replicated to %d clients)\n", filename, len(emails)-1)
 	return nil
+}
+
+// debugSyncCheckFailure dumps diagnostic information when a sync check fails.
+func debugSyncCheckFailure(root, email, src, filename string) {
+	fmt.Printf("\n[DEBUG] Sync check failure diagnostics for %s:\n", email)
+
+	// Check if client process is running
+	state, _, err := readState(root)
+	if err != nil {
+		fmt.Printf("[DEBUG]   Could not read state: %v\n", err)
+	} else {
+		for _, c := range state.Clients {
+			if c.Email == email {
+				fmt.Printf("[DEBUG]   Client PID: %d\n", c.PID)
+				// Check if process exists
+				if proc, err := os.FindProcess(c.PID); err == nil {
+					// On Unix, FindProcess always succeeds; need to send signal 0 to check
+					// On Windows, FindProcess returns error if process doesn't exist
+					fmt.Printf("[DEBUG]   Process found (may or may not be running): %v\n", proc)
+				}
+
+				// Dump last 50 lines of client log
+				logPath := c.LogPath
+				if logPath == "" {
+					logPath = filepath.Join(root, email, ".syftbox", "logs", "syftbox.log")
+				}
+				if logData, err := os.ReadFile(logPath); err == nil {
+					lines := strings.Split(string(logData), "\n")
+					start := len(lines) - 50
+					if start < 0 {
+						start = 0
+					}
+					fmt.Printf("[DEBUG]   Last %d log lines from %s:\n", len(lines)-start, logPath)
+					for _, line := range lines[start:] {
+						if line != "" {
+							fmt.Printf("[DEBUG]     %s\n", line)
+						}
+					}
+				} else {
+					fmt.Printf("[DEBUG]   Could not read log file %s: %v\n", logPath, err)
+				}
+				break
+			}
+		}
+	}
+
+	// List datasites directory
+	datasitesDir := filepath.Join(root, email, "datasites")
+	fmt.Printf("[DEBUG]   Datasites directory: %s\n", datasitesDir)
+	if entries, err := os.ReadDir(datasitesDir); err == nil {
+		fmt.Printf("[DEBUG]   Contains %d entries:\n", len(entries))
+		for _, e := range entries {
+			fmt.Printf("[DEBUG]     - %s\n", e.Name())
+		}
+	} else {
+		fmt.Printf("[DEBUG]   Could not read datasites dir: %v\n", err)
+	}
+
+	// Check source's public directory on this client
+	srcPublicDir := filepath.Join(root, email, "datasites", src, "public")
+	fmt.Printf("[DEBUG]   Source public dir: %s\n", srcPublicDir)
+	if entries, err := os.ReadDir(srcPublicDir); err == nil {
+		fmt.Printf("[DEBUG]   Contains %d entries:\n", len(entries))
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				fmt.Printf("[DEBUG]     - %s (size=%d, mod=%s)\n", e.Name(), info.Size(), info.ModTime().Format(time.RFC3339))
+			} else {
+				fmt.Printf("[DEBUG]     - %s\n", e.Name())
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG]   Could not read source public dir: %v\n", err)
+	}
+
+	// Check sync journal
+	journalPath := filepath.Join(root, email, ".data", "sync.db")
+	if _, err := os.Stat(journalPath); err == nil {
+		fmt.Printf("[DEBUG]   Sync journal exists at %s\n", journalPath)
+	} else {
+		fmt.Printf("[DEBUG]   Sync journal NOT found at %s: %v\n", journalPath, err)
+	}
+
+	fmt.Printf("[DEBUG] End of diagnostics for %s\n\n", email)
 }
 
 func publicPath(root, email string) string {
@@ -1095,14 +1249,49 @@ func waitForDir(path string, timeout time.Duration) error {
 
 func waitForFile(path, want string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	attempts := 0
+	var lastErr error
+	var lastContent string
 	for time.Now().Before(deadline) {
+		attempts++
 		data, err := os.ReadFile(path)
-		if err == nil && string(data) == want {
+		if err == nil && (want == "" || string(data) == want) {
+			fmt.Printf("[DEBUG] waitForFile: found %s after %d attempts\n", path, attempts)
 			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastContent = string(data)
+		}
+		// Log every 10 attempts (5 seconds)
+		if attempts%10 == 0 {
+			if lastErr != nil {
+				fmt.Printf("[DEBUG] waitForFile: waiting for %s attempt=%d err=%v\n", path, attempts, lastErr)
+			} else {
+				fmt.Printf("[DEBUG] waitForFile: waiting for %s attempt=%d content_len=%d want_len=%d\n",
+					path, attempts, len(lastContent), len(want))
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("file not found or mismatched: %s", path)
+	// Final debug dump on timeout
+	parentDir := filepath.Dir(path)
+	fmt.Printf("[DEBUG] waitForFile TIMEOUT: path=%s attempts=%d\n", path, attempts)
+	if entries, err := os.ReadDir(parentDir); err == nil {
+		fmt.Printf("[DEBUG] waitForFile TIMEOUT: parent=%s contents:\n", parentDir)
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				fmt.Printf("[DEBUG]   - %s (size=%d)\n", e.Name(), info.Size())
+			} else {
+				fmt.Printf("[DEBUG]   - %s\n", e.Name())
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG] waitForFile TIMEOUT: parent=%s does not exist: %v\n", parentDir, err)
+	}
+	return fmt.Errorf("file not found or mismatched: %s (attempts=%d)", path, attempts)
 }
 
 func waitForServerReady(root string, timeout time.Duration) error {
@@ -1416,19 +1605,6 @@ func listActiveStacks() error {
 	return nil
 }
 
-// processExists checks if a process is running
-func processExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
-}
-
 func killProcess(pid int) error {
 	if pid <= 0 {
 		return nil
@@ -1511,6 +1687,46 @@ func getWithRetry(url string, timeout time.Duration) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fmt.Errorf("server not ready at %s", url)
+}
+
+// waitForBlobOnServer polls MinIO directly until the blob exists or timeout.
+func waitForBlobOnServer(root, blobKey string, timeout time.Duration) error {
+	state, _, err := readState(root)
+	if err != nil {
+		return err
+	}
+
+	// Create S3 client pointing to MinIO
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", state.Minio.APIPort)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(defaultMinioAdminUser, defaultMinioAdminPassword, ""),
+		),
+		config.WithRegion(defaultRegion),
+	)
+	if err != nil {
+		return fmt.Errorf("load aws config: %w", err)
+	}
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
+	})
+
+	fmt.Printf("Waiting for blob %s in MinIO (timeout %v)...\n", blobKey, timeout)
+	start := time.Now()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := s3Client.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(blobKey),
+		})
+		if err == nil {
+			fmt.Printf("Blob %s found in MinIO after %v\n", blobKey, time.Since(start))
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("blob %s not found in MinIO after %v", blobKey, timeout)
 }
 
 func copyFile(src, dst string) error {

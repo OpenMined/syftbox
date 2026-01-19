@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -405,8 +406,13 @@ rules:
 			updateACLState(target.email, []string{})
 
 			// Don't wait for ACL propagation - owner-only ACL won't be sent to peers
-			// Just wait for the ACL to be uploaded to server
-			time.Sleep(500 * time.Millisecond)
+			// Just wait for the ACL to be uploaded to server.
+			// On Windows, file watcher + sync cycle takes longer.
+			aclUploadWait := 500 * time.Millisecond
+			if runtime.GOOS == "windows" {
+				aclUploadWait = 3 * time.Second
+			}
+			time.Sleep(aclUploadWait)
 
 			name := fmt.Sprintf("acl-revoke-%d.txt", i)
 			payload := GenerateRandomFile(2 * 1024)
@@ -732,7 +738,7 @@ rules:
 			// Start download in background
 			downloadDone := make(chan error, 1)
 			go func() {
-				downloadDone <- receiver.WaitForFile(sender.email, name, md5, 15*time.Second)
+				downloadDone <- receiver.WaitForFile(sender.email, name, md5, windowsTimeout(15*time.Second))
 			}()
 
 			// Delete after short delay (while download may be in progress)
@@ -861,7 +867,7 @@ rules:
 			downloadDone := make(chan error, 1)
 			var downloadedMD5 string
 			go func() {
-				err := receiver.WaitForFile(sender.email, name, v1MD5, 15*time.Second)
+				err := receiver.WaitForFile(sender.email, name, v1MD5, windowsTimeout(15*time.Second))
 				if err == nil {
 					// Read what receiver got
 					path := filepath.Join(receiver.dataDir, "datasites", sender.email, "public", name)
@@ -926,9 +932,9 @@ rules:
 				app := parts[1]
 				endpoint := parts[3]
 				filename := parts[len(parts)-1]
-				err = client.WaitForRPCRequest(info.owner, app, endpoint, filename, info.md5, 10*time.Second)
+				err = client.WaitForRPCRequest(info.owner, app, endpoint, filename, info.md5, windowsTimeout(10*time.Second))
 			} else {
-				err = client.WaitForFile(info.owner, info.path, info.md5, 10*time.Second)
+				err = client.WaitForFile(info.owner, info.path, info.md5, windowsTimeout(10*time.Second))
 			}
 			if err != nil {
 				t.Fatalf("convergence failure: %s@%s missing %s (%s): %v",
@@ -954,12 +960,27 @@ func assertReplicated(t *testing.T, sender *ClientHelper, clients []*ClientHelpe
 func assertNotReplicated(c *ClientHelper, senderEmail, relPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	path := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
+	attempts := 0
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
+		attempts++
+		info, err := os.Stat(path)
+		if err == nil {
+			fmt.Printf("[DEBUG] assertNotReplicated FAIL: %s unexpectedly received %s from %s (size=%d, attempt=%d)\n",
+				c.email, relPath, senderEmail, info.Size(), attempts)
+			// Dump parent directory
+			parentDir := filepath.Dir(path)
+			if entries, err := os.ReadDir(parentDir); err == nil {
+				fmt.Printf("[DEBUG] assertNotReplicated: parent dir %s contents:\n", parentDir)
+				for _, e := range entries {
+					fmt.Printf("[DEBUG]   - %s\n", e.Name())
+				}
+			}
 			return fmt.Errorf("unexpected presence: %s", path)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	fmt.Printf("[DEBUG] assertNotReplicated OK: %s did not receive %s from %s after %d checks\n",
+		c.email, relPath, senderEmail, attempts)
 	return nil
 }
 

@@ -315,7 +315,11 @@ func TestAclServiceCanAccess(t *testing.T) {
 	err = service.CanAccess(req)
 	assert.ErrorIs(t, err, ErrNoReadAccess)
 
-	// ACL files should have special handling
+	// ACL files should follow read rules but require admin for writes
+	req = NewRequestWithFile(aclspec.AsACLPath("user1@email.com"), regularUser, AccessRead, aclFile)
+	err = service.CanAccess(req)
+	assert.ErrorIs(t, err, ErrNoReadAccess)
+
 	req = NewRequestWithFile(aclspec.AsACLPath("user1@email.com"), regularUser, AccessWrite, aclFile)
 	err = service.CanAccess(req)
 	assert.ErrorIs(t, err, ErrNoAdminAccess)

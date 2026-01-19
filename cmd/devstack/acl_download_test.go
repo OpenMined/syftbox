@@ -46,7 +46,7 @@ func TestACLEnablesDownload(t *testing.T) {
 	// Step 4: Bob should receive the file via periodic sync
 	// This verifies the server loaded Alice's ACL rules correctly
 	t.Log("Step 4: Bob waiting for file (15s timeout)...")
-	if err := h.bob.WaitForFile(h.alice.email, filename, md5Hash, 15*time.Second); err != nil {
+	if err := h.bob.WaitForFile(h.alice.email, filename, md5Hash, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob sync failed: %v\n\nThis likely means the server didn't load Alice's ACL rules when they were uploaded.", err)
 	}
 

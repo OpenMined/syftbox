@@ -193,6 +193,15 @@ func marshalMsgpack(msg *syftmsg.Message) ([]byte, error) {
 		default:
 			return nil, fmt.Errorf("invalid file notify payload type: %T", msg.Data)
 		}
+	case syftmsg.MsgACLManifest:
+		switch v := msg.Data.(type) {
+		case syftmsg.ACLManifest:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.ACLManifest:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid ACL manifest payload type: %T", msg.Data)
+		}
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msg.Type)
 	}
@@ -262,6 +271,12 @@ func unmarshalMsgpack(payload []byte) (*syftmsg.Message, error) {
 			return nil, err
 		}
 		msg.Data = fn
+	case syftmsg.MsgACLManifest:
+		var manifest syftmsg.ACLManifest
+		if err := msgpack.Unmarshal(w.Data, &manifest); err != nil {
+			return nil, err
+		}
+		msg.Data = &manifest
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", w.Type)
 	}

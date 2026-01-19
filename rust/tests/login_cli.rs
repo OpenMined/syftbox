@@ -58,8 +58,25 @@ fn login_already_logged_in_prints_config() {
     assert!(stdout.contains("Already logged in"));
     assert!(stdout.contains("SYFTBOX DATASITE CONFIG"));
     assert!(stdout.contains(email));
-    // CLI outputs native path format, so check for the original path (not the JSON-escaped version)
-    assert!(stdout.contains(&data_dir.display().to_string()));
+    // On Windows, paths may differ due to:
+    // - UNC prefix (\\?\C:\...)
+    // - Short 8.3 format (C:\Users\RUNNER~1\...)
+    // - Forward vs backslashes
+    // Canonicalize to get the full path, then check for various formats.
+    let canonical_data_dir = std::fs::canonicalize(&data_dir).unwrap_or_else(|_| data_dir.clone());
+    let data_dir_str = canonical_data_dir.display().to_string();
+    // Strip UNC prefix if present for comparison
+    let data_dir_no_unc = data_dir_str
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&data_dir_str)
+        .to_string();
+    let data_dir_forward = data_dir_no_unc.replace('\\', "/");
+    assert!(
+        stdout.contains(&data_dir_str)
+            || stdout.contains(&data_dir_no_unc)
+            || stdout.contains(&data_dir_forward),
+        "stdout should contain data_dir path: stdout={stdout}, canonical={data_dir_str}, no_unc={data_dir_no_unc}, forward={data_dir_forward}"
+    );
 }
 
 #[test]

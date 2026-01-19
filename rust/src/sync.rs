@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
+use crate::acl_staging::ACLStagingManager;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
 use crate::http::{ApiClient, BlobInfo, HttpStatusError, PresignedParams};
@@ -56,13 +57,29 @@ CREATE TABLE IF NOT EXISTS sync_journal (
     local_etag TEXT NOT NULL DEFAULT '',
     version TEXT NOT NULL,
     size INTEGER NOT NULL,
-    last_modified TEXT NOT NULL
+    last_modified TEXT NOT NULL,
+    completed_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_journal_path ON sync_journal(path);
 CREATE INDEX IF NOT EXISTS idx_journal_etag ON sync_journal(etag);
 CREATE INDEX IF NOT EXISTS idx_journal_last_modified ON sync_journal(last_modified);
 "#;
+
+/// Ensure the completed_at column exists (migration for existing databases).
+fn ensure_completed_at_column(conn: &rusqlite::Connection) -> Result<()> {
+    let has_column: bool = conn
+        .prepare("SELECT completed_at FROM sync_journal LIMIT 1")
+        .is_ok();
+    if !has_column {
+        conn.execute(
+            "ALTER TABLE sync_journal ADD COLUMN completed_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .context("add completed_at column")?;
+    }
+    Ok(())
+}
 
 pub(crate) struct SyncJournal {
     db_path: PathBuf,
@@ -83,10 +100,11 @@ impl SyncJournal {
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
         ensure_local_etag_column(&conn).context("migrate sync journal")?;
+        ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
         let mut state = JournalState::default();
         let mut stmt = conn.prepare(
-            "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal",
+            "SELECT path, size, etag, local_etag, version, last_modified, completed_at FROM sync_journal",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -96,6 +114,7 @@ impl SyncJournal {
             let local_etag: String = row.get(3)?;
             let version: String = row.get(4)?;
             let last_modified: String = row.get(5)?;
+            let completed_at: i64 = row.get(6)?;
 
             let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
             state.files.insert(
@@ -106,7 +125,7 @@ impl SyncJournal {
                     size,
                     last_modified: lm_epoch,
                     version,
-                    completed_at: 0,
+                    completed_at,
                 },
             );
         }
@@ -129,10 +148,11 @@ impl SyncJournal {
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
         ensure_local_etag_column(&conn).context("migrate sync journal")?;
+        ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
         let mut next = HashMap::new();
         let mut stmt = conn.prepare(
-            "SELECT path, size, etag, local_etag, version, last_modified FROM sync_journal",
+            "SELECT path, size, etag, local_etag, version, last_modified, completed_at FROM sync_journal",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
@@ -142,14 +162,9 @@ impl SyncJournal {
             let local_etag: String = row.get(3)?;
             let version: String = row.get(4)?;
             let last_modified: String = row.get(5)?;
+            let completed_at: i64 = row.get(6)?;
 
             let lm_epoch = parse_rfc3339_epoch(&last_modified).unwrap_or(0);
-            let completed_at = self
-                .state
-                .files
-                .get(&path)
-                .map(|m| m.completed_at)
-                .unwrap_or(0);
             next.insert(
                 path,
                 FileMetadata {
@@ -179,6 +194,7 @@ impl SyncJournal {
         conn.execute_batch(SYNC_JOURNAL_SCHEMA)
             .context("init sync journal schema")?;
         ensure_local_etag_column(&conn).context("migrate sync journal")?;
+        ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
         let tx = conn.transaction().context("begin sync journal tx")?;
         {
@@ -190,7 +206,7 @@ impl SyncJournal {
 
         {
             let mut upsert_stmt = tx.prepare(
-                "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified, completed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )?;
             for key in &self.dirty {
                 if let Some(meta) = self.state.files.get(key) {
@@ -201,7 +217,8 @@ impl SyncJournal {
                         meta.etag,
                         meta.local_etag,
                         meta.version,
-                        last_modified
+                        last_modified,
+                        meta.completed_at
                     ])?;
                 }
             }
@@ -275,6 +292,7 @@ pub(crate) fn journal_upsert_direct(
     size: i64,
     last_modified_epoch: i64,
 ) -> Result<()> {
+    let completed_at = chrono::Utc::now().timestamp();
     if std::env::var("SYFTBOX_DEBUG_JOURNAL").is_ok() && key.contains("jg-file-") {
         crate::logging::info(format!(
             "debug journal upsert key={key} etag={} size={size}",
@@ -291,11 +309,12 @@ pub(crate) fn journal_upsert_direct(
     conn.execute_batch(SYNC_JOURNAL_SCHEMA)
         .context("init sync journal schema")?;
     ensure_local_etag_column(&conn).context("migrate sync journal")?;
+    ensure_completed_at_column(&conn).context("migrate sync journal completed_at")?;
 
     let last_modified = epoch_to_rfc3339(last_modified_epoch);
     conn.execute(
-        "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![key, size, etag, local_etag, "", last_modified],
+        "INSERT OR REPLACE INTO sync_journal (path, size, etag, local_etag, version, last_modified, completed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![key, size, etag, local_etag, "", last_modified, completed_at],
     )
     .context("upsert sync journal row")?;
 
@@ -329,6 +348,7 @@ fn ensure_local_etag_column(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_once_with_control(
     api: &ApiClient,
     data_dir: &Path,
@@ -337,6 +357,7 @@ pub async fn sync_once_with_control(
     filters: &SyncFilters,
     local_scanner: &mut LocalScanner,
     journal: &mut SyncJournal,
+    acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) -> Result<()> {
     journal
         .refresh_from_disk()
@@ -375,6 +396,15 @@ pub async fn sync_once_with_control(
     let mut remote_deletes = Vec::new();
     let mut local_deletes = Vec::new();
     let mut conflicts = Vec::new();
+
+    // Windows debug: log counts before reconciliation
+    crate::logging::info(format!(
+        "sync reconcile start: local_count={} remote_count={} journal_count={} all_keys={}",
+        local.len(),
+        remote.len(),
+        journal.state.files.len(),
+        all_keys.len()
+    ));
 
     for key in all_keys {
         if !is_synced_key(&key) {
@@ -454,7 +484,27 @@ pub async fn sync_once_with_control(
         let local_created = local_exists && !journal_exists && !remote_exists;
         let remote_created = !local_exists && !journal_exists && remote_exists;
         let local_deleted = !local_exists && journal_exists && remote_exists;
-        let remote_deleted = local_exists && journal_exists && !remote_exists;
+        // remote_deleted: file exists locally and in journal but not remotely.
+        // Skip deletion if this is a pending ACL file delivered via WebSocket
+        // that hasn't been reflected in remote state yet (matches Go's IsPendingACLPath behavior).
+        let remote_deleted = local_exists && journal_exists && !remote_exists && {
+            // Check if this is a pending ACL path - if so, don't treat as deleted
+            !acl_staging.is_pending_acl_path(&key)
+        };
+
+        // Debug: log state for files that will be deleted or have interesting state
+        if local_deleted || remote_deleted || (local_exists && remote_exists && !journal_exists) {
+            let local_etag = local_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            let remote_etag = remote_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            let journal_etag = journal_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            let is_pending_acl = acl_staging.is_pending_acl_path(&key);
+            crate::logging::info(format!(
+                "sync state key={} local={} remote={} journal={} local_deleted={} remote_deleted={} pending_acl={} local_etag={} remote_etag={} journal_etag={}",
+                key, local_exists, remote_exists, journal_exists,
+                local_deleted, remote_deleted, is_pending_acl,
+                local_etag, remote_etag, journal_etag
+            ));
+        }
 
         let local_modified =
             local_exists && has_modified_local(is_owner, local_meta.unwrap(), journal_meta);
@@ -505,6 +555,16 @@ pub async fn sync_once_with_control(
             local_deletes.push(key);
         }
     }
+
+    // Windows debug: log action summary
+    crate::logging::info(format!(
+        "sync actions: uploads={} downloads={} remote_deletes={} local_deletes={} conflicts={}",
+        upload_keys.len(),
+        download_keys_list.len(),
+        remote_deletes.len(),
+        local_deletes.len(),
+        conflicts.len()
+    ));
 
     // Conflicts: mark local file as conflicted (rename), leave remote unchanged.
     for key in conflicts {
@@ -621,9 +681,17 @@ pub async fn sync_once_with_control(
 
     // Remote deletes
     if !remote_deletes.is_empty() {
+        crate::logging::info(format!(
+            "sync remote_deletes count={} keys={:?}",
+            remote_deletes.len(),
+            remote_deletes
+        ));
         if let Err(err) = api.delete_blobs(&remote_deletes).await {
             crate::logging::error(format!("sync remote delete error: {err:?}"));
         } else {
+            for key in &remote_deletes {
+                crate::logging::info(format!("sync remote_delete success key={}", key));
+            }
             for key in remote_deletes {
                 journal.delete(&key);
             }
@@ -631,14 +699,43 @@ pub async fn sync_once_with_control(
     }
 
     // Local deletes
+    if !local_deletes.is_empty() {
+        crate::logging::info(format!(
+            "sync local_deletes count={} keys={:?}",
+            local_deletes.len(),
+            local_deletes
+        ));
+    }
     for key in local_deletes {
         let abs = datasites_root.join(&key);
+        crate::logging::info(format!(
+            "sync local_delete key={} path={} exists={}",
+            key,
+            abs.display(),
+            abs.exists()
+        ));
         if abs.exists() {
             let meta = fs::metadata(&abs)?;
             if meta.is_dir() {
-                let _ = fs::remove_dir_all(&abs);
+                match fs::remove_dir_all(&abs) {
+                    Ok(()) => {
+                        crate::logging::info(format!("sync local_delete removed dir key={}", key))
+                    }
+                    Err(e) => crate::logging::error(format!(
+                        "sync local_delete dir failed key={} err={:?}",
+                        key, e
+                    )),
+                }
             } else {
-                let _ = fs::remove_file(&abs);
+                match fs::remove_file(&abs) {
+                    Ok(()) => {
+                        crate::logging::info(format!("sync local_delete removed file key={}", key))
+                    }
+                    Err(e) => crate::logging::error(format!(
+                        "sync local_delete file failed key={} err={:?}",
+                        key, e
+                    )),
+                }
             }
         }
         journal.delete(&key);
@@ -830,20 +927,66 @@ async fn stage_downloads(
 }
 
 async fn commit_staged_downloads(staged: Vec<StagedDownload>) -> Result<()> {
+    crate::logging::info(format!("commit_staged_downloads count={}", staged.len()));
     for item in staged {
-        if item.target.exists() {
+        let target_exists = item.target.exists();
+        crate::logging::info(format!(
+            "commit_staged_download tmp={} target={} target_exists={}",
+            item.tmp.display(),
+            item.target.display(),
+            target_exists
+        ));
+        if target_exists {
             let meta = fs::metadata(&item.target)?;
             if meta.is_dir() {
-                fs::remove_dir_all(&item.target)?;
+                match fs::remove_dir_all(&item.target) {
+                    Ok(()) => crate::logging::info(format!(
+                        "commit_staged removed dir target={}",
+                        item.target.display()
+                    )),
+                    Err(e) => {
+                        crate::logging::error(format!(
+                            "commit_staged remove dir failed target={} err={:?}",
+                            item.target.display(),
+                            e
+                        ));
+                        return Err(e.into());
+                    }
+                }
             } else {
-                let _ = fs::remove_file(&item.target);
+                match fs::remove_file(&item.target) {
+                    Ok(()) => crate::logging::info(format!(
+                        "commit_staged removed file target={}",
+                        item.target.display()
+                    )),
+                    Err(e) => crate::logging::error(format!(
+                        "commit_staged remove file failed (continuing) target={} err={:?}",
+                        item.target.display(),
+                        e
+                    )),
+                }
             }
         }
-        tokio::fs::rename(&item.tmp, &item.target)
-            .await
-            .with_context(|| {
-                format!("rename {} -> {}", item.tmp.display(), item.target.display())
-            })?;
+        match tokio::fs::rename(&item.tmp, &item.target).await {
+            Ok(()) => crate::logging::info(format!(
+                "commit_staged rename success target={}",
+                item.target.display()
+            )),
+            Err(e) => {
+                crate::logging::error(format!(
+                    "commit_staged rename failed tmp={} target={} err={:?}",
+                    item.tmp.display(),
+                    item.target.display(),
+                    e
+                ));
+                return Err(anyhow::anyhow!(
+                    "rename {} -> {}: {}",
+                    item.tmp.display(),
+                    item.target.display(),
+                    e
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -959,6 +1102,28 @@ fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {
     filters.ignore.should_ignore_rel(Path::new(key), false) || SyncFilters::is_marked_rel_path(key)
 }
 
+fn strip_datasites_prefix(datasites_root: &Path, path: &Path) -> Result<PathBuf> {
+    if let Ok(rel) = path.strip_prefix(datasites_root) {
+        return Ok(rel.to_path_buf());
+    }
+    let root_resolved = resolve_path(datasites_root);
+    let path_resolved = resolve_path(path);
+    path_resolved
+        .strip_prefix(&root_resolved)
+        .map(|rel| rel.to_path_buf())
+        .with_context(|| {
+            format!(
+                "strip prefix {} from {}",
+                root_resolved.display(),
+                path.display()
+            )
+        })
+}
+
+fn resolve_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 #[derive(Clone, Debug)]
 struct LocalScanCacheEntry {
     size: i64,
@@ -995,10 +1160,9 @@ impl LocalScanner {
                 continue;
             }
             let path = entry.path();
-            let rel = path
-                .strip_prefix(datasites_root)
+            let rel = strip_datasites_prefix(datasites_root, path)
                 .with_context(|| format!("strip prefix {}", path.display()))?;
-            if filters.ignore.should_ignore_rel(rel, false) {
+            if filters.ignore.should_ignore_rel(&rel, false) {
                 continue;
             }
             // Normalize path separators to forward slashes for cross-platform key consistency
@@ -1056,14 +1220,35 @@ impl LocalScanner {
 async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<String, BlobInfo>> {
     let mut out = HashMap::new();
     let view = api.datasite_view().await?;
+
+    // Debug: log raw file count from server
+    let total_files = view.files.len();
+    let mut ignored_count = 0;
+    let mut filtered_count = 0;
+
     for file in view.files {
         if should_ignore_key(filters, &file.key) {
+            ignored_count += 1;
             continue;
         }
         if is_synced_key(&file.key) && !is_marked_key(&file.key) {
             out.insert(file.key.clone(), file);
+        } else {
+            filtered_count += 1;
         }
     }
+
+    // Log if we're seeing fewer files than expected
+    if total_files > 0 {
+        crate::logging::info(format!(
+            "scan_remote: server returned {} files, ignored={}, filtered={}, kept={}",
+            total_files,
+            ignored_count,
+            filtered_count,
+            out.len()
+        ));
+    }
+
     Ok(out)
 }
 

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,18 +91,48 @@ func TestDeleteDuringDownload(t *testing.T) {
 	}
 
 	// Step 6: Eventually bob should sync the deletion
+	// On Windows, delete propagation can take longer due to the 30-second grace window
+	// for remote_deleted detection, plus additional sync cycles needed.
 	t.Log("Step 6: Verify bob eventually deletes the file")
-	// Full propagation chain: file watcher delay (up to 5s) → alice syncs deletion → server notifies bob → bob syncs
-	// Account for: watcher delay (~5s) + alice sync (~1s) + bob sync (worst case 10s idle, but push notification helps)
-	// Total: ~11s, use 15s for safety margin
-	time.Sleep(15 * time.Second)
-
 	bobFilePath := filepath.Join(h.bob.dataDir, "datasites", h.alice.email, "public", filename)
-	if _, err := os.Stat(bobFilePath); err == nil {
-		t.Error("❌ Bob still has file after deletion propagated")
-	} else if os.IsNotExist(err) {
+	deleteTimeout := windowsTimeout(60 * time.Second)
+	if err := waitForFileGone(bobFilePath, deleteTimeout); err != nil {
+		t.Error(err.Error())
+	} else {
 		t.Log("✅ Bob deleted file successfully")
 	}
+}
+
+func waitForFileGone(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	attempts := 0
+	for time.Now().Before(deadline) {
+		attempts++
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			fmt.Printf("[DEBUG] waitForFileGone: file gone after %d attempts path=%s\n", attempts, path)
+			return nil
+		}
+		if err != nil {
+			fmt.Printf("[DEBUG] waitForFileGone: stat error attempt=%d path=%s err=%v\n", attempts, path, err)
+		} else {
+			fmt.Printf("[DEBUG] waitForFileGone: file still exists attempt=%d path=%s size=%d\n", attempts, path, info.Size())
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	// Final debug: list parent directory
+	parentDir := filepath.Dir(path)
+	entries, _ := os.ReadDir(parentDir)
+	fmt.Printf("[DEBUG] waitForFileGone: TIMEOUT parent=%s contents:\n", parentDir)
+	for _, e := range entries {
+		info, _ := e.Info()
+		if info != nil {
+			fmt.Printf("[DEBUG]   - %s (size=%d)\n", e.Name(), info.Size())
+		} else {
+			fmt.Printf("[DEBUG]   - %s\n", e.Name())
+		}
+	}
+	return fmt.Errorf("❌ File still present after %d attempts (timeout=%v): %s", attempts, timeout, path)
 }
 
 // TestACLChangeDuringUpload tests the race condition where ACL permissions

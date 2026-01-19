@@ -83,6 +83,12 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = fileNotify
+	case MsgACLManifest:
+		var manifest ACLManifest
+		if err := json.Unmarshal(temp.Data, &manifest); err != nil {
+			return err
+		}
+		m.Data = &manifest
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}

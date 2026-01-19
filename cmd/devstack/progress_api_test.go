@@ -509,8 +509,52 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), windowsTimeout(45*time.Second))
 	defer cancel()
+
+	getWithRetry := func(url string) *http.Response {
+		t.Helper()
+		for {
+			select {
+			case <-ctx.Done():
+				t.Fatalf("timed out waiting for GET %s", url)
+			default:
+			}
+			resp, err := httpGetWithAuth(url, authToken)
+			if err != nil {
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				resp.Body.Close()
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			return resp
+		}
+	}
+
+	postWithRetry := func(url string) *http.Response {
+		t.Helper()
+		for {
+			select {
+			case <-ctx.Done():
+				t.Fatalf("timed out waiting for POST %s", url)
+			default:
+			}
+			resp, err := httpPostWithAuth(url, authToken, nil)
+			if err != nil {
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			if resp.StatusCode == http.StatusTooManyRequests {
+				resp.Body.Close()
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+			return resp
+		}
+	}
 
 	waitForUploadID := func(wantSuffix string) string {
 		t.Helper()
@@ -522,11 +566,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 			default:
 			}
 
-			uploadResp, err := httpGetWithAuth(aliceClientURL+"/v1/uploads/", authToken)
-			if err != nil {
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
+			uploadResp := getWithRetry(aliceClientURL + "/v1/uploads/")
 			var uploads UploadListResponse
 			if err := json.NewDecoder(uploadResp.Body).Decode(&uploads); err != nil {
 				uploadResp.Body.Close()
@@ -550,10 +590,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 
 	getUpload := func(id string) UploadInfoResponse {
 		t.Helper()
-		uResp, err := httpGetWithAuth(aliceClientURL+"/v1/uploads/"+id, authToken)
-		if err != nil {
-			t.Fatalf("failed to get upload: %v", err)
-		}
+		uResp := getWithRetry(aliceClientURL + "/v1/uploads/" + id)
 		defer uResp.Body.Close()
 		if uResp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(uResp.Body)
@@ -574,11 +611,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 				t.Fatalf("timed out waiting for sync status completed for %s", wantSuffix)
 			default:
 			}
-			sResp, err := httpGetWithAuth(aliceClientURL+"/v1/sync/status", authToken)
-			if err != nil {
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
+			sResp := getWithRetry(aliceClientURL + "/v1/sync/status")
 			var status SyncStatusResponse
 			if err := json.NewDecoder(sResp.Body).Decode(&status); err != nil {
 				sResp.Body.Close()
@@ -600,10 +633,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 	var uploadID string
 	uploadID = waitForUploadID("/public/pause-resume-test.bin")
 
-	pauseResp, err := httpPostWithAuth(aliceClientURL+"/v1/uploads/"+uploadID+"/pause", authToken, nil)
-	if err != nil {
-		t.Fatalf("failed to pause upload: %v", err)
-	}
+	pauseResp := postWithRetry(aliceClientURL + "/v1/uploads/" + uploadID + "/pause")
 	if pauseResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(pauseResp.Body)
 		pauseResp.Body.Close()
@@ -623,10 +653,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 	u2 := getUpload(uploadID)
 	t.Logf("Paused upload progress: before=%.2f%% after=%.2f%% state=%s", u1.Progress, u2.Progress, u2.State)
 
-	resumeResp, err := httpPostWithAuth(aliceClientURL+"/v1/uploads/"+uploadID+"/resume", authToken, nil)
-	if err != nil {
-		t.Fatalf("failed to resume upload: %v", err)
-	}
+	resumeResp := postWithRetry(aliceClientURL + "/v1/uploads/" + uploadID + "/resume")
 	// Resume behavior is best-effort across clients; accept either a successful resume,
 	// a "not paused" response, or a race where the upload already completed.
 	if resumeResp.StatusCode != http.StatusOK &&
@@ -646,11 +673,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 		default:
 		}
 
-		uResp, err := httpGetWithAuth(aliceClientURL+"/v1/uploads/"+uploadID, authToken)
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
+		uResp := getWithRetry(aliceClientURL + "/v1/uploads/" + uploadID)
 		if uResp.StatusCode == http.StatusNotFound {
 			uResp.Body.Close()
 			break
@@ -689,17 +712,11 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 	}
 	f2.Close()
 
-	resp2, err := httpPostWithAuth(aliceClientURL+"/v1/sync/now", authToken, nil)
-	if err != nil {
-		t.Fatalf("failed to trigger sync for restart: %v", err)
-	}
+	resp2 := postWithRetry(aliceClientURL + "/v1/sync/now")
 	resp2.Body.Close()
 
 	restartID := waitForUploadID("/public/restart-test.bin")
-	restartResp, err := httpPostWithAuth(aliceClientURL+"/v1/uploads/"+restartID+"/restart", authToken, nil)
-	if err != nil {
-		t.Fatalf("failed to restart upload: %v", err)
-	}
+	restartResp := postWithRetry(aliceClientURL + "/v1/uploads/" + restartID + "/restart")
 	if restartResp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(restartResp.Body)
 		restartResp.Body.Close()
@@ -721,11 +738,7 @@ func TestProgressAPIPauseResumeUpload(t *testing.T) {
 		default:
 		}
 
-		uResp, err := httpGetWithAuth(aliceClientURL+"/v1/uploads/"+restartID, authToken)
-		if err != nil {
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
+		uResp := getWithRetry(aliceClientURL + "/v1/uploads/" + restartID)
 		if uResp.StatusCode == http.StatusNotFound {
 			uResp.Body.Close()
 			break

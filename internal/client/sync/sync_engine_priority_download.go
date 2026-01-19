@@ -4,8 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
@@ -37,6 +39,20 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	// set sync status
 	se.syncStatus.SetSyncing(syncRelPath)
 	slog.Info("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.ETag)
+
+	// Stage ACL for potential ordered application, but don't block the write
+	// When all ACLs arrive, onACLSetReady will re-apply them in order
+	if aclspec.IsACLFile(createMsg.Path) {
+		parts := strings.SplitN(createMsg.Path, "/", 2)
+		if len(parts) >= 1 {
+			datasite := parts[0]
+			aclDir := filepath.Dir(createMsg.Path)
+			se.aclStaging.NoteACLActivity(datasite)
+			if se.aclStaging.HasPendingManifest(datasite) {
+				se.aclStaging.StageACL(datasite, aclDir, createMsg.Content, createMsg.ETag)
+			}
+		}
+	}
 
 	// prep local path
 	localAbsPath := se.workspace.DatasiteAbsPath(createMsg.Path)

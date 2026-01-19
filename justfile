@@ -439,6 +439,89 @@ sbdev-test-cleanup:
     cd cmd/devstack
     go run . stop --path ../../sandbox 2>/dev/null || echo "Test sandbox not running"
 
+# Integration test groups - each group can run in parallel in CI
+# IMPORTANT: When adding new tests, add them to the appropriate group below
+# Run `just sbdev-test-verify` to check all tests are covered
+# Groups: core (foundational), acl (permissions), state1/state2 (file state/conflicts split), transfer (uploads/perf), chaos (stress test)
+_test_group_core := "TestDevstackIntegration|TestACKNACKMechanism|TestParseStartFlagsSkipClientDaemons|TestWebSocketReconnectAfterServerRestart"
+_test_group_acl := "TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestACLChangeDuringUpload"
+_test_group_state1 := "TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate"
+_test_group_state2 := "TestRapidSequentialEdits|TestJournalLossRecovery|TestDeleteDuringDownload|TestDeleteDuringTempRename|TestOverwriteDuringDownload|TestJournalGapSpuriousConflict|TestJournalGapHealing"
+_test_group_state := _test_group_state1 + "|" + _test_group_state2
+_test_group_transfer := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_chaos := "TestChaosSync"
+_test_group_all := _test_group_core + "|" + _test_group_acl + "|" + _test_group_state + "|" + _test_group_transfer + "|" + _test_group_chaos
+
+[group('devstack')]
+sbdev-test-group group mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+    GROUP="{{group}}"
+
+    # Map group name to pattern
+    case "$GROUP" in
+        core)     PATTERN="{{_test_group_core}}" ;;
+        acl)      PATTERN="{{_test_group_acl}}" ;;
+        state)    PATTERN="{{_test_group_state}}" ;;
+        state1)   PATTERN="{{_test_group_state1}}" ;;
+        state2)   PATTERN="{{_test_group_state2}}" ;;
+        transfer) PATTERN="{{_test_group_transfer}}" ;;
+        chaos)    PATTERN="{{_test_group_chaos}}" ;;
+        all)      PATTERN="{{_test_group_all}}" ;;
+        *)        echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, chaos, all"; exit 1 ;;
+    esac
+
+    echo "Running integration test group '$GROUP' (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/$GROUP-tests}"
+    echo "Sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    cd cmd/devstack
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 20m -tags integration -run "$PATTERN"
+    echo ""
+    echo "✅ Test group '$GROUP' completed (mode=$MODE)!"
+
+# Run a single integration test by name
+[group('devstack')]
+sbdev-test-single test mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+    TEST_NAME="{{test}}"
+
+    echo "Running single test '$TEST_NAME' (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/single-test}"
+    echo "Sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    cd cmd/devstack
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 20m -tags integration -run "^${TEST_NAME}$"
+    echo ""
+    echo "✅ Test '$TEST_NAME' completed (mode=$MODE)!"
+
 [group('devstack')]
 sbdev-test-all mode="go":
     #!/bin/bash
@@ -462,9 +545,113 @@ sbdev-test-all mode="go":
     echo "Sandbox: $SANDBOX_DIR"
     rm -rf "$SANDBOX_DIR"
     cd cmd/devstack
-    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "TestACKNACKMechanism|TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestWebSocketReconnectAfterServerRestart|TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestJournalGapSpuriousConflict|TestJournalGapHealing|TestFileModificationDuringSync|TestWebSocketLatency|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestLargeFileTransfer|TestConcurrentUploads|TestManySmallFiles|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress"
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "{{_test_group_all}}"
     echo ""
     echo "✅ Devstack integration suite completed (mode=$MODE)! Sandbox preserved at: $SANDBOX_DIR"
+
+# Verify all integration tests are covered by a group
+[group('devstack')]
+sbdev-test-verify:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Verifying all integration tests are covered by groups..."
+    cd cmd/devstack
+
+    # Get all integration test names
+    ALL_TESTS=$(go test -tags integration -list 'Test.*' . 2>/dev/null | grep '^Test' | sort)
+
+    # Known test patterns from groups
+    COVERED_PATTERN="{{_test_group_all}}"
+
+    MISSING=""
+    for test in $ALL_TESTS; do
+        if ! echo "$test" | grep -qE "^($COVERED_PATTERN)$"; then
+            MISSING="$MISSING $test"
+        fi
+    done
+
+    if [[ -n "$MISSING" ]]; then
+        echo "❌ The following tests are NOT covered by any group:"
+        for test in $MISSING; do
+            echo "  - $test"
+        done
+        echo ""
+        echo "Add them to the appropriate _test_group_* variable in justfile"
+        exit 1
+    fi
+
+    echo "✅ All $(echo "$ALL_TESTS" | wc -l | tr -d ' ') integration tests are covered!"
+    echo ""
+    echo "Groups:"
+    echo "  core:     {{_test_group_core}}"
+    echo "  acl:      {{_test_group_acl}}"
+    echo "  state:    {{_test_group_state}}"
+    echo "  transfer: {{_test_group_transfer}}"
+
+[group('devstack')]
+sbdev-test-all-serial mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+
+    echo "Running devstack integration suite one test at a time (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    BASE_SANDBOX="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/all-tests-serial}"
+    echo "Sandbox base: $BASE_SANDBOX"
+
+    TESTS=(
+        TestACKNACKMechanism
+        TestDevstackIntegration
+        TestACLEnablesDownload
+        TestACLPropagationUpdates
+        TestACLRaceCondition
+        TestWebSocketReconnectAfterServerRestart
+        TestSimultaneousWrite
+        TestDivergentEdits
+        TestThreeWayConflict
+        TestConflictDuringACLChange
+        TestNestedPathConflict
+        TestJournalWriteTiming
+        TestNonConflictUpdate
+        TestRapidSequentialEdits
+        TestJournalLossRecovery
+        TestJournalGapSpuriousConflict
+        TestJournalGapHealing
+        TestFileModificationDuringSync
+        TestWebSocketLatency
+        TestProgressAPI
+        TestProgressAPIWithUpload
+        TestProgressAPIDemo
+        TestLargeFileTransfer
+        TestConcurrentUploads
+        TestManySmallFiles
+        TestLargeUploadViaDaemon
+        TestLargeUploadViaDaemonStress
+    )
+
+    cd cmd/devstack
+    for TEST in "${TESTS[@]}"; do
+        SANDBOX_DIR="$BASE_SANDBOX/$TEST"
+        echo "=== $TEST (sandbox: $SANDBOX_DIR) ==="
+        rm -rf "$SANDBOX_DIR"
+        PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 45m -tags integration -run "^${TEST}$"
+        echo "Test artifacts preserved at: $SANDBOX_DIR"
+    done
+
+    echo ""
+    echo "Devstack integration serial suite completed (mode=$MODE)! Sandbox preserved at: $BASE_SANDBOX"
+
 sbdev-test-acl:
     #!/bin/bash
     set -eou pipefail

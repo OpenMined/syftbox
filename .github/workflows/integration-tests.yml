@@ -8,33 +8,23 @@ on:
     branches: [ main, madhava/biovault ]
 
 jobs:
-  devstack-all:
-    name: All Integration Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24.3'
-        cache: true
-
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Run all integration tests
-      run: just sbdev-test-all
-
-  devstack-chaos:
-    name: Chaos Test
+  integration-tests:
+    name: ${{ matrix.mode }} ${{ matrix.group }} (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+        os: [ windows, linux, mac ]
+        mode: [ go, rust ]
+        group: [ core, acl, state1, state2, transfer, chaos ]
+        include:
+          - os: windows
+            runner: namespace-profile-windows-medium
+          - os: linux
+            runner: namespace-profile-linux-medium
+          - os: mac
+            runner: namespace-profile-mac-medium
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v4
@@ -43,38 +33,25 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.24.3'
-        cache: ${{ matrix.os != 'windows-latest' }}
+        cache: ${{ matrix.os != 'windows' }}
 
-    - name: Download dependencies (Windows only)
-      if: matrix.os == 'windows-latest'
+    - name: Download Go dependencies
+      if: matrix.os == 'windows'
       run: go mod download
 
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Run chaos test (1 minute)
-      run: CHAOS_DURATION=1m just sbdev-test-chaos
-      shell: bash
-
-  rust-integration:
-    name: Rust Integration Tests
-    strategy:
-      matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-
-    steps:
-    - uses: actions/checkout@v4
-
     - name: Set up Rust
+      if: matrix.mode == 'rust'
       uses: dtolnay/rust-toolchain@stable
 
     - name: Rust cache
+      if: matrix.mode == 'rust'
       uses: Swatinem/rust-cache@v2
       with:
         workspaces: rust
 
-    - name: Run Rust integration tests
-      working-directory: rust
-      run: cargo test --test '*' -- --test-threads=1
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run ${{ matrix.group }} tests (${{ matrix.mode }} client)
+      run: just sbdev-test-group ${{ matrix.group }} mode=${{ matrix.mode }}
+      shell: bash

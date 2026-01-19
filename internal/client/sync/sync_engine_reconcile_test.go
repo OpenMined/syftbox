@@ -24,6 +24,7 @@ func TestSyncEngine_Reconcile_TableDriven(t *testing.T) {
 	se := &SyncEngine{
 		ignoreList: ignore,
 		syncStatus: NewSyncStatus(),
+		aclStaging: NewACLStagingManager(nil),
 	}
 
 	cases := []struct {

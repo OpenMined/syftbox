@@ -163,11 +163,17 @@ func (w *Workspace) DatasiteAbsPath(relPath string) string {
 
 // DatasiteRelPath returns the relative path of a datasite from the workspace's datasites directory
 func (w *Workspace) DatasiteRelPath(absPath string) (string, error) {
-	relPath, err := filepath.Rel(w.DatasitesDir, absPath)
+	base := resolvePath(w.DatasitesDir)
+	target := resolvePath(absPath)
+	relPath, err := filepath.Rel(base, target)
 	if err != nil {
 		return "", err
 	}
-	return NormPath(relPath), nil
+	relPath = NormPath(relPath)
+	if relPath == "." || strings.HasPrefix(relPath, "..") {
+		return "", fmt.Errorf("path outside datasites dir: %s", absPath)
+	}
+	return relPath, nil
 }
 
 // PathOwner returns the owner of the path
@@ -200,4 +206,17 @@ func NormPath(path string) string {
 	path = strings.ReplaceAll(path, "\\", "/")
 	path = strings.TrimLeft(path, "/")
 	return path
+}
+
+func resolvePath(path string) string {
+	abs := path
+	if !filepath.IsAbs(abs) {
+		if resolved, err := filepath.Abs(abs); err == nil {
+			abs = resolved
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }

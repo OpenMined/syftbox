@@ -3,7 +3,7 @@ use std::{
     env, fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -29,15 +29,17 @@ use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use crate::acl_staging::{ACLStagingManager, StagedACL};
 use crate::config::Config;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
 use crate::http::ApiClient;
 use crate::sync::{
-    download_keys, ensure_parent_dirs, sync_once_with_control, write_file_resolving_conflicts,
+    compute_local_etag, download_keys, ensure_parent_dirs, sync_once_with_control,
+    write_file_resolving_conflicts,
 };
 use crate::wsproto::{
-    Decoded, Encoding, FileWrite, HttpMsg, MsgpackFileWrite, WS_MAX_MESSAGE_BYTES,
+    ACLManifest, Decoded, Encoding, FileWrite, HttpMsg, MsgpackFileWrite, WS_MAX_MESSAGE_BYTES,
 };
 
 static ACL_READY: AtomicBool = AtomicBool::new(false);
@@ -113,6 +115,20 @@ impl Client {
         let control = self.control.clone();
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
+        let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
+
+        // Create ACL staging manager at this level so it's shared between WS listener and sync loop
+        let datasites_root = data_dir.join("datasites");
+        let datasites_root_for_staging = datasites_root.clone();
+        let data_dir_for_staging = data_dir.clone();
+        let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
+            on_acl_set_ready(
+                &datasites_root_for_staging,
+                &data_dir_for_staging,
+                &datasite,
+                acls,
+            );
+        }));
 
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
@@ -132,12 +148,12 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), shutdown.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone(), acl_staging.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler, acl_staging) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
@@ -166,6 +182,20 @@ impl Client {
         let control = self.control.clone();
         let filters = self.filters.clone();
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
+        let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
+
+        // Create ACL staging manager at this level so it's shared between WS listener and sync loop
+        let datasites_root = data_dir.join("datasites");
+        let datasites_root_for_staging = datasites_root.clone();
+        let data_dir_for_staging = data_dir.clone();
+        let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
+            on_acl_set_ready(
+                &datasites_root_for_staging,
+                &data_dir_for_staging,
+                &datasite,
+                acls,
+            );
+        }));
 
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
@@ -181,12 +211,12 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), shutdown.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone(), acl_staging.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler, acl_staging) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
@@ -261,6 +291,7 @@ impl Client {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_sync_loop(
     api: ApiClient,
     data_dir: PathBuf,
@@ -268,6 +299,8 @@ async fn run_sync_loop(
     control: Option<ControlPlane>,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
+    acl_staging: std::sync::Arc<ACLStagingManager>,
 ) -> Result<()> {
     let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
     let mut local_scanner = crate::sync::LocalScanner::default();
@@ -280,24 +313,154 @@ async fn run_sync_loop(
             &filters,
             &mut local_scanner,
             &mut journal,
+            &acl_staging,
         )
         .await
         {
             crate::logging::error(format!("sync error: {err:?}"));
         }
 
+        let sleep_for = sync_scheduler.interval();
         if let Some(cp) = &control {
             tokio::select! {
-                _ = sleep(Duration::from_secs(5)) => {}
-                _ = cp.wait_sync_now() => {}
-                _ = sync_kick.notified() => {}
+                _ = sleep(sleep_for) => {}
+                _ = cp.wait_sync_now() => {
+                    sync_scheduler.record_activity();
+                }
+                _ = sync_kick.notified() => {
+                    sync_scheduler.record_activity();
+                }
             }
         } else {
             tokio::select! {
-                _ = sleep(Duration::from_secs(5)) => {}
-                _ = sync_kick.notified() => {}
+                _ = sleep(sleep_for) => {}
+                _ = sync_kick.notified() => {
+                    sync_scheduler.record_activity();
+                }
             }
         }
+    }
+}
+
+const SYNC_INTERVAL_STARTUP: Duration = Duration::from_millis(100);
+const SYNC_INTERVAL_BURST: Duration = Duration::from_millis(100);
+const SYNC_INTERVAL_ACTIVE: Duration = Duration::from_millis(100);
+const SYNC_INTERVAL_MODERATE: Duration = Duration::from_millis(500);
+const SYNC_INTERVAL_IDLE: Duration = Duration::from_secs(1);
+const SYNC_INTERVAL_IDLE2: Duration = Duration::from_secs(2);
+const SYNC_INTERVAL_IDLE3: Duration = Duration::from_secs(5);
+const SYNC_INTERVAL_DEEP_IDLE: Duration = Duration::from_secs(10);
+
+const ACTIVITY_BURST_THRESHOLD: usize = 10;
+const ACTIVITY_ACTIVE_THRESHOLD: usize = 3;
+const ACTIVITY_MODERATE_THRESHOLD: usize = 1;
+const ACTIVITY_WINDOW: Duration = Duration::from_secs(10);
+
+const IDLE_TIMEOUT_1: Duration = Duration::from_secs(5);
+const IDLE_TIMEOUT_2: Duration = Duration::from_secs(15);
+const DEEP_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+const STARTUP_DURATION: Duration = Duration::from_secs(3);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivityLevel {
+    Startup,
+    Burst,
+    Active,
+    Moderate,
+    Idle,
+    Idle2,
+    Idle3,
+    DeepIdle,
+}
+
+struct AdaptiveSyncState {
+    created_at: Instant,
+    last_activity: Instant,
+    events: Vec<Instant>,
+    level: ActivityLevel,
+}
+
+impl AdaptiveSyncState {
+    fn new(now: Instant) -> Self {
+        Self {
+            created_at: now,
+            last_activity: now,
+            events: Vec::with_capacity(ACTIVITY_BURST_THRESHOLD * 2),
+            level: ActivityLevel::Startup,
+        }
+    }
+
+    fn update_activity_level(&mut self, now: Instant) {
+        let event_count = self.events.len();
+        let time_since_activity = now.duration_since(self.last_activity);
+        let time_since_creation = now.duration_since(self.created_at);
+
+        let new_level = if time_since_creation < STARTUP_DURATION {
+            ActivityLevel::Startup
+        } else {
+            match event_count {
+                n if n >= ACTIVITY_BURST_THRESHOLD => ActivityLevel::Burst,
+                n if n >= ACTIVITY_ACTIVE_THRESHOLD => ActivityLevel::Active,
+                n if n >= ACTIVITY_MODERATE_THRESHOLD => ActivityLevel::Moderate,
+                _ => {
+                    if time_since_activity < IDLE_TIMEOUT_1 {
+                        ActivityLevel::Idle
+                    } else if time_since_activity < IDLE_TIMEOUT_2 {
+                        ActivityLevel::Idle2
+                    } else if time_since_activity < DEEP_IDLE_TIMEOUT {
+                        ActivityLevel::Idle3
+                    } else {
+                        ActivityLevel::DeepIdle
+                    }
+                }
+            }
+        };
+
+        self.level = new_level;
+    }
+
+    fn interval(&self) -> Duration {
+        match self.level {
+            ActivityLevel::Startup => SYNC_INTERVAL_STARTUP,
+            ActivityLevel::Burst => SYNC_INTERVAL_BURST,
+            ActivityLevel::Active => SYNC_INTERVAL_ACTIVE,
+            ActivityLevel::Moderate => SYNC_INTERVAL_MODERATE,
+            ActivityLevel::Idle => SYNC_INTERVAL_IDLE,
+            ActivityLevel::Idle2 => SYNC_INTERVAL_IDLE2,
+            ActivityLevel::Idle3 => SYNC_INTERVAL_IDLE3,
+            ActivityLevel::DeepIdle => SYNC_INTERVAL_DEEP_IDLE,
+        }
+    }
+}
+
+struct AdaptiveSyncScheduler {
+    state: std::sync::Mutex<AdaptiveSyncState>,
+}
+
+impl AdaptiveSyncScheduler {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            state: std::sync::Mutex::new(AdaptiveSyncState::new(now)),
+        }
+    }
+
+    fn record_activity(&self) {
+        let now = Instant::now();
+        let mut state = self.state.lock().expect("sync scheduler lock");
+        state.last_activity = now;
+        state.events.push(now);
+        let cutoff = now.checked_sub(ACTIVITY_WINDOW).unwrap_or(now);
+        state.events.retain(|ts| *ts >= cutoff);
+        state.update_activity_level(now);
+    }
+
+    fn interval(&self) -> Duration {
+        let now = Instant::now();
+        let mut state = self.state.lock().expect("sync scheduler lock");
+        state.update_activity_level(now);
+        state.interval()
     }
 }
 
@@ -377,6 +540,7 @@ impl WsHandle {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_ws_listener(
     api: ApiClient,
     server_url: String,
@@ -384,12 +548,15 @@ async fn run_ws_listener(
     email: String,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
+    acl_staging: std::sync::Arc<ACLStagingManager>,
 ) -> Result<()> {
     let datasites_root = data_dir.join("datasites");
     if !datasites_root.exists() {
         fs::create_dir_all(&datasites_root)?;
     }
+
     let ws_url = Url::parse(
         &server_url
             .replace("http://", "ws://")
@@ -479,12 +646,14 @@ async fn run_ws_listener(
         let watcher_ws = ws_handle.clone();
         let watcher_email = email.clone();
         let watcher_shutdown = shutdown.clone();
+        let watcher_scheduler = sync_scheduler.clone();
         let watcher_task = tokio::spawn(async move {
             if let Err(err) = watch_priority_files(
                 &watch_root,
                 &watcher_email,
                 watcher_filters,
                 watcher_kick,
+                watcher_scheduler,
                 watcher_ws,
                 watcher_shutdown,
             )
@@ -527,10 +696,28 @@ async fn run_ws_listener(
             let Some(msg) = msg else { break };
             match msg {
                 Ok(Message::Text(txt)) => {
-                    handle_ws_message(&api, &datasites_root, &txt, None, &pending).await;
+                    handle_ws_message(
+                        &api,
+                        &datasites_root,
+                        &data_dir,
+                        &txt,
+                        None,
+                        &pending,
+                        &acl_staging,
+                    )
+                    .await;
                 }
                 Ok(Message::Binary(bin)) => {
-                    handle_ws_message(&api, &datasites_root, "", Some(&bin), &pending).await;
+                    handle_ws_message(
+                        &api,
+                        &datasites_root,
+                        &data_dir,
+                        "",
+                        Some(&bin),
+                        &pending,
+                        &acl_staging,
+                    )
+                    .await;
                 }
                 _ => {}
             }
@@ -554,9 +741,11 @@ async fn run_ws_listener(
 async fn handle_ws_message(
     api: &ApiClient,
     datasites_root: &Path,
+    data_dir: &Path,
     raw_text: &str,
     raw_bin: Option<&[u8]>,
     pending: &PendingAcks,
+    acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) {
     let decoded = match raw_bin {
         Some(bin) => crate::wsproto::decode_binary(bin),
@@ -564,8 +753,13 @@ async fn handle_ws_message(
     };
     let decoded = match decoded {
         Ok(d) => d,
-        Err(_) => return,
+        Err(e) => {
+            crate::logging::error(format!("ws decode error: {e:?}"));
+            return;
+        }
     };
+
+    crate::logging::info(format!("ws message decoded type={:?}", &decoded));
 
     match decoded {
         Decoded::Ack(ack) => {
@@ -578,13 +772,55 @@ async fn handle_ws_message(
                 let _ = sender.send(Err(anyhow::anyhow!("NACK received: {}", nack.error)));
             }
         }
-        Decoded::FileWrite(file) => handle_ws_file_write(api, datasites_root, file).await,
+        Decoded::FileWrite(file) => {
+            handle_ws_file_write(api, datasites_root, data_dir, file, acl_staging).await
+        }
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
+        Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),
         Decoded::Other { id, typ } => drop((id, typ)),
     }
 }
 
-async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: FileWrite) {
+async fn handle_ws_file_write(
+    api: &ApiClient,
+    datasites_root: &Path,
+    data_dir: &Path,
+    file: FileWrite,
+    acl_staging: &std::sync::Arc<ACLStagingManager>,
+) {
+    // Windows debug: log incoming file write
+    crate::logging::info(format!(
+        "ws_file_write path={} etag={} length={} has_content={}",
+        file.path,
+        file.etag,
+        file.length,
+        file.content.is_some()
+    ));
+
+    // Stage ACL for potential ordered application, but don't block the write
+    // When all ACLs arrive, on_acl_set_ready will re-apply them in order
+    let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
+    if is_acl_file {
+        if let Some(datasite) = file.path.split('/').next() {
+            if acl_staging.has_pending_manifest(datasite) {
+                // Get the ACL directory path (the parent of syft.pub.yaml)
+                let acl_dir = if file.path.contains('/') {
+                    let path = std::path::Path::new(&file.path);
+                    path.parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| datasite.to_string())
+                } else {
+                    datasite.to_string()
+                };
+
+                // Stage the ACL but continue to write it immediately
+                if let Some(ref content) = file.content {
+                    acl_staging.stage_acl(datasite, &acl_dir, content.clone(), file.etag.clone());
+                }
+            }
+        }
+    }
+
     if let Some(content) = file.content {
         // Go treats empty content as a push notification (no embedded bytes) when length>0.
         // Avoid writing empty files; download the blob instead.
@@ -606,10 +842,22 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         } else {
             file.etag.clone()
         };
+        let local_path = datasites_root.join(&file.path);
+        crate::logging::info(format!(
+            "ws_file_write writing content path={} local_path={} content_len={}",
+            file.path,
+            local_path.display(),
+            content.len()
+        ));
         if let Err(err) = write_bytes(datasites_root, &file.path, &content) {
-            crate::logging::error(format!("ws write error: {err:?}"));
-        } else if ws_should_update_journal() {
-            if let Some(data_dir) = datasites_root.parent() {
+            crate::logging::error(format!("ws write error path={} err={:?}", file.path, err));
+        } else {
+            crate::logging::info(format!("ws_file_write success path={}", file.path));
+            if ws_should_update_journal() {
+                crate::logging::info(format!(
+                    "ws_file_write journal_upsert path={} etag={} local_etag={}",
+                    file.path, etag, local_etag
+                ));
                 let _ = crate::sync::journal_upsert_direct(
                     data_dir,
                     &file.path,
@@ -626,23 +874,21 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         if let Err(err) = write_bytes(datasites_root, &file.path, &[]) {
             crate::logging::error(format!("ws write error: {err:?}"));
         } else if ws_should_update_journal() {
-            if let Some(data_dir) = datasites_root.parent() {
-                // MD5 of empty content (matches server ETag semantics in devstack).
-                let local_etag = format!("{:x}", md5_compute([]));
-                let etag = if file.etag.is_empty() {
-                    local_etag.clone()
-                } else {
-                    file.etag.clone()
-                };
-                let _ = crate::sync::journal_upsert_direct(
-                    data_dir,
-                    &file.path,
-                    &etag,
-                    &local_etag,
-                    0,
-                    chrono::Utc::now().timestamp(),
-                );
-            }
+            // MD5 of empty content (matches server ETag semantics in devstack).
+            let local_etag = format!("{:x}", md5_compute([]));
+            let etag = if file.etag.is_empty() {
+                local_etag.clone()
+            } else {
+                file.etag.clone()
+            };
+            let _ = crate::sync::journal_upsert_direct(
+                data_dir,
+                &file.path,
+                &etag,
+                &local_etag,
+                0,
+                chrono::Utc::now().timestamp(),
+            );
         }
         return;
     }
@@ -653,6 +899,69 @@ async fn handle_ws_file_write(api: &ApiClient, datasites_root: &Path, file: File
         Err(err) => {
             crate::logging::error(format!("ws download error: {err:?}"));
         }
+    }
+}
+
+fn handle_ws_acl_manifest(manifest: ACLManifest, acl_staging: &std::sync::Arc<ACLStagingManager>) {
+    crate::logging::info(format!(
+        "acl manifest received datasite={} for={} forHash={} aclCount={}",
+        manifest.datasite,
+        manifest.for_user,
+        manifest.for_hash,
+        manifest.acl_order.len()
+    ));
+    acl_staging.set_manifest(manifest);
+}
+
+fn on_acl_set_ready(datasites_root: &Path, data_dir: &Path, datasite: &str, acls: Vec<StagedACL>) {
+    crate::logging::info(format!(
+        "applying {} ACLs in order for datasite={}",
+        acls.len(),
+        datasite
+    ));
+
+    let tmp_dir = data_dir.join(".syft-tmp");
+    if let Err(err) = fs::create_dir_all(&tmp_dir) {
+        crate::logging::error(format!("failed to create tmp dir: {err:?}"));
+        return;
+    }
+
+    for acl in acls {
+        let acl_file_path = format!("{}/syft.pub.yaml", acl.path);
+        let abs_path = datasites_root.join(&acl_file_path);
+
+        if let Err(err) = ensure_parent_dirs(&abs_path) {
+            crate::logging::error(format!(
+                "failed to create parent dirs for {}: {err:?}",
+                acl_file_path
+            ));
+            continue;
+        }
+
+        if let Err(err) = write_file_resolving_conflicts(&abs_path, &acl.content) {
+            crate::logging::error(format!("failed to write ACL {}: {err:?}", acl_file_path));
+            continue;
+        }
+
+        // Update the sync journal
+        let size = acl.content.len() as i64;
+        let local_etag = compute_local_etag(&abs_path, size).unwrap_or_default();
+        let etag = if acl.etag.is_empty() {
+            local_etag.clone()
+        } else {
+            acl.etag.clone()
+        };
+
+        let _ = crate::sync::journal_upsert_direct(
+            data_dir,
+            &acl_file_path,
+            &etag,
+            &local_etag,
+            size,
+            chrono::Utc::now().timestamp(),
+        );
+
+        crate::logging::info(format!("applied ACL {}", acl_file_path));
     }
 }
 
@@ -775,7 +1084,9 @@ async fn upload_existing_acls(
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             if name == "syft.pub.yaml" {
-                let rel = path.strip_prefix(datasites_root)?;
+                let Some(rel) = strip_datasites_prefix(datasites_root, path) else {
+                    continue;
+                };
                 let key = rel.to_string_lossy().to_string();
                 if key.starts_with(my_email) {
                     // Best-effort upload; ignore errors so startup continues.
@@ -799,9 +1110,8 @@ fn collect_synced_keys(datasites_root: &Path, filters: &SyncFilters) -> Vec<Stri
         .filter(|e| e.file_type().is_file())
     {
         let path = entry.path();
-        let rel = match path.strip_prefix(datasites_root) {
-            Ok(r) => r,
-            Err(_) => continue,
+        let Some(rel) = strip_datasites_prefix(datasites_root, path) else {
+            continue;
         };
         let key = rel.to_string_lossy().replace('\\', "/");
         if key.is_empty() {
@@ -842,6 +1152,7 @@ async fn watch_priority_files(
     my_email: &str,
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
+    sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
     ws: WsHandle,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> Result<()> {
@@ -879,6 +1190,7 @@ async fn watch_priority_files(
             match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
                 Ok(did_trigger) => {
                     if did_trigger {
+                        sync_scheduler.record_activity();
                         sync_kick.notify_one();
                     }
                 }
@@ -923,6 +1235,9 @@ async fn watch_priority_files(
                 }
 
                 let mut paths: Vec<PathBuf> = pending.drain().collect();
+                if !paths.is_empty() {
+                    sync_scheduler.record_activity();
+                }
                 paths.sort_by(|a, b| {
                     let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or("");
                     let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -938,6 +1253,7 @@ async fn watch_priority_files(
                     match send_priority_if_small(root, my_email, &filters, &path, &ws).await {
                         Ok(did_trigger) => {
                             if did_trigger {
+                                sync_scheduler.record_activity();
                                 sync_kick.notify_one();
                             }
                         }
@@ -949,6 +1265,7 @@ async fn watch_priority_files(
                 match poll_priority_changes(root, my_email, &filters, &ws, &mut seen_mtime_ns).await {
                     Ok(did_trigger) => {
                         if did_trigger {
+                            sync_scheduler.record_activity();
                             sync_kick.notify_one();
                         }
                     }
@@ -1054,12 +1371,13 @@ async fn send_priority_if_small(
         return Ok(false);
     }
 
-    let rel = path
-        .strip_prefix(root)
-        .with_context(|| format!("strip prefix {}", path.display()))?;
+    let rel = match strip_datasites_prefix(root, path) {
+        Some(rel) => rel,
+        None => return Ok(false),
+    };
     let rel_str = rel.to_string_lossy().to_string();
 
-    if filters.ignore.should_ignore_rel(rel, false) {
+    if filters.ignore.should_ignore_rel(&rel, false) {
         return Ok(false);
     }
     if !rel_str.starts_with(&format!("{my_email}/")) {
@@ -1070,9 +1388,10 @@ async fn send_priority_if_small(
         return Ok(false);
     }
 
-    let is_priority = filters.priority.should_prioritize_rel(rel, false);
+    let is_priority = filters.priority.should_prioritize_rel(&rel, false);
     if !is_priority {
-        return Ok(false);
+        // Non-priority changes should still wake the sync loop.
+        return Ok(true);
     }
 
     let size = meta.len();
@@ -1094,22 +1413,48 @@ async fn send_priority_if_small(
     };
     let etag = format!("{:x}", md5_compute(&bytes));
     let ack_timeout = Duration::from_secs(5);
+    crate::logging::info(format!(
+        "priority send attempting path={} size={} is_acl={}",
+        rel_str, size, is_acl
+    ));
     match ws
         .send_filewrite_with_ack(rel_str.clone(), etag, size as i64, bytes, ack_timeout)
         .await
     {
         Ok(()) => {
+            crate::logging::info(format!(
+                "priority send SUCCESS path={} is_acl={}",
+                rel_str, is_acl
+            ));
             if is_acl {
                 ACL_READY.store(true, Ordering::SeqCst);
             }
             Ok(true)
         }
         Err(err) => {
-            crate::logging::error(format!("priority send ack error: {err:?}"));
+            crate::logging::error(format!("priority send ack error for {}: {err:?}", rel_str));
             // Fallback: let normal sync handle it ASAP.
             Ok(true)
         }
     }
+}
+
+fn strip_datasites_prefix(root: &Path, path: &Path) -> Option<PathBuf> {
+    // Try original paths first (fast path)
+    if let Ok(rel) = path.strip_prefix(root) {
+        return Some(rel.to_path_buf());
+    }
+    // Fall back to canonicalized paths to handle macOS /tmp -> /private/tmp symlinks
+    let root_resolved = resolve_path(root);
+    let path_resolved = resolve_path(path);
+    path_resolved
+        .strip_prefix(&root_resolved)
+        .ok()
+        .map(|p| p.to_path_buf())
+}
+
+fn resolve_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[cfg(test)]

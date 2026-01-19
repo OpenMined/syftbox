@@ -58,5 +58,6 @@ cmd/devstack/profiles/*
 cmd/sandbox/*
 cmd/devstack/.gocache/*
 .test-sandbox/*
+cmd/devstack/.test-sandbox/
 .devstack
 .cache/*

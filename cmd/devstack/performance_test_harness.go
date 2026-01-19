@@ -1,9 +1,9 @@
 package main
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/rand"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -11,11 +11,14 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -163,7 +166,7 @@ func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	s.serverBin = filepath.Join(s.binDir, "server")
+	s.serverBin = addExe(filepath.Join(s.binDir, "server"))
 	s.clientBin = filepath.Join(s.binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
@@ -285,12 +288,31 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 			_ = killProcess(c.PID)
 		}
 	}
+	knownPIDs := map[int]struct{}{
+		s.server.PID: {},
+		s.minio.PID:  {},
+	}
+	for _, c := range s.clients {
+		knownPIDs[c.PID] = struct{}{}
+	}
+	killStrayProcessesFromState(t, s.root, knownPIDs)
+
+	// On Windows, wait for file handles to be released after process termination.
+	// Windows holds file locks slightly longer than Unix systems.
+	if runtime.GOOS == "windows" {
+		time.Sleep(2 * time.Second)
+	}
 
 	// Wipe server and client state on disk while processes are stopped.
 	serverDir := filepath.Join(s.relayRoot, "server")
-	_ = os.RemoveAll(serverDir)
+	if err := removeAllWithRetry(t, serverDir, "server state"); err != nil {
+		return fmt.Errorf("cleanup server state: %w", err)
+	}
 	for _, email := range s.emails {
-		_ = os.RemoveAll(filepath.Join(s.root, email))
+		emailRoot := filepath.Join(s.root, email)
+		if err := removeAllWithRetry(t, emailRoot, fmt.Sprintf("client state %s", email)); err != nil {
+			return fmt.Errorf("cleanup client state %s: %w", email, err)
+		}
 	}
 
 	// Clear MinIO bucket contents for a clean server state.
@@ -375,6 +397,57 @@ func (s *persistentSuite) resetForTest(t *testing.T) error {
 	return nil
 }
 
+func killStrayProcessesFromState(t *testing.T, root string, knownPIDs map[int]struct{}) {
+	t.Helper()
+	state, _, err := readState(root)
+	if err != nil {
+		return
+	}
+
+	maybeKill := func(pid int, label string) {
+		if pid <= 0 {
+			return
+		}
+		if _, ok := knownPIDs[pid]; ok {
+			return
+		}
+		if !processExists(pid) {
+			return
+		}
+		t.Logf("cleanup: stopping stray %s pid %d", label, pid)
+		_ = killProcess(pid)
+	}
+
+	maybeKill(state.Server.PID, "server")
+	maybeKill(state.Minio.PID, "minio")
+	for _, c := range state.Clients {
+		maybeKill(c.PID, fmt.Sprintf("client %s", c.Email))
+	}
+}
+
+func removeAllWithRetry(t *testing.T, path string, label string) error {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return os.RemoveAll(path)
+	}
+	// Windows needs more retries and longer delays due to file handle release timing
+	const maxAttempts = 10
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := os.RemoveAll(path)
+		if err == nil || os.IsNotExist(err) {
+			if attempt > 1 {
+				t.Logf("cleanup: removed %s after %d attempts", label, attempt)
+			}
+			return nil
+		}
+		lastErr = err
+		t.Logf("cleanup: failed to remove %s (attempt %d/%d): %v", label, attempt, maxAttempts, err)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+	}
+	return lastErr
+}
+
 func (s *persistentSuite) newHarnessForTest(t *testing.T, state *stackState) *DevstackTestHarness {
 	t.Helper()
 	return newHarnessFromState(t, state, false)
@@ -416,7 +489,7 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	}
 
 	// Build binaries
-	serverBin := filepath.Join(binDir, "server")
+	serverBin := addExe(filepath.Join(binDir, "server"))
 	clientBin := filepath.Join(binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
@@ -428,9 +501,9 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	if err := buildBinary(serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
 		return stackState{}, fmt.Errorf("build server: %w", err)
 	}
-		if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
-			return stackState{}, fmt.Errorf("build client: %w", err)
-		}
+	if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+		return stackState{}, fmt.Errorf("build client: %w", err)
+	}
 
 	// Allocate ports (ensure MinIO API and console ports differ).
 	// MinIO can occasionally fail to bind if a port becomes occupied between selection and start,
@@ -445,44 +518,44 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 		return stackState{}, fmt.Errorf("minio binary unavailable: %w", err)
 	}
 
-		var mState minioState
-		var minioErr error
-		for attempt := 0; attempt < 5; attempt++ {
-			var err error
-			minioAPIPort, err = getFreePort()
-			if err != nil {
-				minioErr = fmt.Errorf("allocate minio api port: %w", err)
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
+	var mState minioState
+	var minioErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		var err error
+		minioAPIPort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio api port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		minioConsolePort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio console port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
 			minioConsolePort, err = getFreePort()
 			if err != nil {
 				minioErr = fmt.Errorf("allocate minio console port: %w", err)
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
-			for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
-				minioConsolePort, err = getFreePort()
-				if err != nil {
-					minioErr = fmt.Errorf("allocate minio console port: %w", err)
-					break
-				}
-			}
-			if minioConsolePort == minioAPIPort {
-				minioErr = fmt.Errorf("unable to allocate distinct minio ports")
-				time.Sleep(200 * time.Millisecond)
-				continue
-			}
-
-			mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
-			if minioErr == nil {
 				break
 			}
-			t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
 		}
-		if minioErr != nil {
-			return stackState{}, fmt.Errorf("start minio: %w", minioErr)
+		if minioConsolePort == minioAPIPort {
+			minioErr = fmt.Errorf("unable to allocate distinct minio ports")
+			time.Sleep(200 * time.Millisecond)
+			continue
 		}
+
+		mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
+		if minioErr == nil {
+			break
+		}
+		t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
+	}
+	if minioErr != nil {
+		return stackState{}, fmt.Errorf("start minio: %w", minioErr)
+	}
 
 	// Setup bucket
 	if err := setupBucket(mState.APIPort); err != nil {
@@ -502,11 +575,11 @@ func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, err
 	// Start clients
 	t.Logf("Starting clients...")
 	var clients []clientState
-		for i, email := range opts.clients {
-			port, _ := getFreePort()
-			binForEmail, err := clientBinaryForEmail(email, i, clientBin)
-			if err != nil {
-				t.Fatalf("client bin for %s: %v", email, err)
+	for i, email := range opts.clients {
+		port, _ := getFreePort()
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
+		if err != nil {
+			t.Fatalf("client bin for %s: %v", email, err)
 		}
 		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
@@ -615,6 +688,11 @@ func emptyBucket(apiPort int) error {
 			credentials.NewStaticCredentialsProvider(defaultMinioAdminUser, defaultMinioAdminPassword, ""),
 		),
 		config.WithRegion(defaultRegion),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 10
+			})
+		}),
 	)
 	if err != nil {
 		return err
@@ -720,6 +798,9 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	// File syncs to datasites/{sender}/public/{relPath}
 	fullPath := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
 	var lastMD5 string
+	attempts := 0
+	notExistCount := 0
+	sharingViolationCount := 0
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -728,9 +809,20 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	for time.Now().Before(deadline) {
 		select {
 		case <-ticker.C:
+			attempts++
 			content, err := os.ReadFile(fullPath)
 			if err != nil {
 				if os.IsNotExist(err) {
+					notExistCount++
+					// Log every 50 attempts (5 seconds)
+					if notExistCount%50 == 0 {
+						fmt.Printf("[DEBUG] WaitForFile: file not exist after %d checks path=%s\n", notExistCount, fullPath)
+					}
+					continue
+				}
+				if isSharingViolation(err) {
+					sharingViolationCount++
+					fmt.Printf("[DEBUG] WaitForFile: sharing violation #%d path=%s\n", sharingViolationCount, fullPath)
 					continue
 				}
 				return fmt.Errorf("read file: %w", err)
@@ -755,7 +847,34 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 		}
 	}
 
+	// Debug: dump parent directory contents on timeout
+	parentDir := filepath.Dir(fullPath)
+	entries, _ := os.ReadDir(parentDir)
+	fmt.Printf("[DEBUG] WaitForFile TIMEOUT: attempts=%d notExist=%d sharingViolation=%d path=%s\n",
+		attempts, notExistCount, sharingViolationCount, fullPath)
+	fmt.Printf("[DEBUG] WaitForFile TIMEOUT: parent=%s contents:\n", parentDir)
+	for _, e := range entries {
+		info, _ := e.Info()
+		if info != nil {
+			fmt.Printf("[DEBUG]   - %s (size=%d, mod=%v)\n", e.Name(), info.Size(), info.ModTime())
+		} else {
+			fmt.Printf("[DEBUG]   - %s\n", e.Name())
+		}
+	}
+
 	return fmt.Errorf("timeout waiting for file %s (last seen MD5=%s)", fullPath, lastMD5)
+}
+
+func isSharingViolation(err error) bool {
+	if err == nil || runtime.GOOS != "windows" {
+		return false
+	}
+	if errors.Is(err, syscall.Errno(32)) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "used by another process") ||
+		strings.Contains(lower, "sharing violation")
 }
 
 // CreateDefaultACLs creates the default root and public ACL files like the real client
@@ -835,22 +954,16 @@ func (c *ClientHelper) SetupRPCEndpoint(appName, endpoint string) error {
 		return fmt.Errorf("create rpc dir: %w", err)
 	}
 
-	// Ensure an app-level RPC ACL exists so peers can discover endpoints before any requests.
+	// Ensure an app-level RPC ACL exists so peers can discover child ACLs.
+	// This only grants read access to ACL files - actual content permissions
+	// are defined by each endpoint's ACL.
 	rpcRootACL := `rules:
-  - pattern: '**.request'
+  - pattern: '**/syft.pub.yaml'
     access:
       admin: []
       read:
         - '*'
-      write:
-        - '*'
-  - pattern: '**.response'
-    access:
-      admin: []
-      read:
-        - '*'
-      write:
-        - '*'
+      write: []
 `
 	rpcRootPath := filepath.Join(filepath.Dir(rpcPath), "syft.pub.yaml")
 	if err := os.MkdirAll(filepath.Dir(rpcRootPath), 0o755); err != nil {
@@ -956,6 +1069,10 @@ func (c *ClientHelper) WaitForRPCRequest(senderEmail, appName, endpoint, filenam
 				if expectedMD5 != "" {
 					content, err := os.ReadFile(fullPath)
 					if err != nil {
+						// On Windows, file may be locked during sync; retry
+						if isSharingViolation(err) {
+							continue
+						}
 						return fmt.Errorf("read file: %w", err)
 					}
 

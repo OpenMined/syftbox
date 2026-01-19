@@ -12,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "github.com/ncruces/go-sqlite3/embed"
 )
 
 // TestJournalGapSpuriousConflict demonstrates the race condition where:
@@ -54,7 +56,11 @@ func TestJournalGapSpuriousConflict(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob ACLs: %v", err)
 	}
-	time.Sleep(2 * time.Second)
+	settleTime := 2 * time.Second
+	if runtime.GOOS == "windows" {
+		settleTime = 5 * time.Second
+	}
+	time.Sleep(settleTime)
 
 	// Use public folder for simpler ACL handling
 	filename := "journal-race-test.txt"
@@ -73,7 +79,7 @@ func TestJournalGapSpuriousConflict(t *testing.T) {
 
 	// Step 2: Wait for Bob to receive file AND have journal entry
 	t.Log("Step 2: Wait for Bob to receive file and journal entry")
-	if err := waitForJournalEntry(journalPath, filename, v1MD5, 15*time.Second); err != nil {
+	if err := waitForJournalEntry(journalPath, filename, v1MD5, windowsTimeout(15*time.Second)); err != nil {
 		t.Fatalf("bob journal entry not found: %v", err)
 	}
 
@@ -448,8 +454,12 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Let the stack settle.
-	time.Sleep(1 * time.Second)
+	// Let the stack settle. Windows needs more time for MinIO rate limiting.
+	settleTime := 1 * time.Second
+	if runtime.GOOS == "windows" {
+		settleTime = 3 * time.Second
+	}
+	time.Sleep(settleTime)
 
 	const (
 		numFiles = 5
@@ -469,29 +479,19 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 		if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
 			t.Fatalf("upload %s: %v", filename, err)
 		}
+		if runtime.GOOS == "windows" {
+			time.Sleep(200 * time.Millisecond)
+		}
 	}
 
 	for i, filename := range filenames {
-		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], 10*time.Second); err != nil {
+		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], windowsTimeout(10*time.Second)); err != nil {
 			t.Fatalf("wait for %s: %v", filename, err)
 		}
 	}
 
 	syncDBPath := filepath.Join(h.bob.dataDir, ".data", "sync.db")
-	if err := deleteJournalEntries(t, syncDBPath, journalPaths); err != nil {
-		t.Fatalf("delete journal entries: %v", err)
-	}
-
-	// Verify the test setup: entries should be missing before the next sync.
-	counts, err := countJournalEntriesForPaths(syncDBPath, journalPaths)
-	if err != nil {
-		t.Fatalf("count journal entries: %v", err)
-	}
-	for _, p := range journalPaths {
-		if counts[p] != 0 {
-			t.Fatalf("expected journal entry for %q to be deleted, got %d (all=%v)", p, counts[p], counts)
-		}
-	}
+	ensureJournalEntriesDeleted(t, syncDBPath, journalPaths, 3, windowsTimeout(5*time.Second))
 
 	if err := triggerClientSync(t, h.bob); err != nil {
 		t.Fatalf("trigger bob sync: %v", err)
@@ -505,6 +505,57 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 	} else {
 		assertJournalCountsStable(t, syncDBPath, journalPaths, 0, 2*time.Second)
 	}
+}
+
+func ensureJournalEntriesDeleted(t *testing.T, journalDBPath string, paths []string, attempts int, timeout time.Duration) {
+	t.Helper()
+	var last map[string]int
+
+	for i := 1; i <= attempts; i++ {
+		if err := deleteJournalEntries(t, journalDBPath, paths); err != nil {
+			t.Fatalf("delete journal entries: %v", err)
+		}
+
+		counts, ok, err := waitForJournalCountsValue(journalDBPath, paths, 0, timeout)
+		if err != nil {
+			t.Fatalf("count journal entries: %v", err)
+		}
+		last = counts
+		if ok {
+			return
+		}
+		t.Logf("journal entries still present after delete attempt %d: %v", i, counts)
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	t.Fatalf("expected journal entries to be deleted after %d attempts, last=%v", attempts, last)
+}
+
+func waitForJournalCountsValue(journalDBPath string, paths []string, want int, timeout time.Duration) (map[string]int, bool, error) {
+	deadline := time.Now().Add(timeout)
+	var last map[string]int
+
+	for time.Now().Before(deadline) {
+		counts, err := countJournalEntriesForPaths(journalDBPath, paths)
+		if err != nil {
+			return nil, false, err
+		}
+		last = counts
+
+		allMatch := true
+		for _, p := range paths {
+			if counts[p] != want {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			return counts, true, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return last, false, nil
 }
 
 func deleteJournalEntries(t *testing.T, dbPath string, paths []string) error {
