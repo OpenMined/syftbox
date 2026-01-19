@@ -145,7 +145,11 @@ fn open_lock_file(lock_path: &Path) -> Result<fs::File> {
         .open(lock_path);
     match file {
         Ok(f) => Ok(f),
-        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+        Err(e)
+            if e.kind() == std::io::ErrorKind::PermissionDenied
+                || matches!(e.raw_os_error(), Some(5 | 32 | 33)) =>
+        {
+            // 5 = ERROR_ACCESS_DENIED, 32 = ERROR_SHARING_VIOLATION, 33 = ERROR_LOCK_VIOLATION.
             Err(WorkspaceLockedError.into())
         }
         Err(e) => Err(e).with_context(|| format!("open {}", lock_path.display())),
