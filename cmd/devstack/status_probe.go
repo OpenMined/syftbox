@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 )
@@ -20,21 +21,30 @@ type statusHTTPProbe struct {
 
 func probeHTTPBytes(t *testing.T, baseURL, token string) (sent, recv int64) {
 	t.Helper()
+	sent, recv, err := tryProbeHTTPBytes(baseURL, token)
+	if err != nil {
+		t.Fatalf("status probe failed for %s: %v", baseURL, err)
+	}
+	return sent, recv
+}
+
+// tryProbeHTTPBytes is a non-fatal version that returns an error instead of calling t.Fatalf.
+func tryProbeHTTPBytes(baseURL, token string) (sent, recv int64, err error) {
 	req, _ := http.NewRequest(http.MethodGet, baseURL+"/v1/status", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("status probe failed for %s: %v", baseURL, err)
+		return 0, 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status probe non-200 for %s: %s", baseURL, resp.Status)
+		return 0, 0, fmt.Errorf("non-200 status: %s", resp.Status)
 	}
 	var snap statusHTTPProbe
 	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
-		t.Fatalf("decode status probe for %s: %v", baseURL, err)
+		return 0, 0, err
 	}
-	return snap.Runtime.HTTP.BytesSentTotal, snap.Runtime.HTTP.BytesRecvTotal
+	return snap.Runtime.HTTP.BytesSentTotal, snap.Runtime.HTTP.BytesRecvTotal, nil
 }
 
 func deltaCounter(after, before int64) int64 {

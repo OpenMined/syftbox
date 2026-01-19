@@ -487,6 +487,35 @@ sbdev-test-group group mode="go":
     echo ""
     echo "✅ Test group '$GROUP' completed (mode=$MODE)!"
 
+# Run a single integration test by name
+[group('devstack')]
+sbdev-test-single test mode="go":
+    #!/bin/bash
+    set -eou pipefail
+    MODE_RAW="{{mode}}"
+    MODE_RAW="${MODE_RAW#mode=}"
+    MODE="$(echo "$MODE_RAW" | tr '[:upper:]' '[:lower:]')"
+    TEST_NAME="{{test}}"
+
+    echo "Running single test '$TEST_NAME' (mode=$MODE)..."
+    root_dir="$(pwd)"
+    rust_bin="$root_dir/rust/target/release/syftbox-rs"
+    if [[ "$MODE" != "go" ]]; then
+        cd rust && cargo build --release && cd "$root_dir"
+        export SBDEV_RUST_CLIENT_BIN="$rust_bin"
+        export SBDEV_CLIENT_MODE="$MODE"
+    else
+        unset SBDEV_CLIENT_MODE SBDEV_RUST_CLIENT_BIN
+    fi
+
+    SANDBOX_DIR="${PERF_TEST_SANDBOX:-$root_dir/.test-sandbox/single-test}"
+    echo "Sandbox: $SANDBOX_DIR"
+    rm -rf "$SANDBOX_DIR"
+    cd cmd/devstack
+    PERF_TEST_SANDBOX="$SANDBOX_DIR" GOCACHE="${GOCACHE:-$(pwd)/.gocache}" go test -count=1 -v -timeout 20m -tags integration -run "^${TEST_NAME}$"
+    echo ""
+    echo "✅ Test '$TEST_NAME' completed (mode=$MODE)!"
+
 [group('devstack')]
 sbdev-test-all mode="go":
     #!/bin/bash

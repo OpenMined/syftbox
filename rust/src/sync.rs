@@ -1223,14 +1223,32 @@ impl LocalScanner {
 async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<String, BlobInfo>> {
     let mut out = HashMap::new();
     let view = api.datasite_view().await?;
+
+    // Debug: log raw file count from server
+    let total_files = view.files.len();
+    let mut ignored_count = 0;
+    let mut filtered_count = 0;
+
     for file in view.files {
         if should_ignore_key(filters, &file.key) {
+            ignored_count += 1;
             continue;
         }
         if is_synced_key(&file.key) && !is_marked_key(&file.key) {
             out.insert(file.key.clone(), file);
+        } else {
+            filtered_count += 1;
         }
     }
+
+    // Log if we're seeing fewer files than expected
+    if total_files > 0 {
+        crate::logging::info(format!(
+            "scan_remote: server returned {} files, ignored={}, filtered={}, kept={}",
+            total_files, ignored_count, filtered_count, out.len()
+        ));
+    }
+
     Ok(out)
 }
 

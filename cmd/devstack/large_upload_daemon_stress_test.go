@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -101,11 +102,33 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	aliceClientURL = fmt.Sprintf("http://127.0.0.1:%d", newState.Port)
 
 	// Give daemon a moment to boot and rewrite log/token.
-	time.Sleep(2 * time.Second)
+	// Windows needs more time for port release and process startup.
+	startupWait := 2 * time.Second
+	if runtime.GOOS == "windows" {
+		startupWait = 5 * time.Second
+	}
+	time.Sleep(startupWait)
 	authToken = extractAuthToken(t, newState.LogPath)
 	maybeWriteWatchEnv(t, aliceClientURL, authToken)
 
-	aliceSentRestart0, aliceRecvRestart0 := probeHTTPBytes(t, aliceClientURL, authToken)
+	// Wait for client to be ready with retries (use non-fatal probe)
+	var aliceSentRestart0, aliceRecvRestart0 int64
+	var probeErr error
+	probeDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(probeDeadline) {
+		sent, recv, err := tryProbeHTTPBytes(aliceClientURL, authToken)
+		if err == nil {
+			aliceSentRestart0, aliceRecvRestart0 = sent, recv
+			probeErr = nil
+			break
+		}
+		probeErr = err
+		t.Logf("Waiting for alice client to be ready: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	if probeErr != nil {
+		t.Fatalf("alice client never became ready after restart: %v", probeErr)
+	}
 	t.Logf("alice HTTP totals after restart baseline: sent=%d recv=%d", aliceSentRestart0, aliceRecvRestart0)
 
 	// Trigger sync repeatedly until bob sees the file.
