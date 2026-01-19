@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -296,6 +297,42 @@ func TestDivergentEdits(t *testing.T) {
 	t.Log("Step 6: Wait for conflict resolution (15s)")
 	time.Sleep(15 * time.Second)
 
+	// Debug: Check bob's sync log after restart
+	bobSyftboxLog := filepath.Join(h.bob.state.HomePath, ".syftbox", "logs", "syftbox.log")
+	if logData, err := os.ReadFile(bobSyftboxLog); err == nil {
+		lines := strings.Split(string(logData), "\n")
+		t.Logf("DEBUG: bob's last 40 log lines after restart:")
+		start := len(lines) - 40
+		if start < 0 {
+			start = 0
+		}
+		for _, line := range lines[start:] {
+			if strings.Contains(line, "sync") || strings.Contains(line, "conflict") ||
+				strings.Contains(line, "divergent") || strings.Contains(line, "download") ||
+				strings.Contains(line, "upload") || strings.Contains(line, "journal") {
+				t.Logf("  %s", line)
+			}
+		}
+	} else {
+		t.Logf("DEBUG: couldn't read bob's syftbox log: %v", err)
+	}
+
+	// Debug: Check bob's journal after sync
+	journalPathAfter := filepath.Join(h.bob.dataDir, ".data", "sync.db")
+	if db, err := sql.Open("sqlite3", journalPathAfter); err == nil {
+		defer db.Close()
+		rows, err := db.Query("SELECT path, etag FROM sync_journal WHERE path LIKE '%divergent%'")
+		if err == nil {
+			defer rows.Close()
+			t.Log("DEBUG: bob's journal entries for divergent.txt after sync:")
+			for rows.Next() {
+				var path, etag string
+				rows.Scan(&path, &etag)
+				t.Logf("     path=%s etag=%s", path, etag)
+			}
+		}
+	}
+
 	// Step 7: Check final states
 	t.Log("Step 7: Verify conflict resolution")
 
@@ -323,6 +360,24 @@ func TestDivergentEdits(t *testing.T) {
 		t.Errorf("❌ Divergent final states! Alice: %s, Bob: %s", aliceFinalMD5, bobFinalMD5)
 		t.Logf("   Alice content: %s", string(aliceFinal))
 		t.Logf("   Bob content: %s", string(bobFinal))
+		t.Logf("   Expected v2 MD5: %s", v2MD5)
+		t.Logf("   Expected v3 MD5: %s", v3MD5)
+
+		// Additional debugging: check for conflict files
+		alicePublic := filepath.Join(h.alice.dataDir, "datasites", h.alice.email, "public")
+		if entries, err := os.ReadDir(alicePublic); err == nil {
+			t.Log("DEBUG: Files in Alice's public dir:")
+			for _, e := range entries {
+				t.Logf("  - %s", e.Name())
+			}
+		}
+		bobPublicView := filepath.Join(h.bob.dataDir, "datasites", h.alice.email, "public")
+		if entries, err := os.ReadDir(bobPublicView); err == nil {
+			t.Log("DEBUG: Files in Bob's view of Alice's public dir:")
+			for _, e := range entries {
+				t.Logf("  - %s", e.Name())
+			}
+		}
 	}
 
 	// Document behavior
@@ -381,7 +436,21 @@ func TestThreeWayConflict(t *testing.T) {
 		metrics:   &ClientMetrics{},
 	}
 
-	time.Sleep(2 * time.Second) // Wait for charlie to initialize
+	// Wait for charlie to initialize - Windows needs more time
+	charlieInitWait := 2 * time.Second
+	if runtime.GOOS == "windows" {
+		charlieInitWait = 5 * time.Second
+	}
+	t.Logf("   Waiting %v for charlie to initialize...", charlieInitWait)
+	time.Sleep(charlieInitWait)
+
+	// Debug: verify charlie's datasites are set up
+	charlieAliceView := filepath.Join(charlie.dataDir, "datasites", h.alice.email)
+	if _, err := os.Stat(charlieAliceView); err != nil {
+		t.Logf("DEBUG: charlie has NO view of alice's datasite yet: %v", err)
+	} else {
+		t.Logf("DEBUG: charlie has view of alice's datasite ✓")
+	}
 
 	// Create initial file
 	filename := "three-way.txt"
@@ -395,12 +464,57 @@ func TestThreeWayConflict(t *testing.T) {
 
 	// Wait for all to receive - use longer timeout for 3-client scenarios
 	t.Log("Step 2: Wait for bob and charlie to receive")
-	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(45*time.Second)); err != nil {
+
+	// Debug: Check bob's view of alice before waiting
+	bobAliceView := filepath.Join(h.bob.dataDir, "datasites", h.alice.email, "public")
+	if entries, err := os.ReadDir(bobAliceView); err == nil {
+		t.Logf("DEBUG: bob sees in alice's public: %d files", len(entries))
+		for _, e := range entries {
+			t.Logf("  - %s", e.Name())
+		}
+	} else {
+		t.Logf("DEBUG: bob cannot read alice's public dir: %v", err)
+	}
+
+	bobTimeout := windowsTimeout(45 * time.Second)
+	t.Logf("DEBUG: waiting %v for bob to receive %s", bobTimeout, filename)
+	if err := h.bob.WaitForFile(h.alice.email, filename, initialMD5, bobTimeout); err != nil {
+		// Debug on failure: dump bob's sync log
+		bobLog := filepath.Join(h.bob.state.HomePath, ".syftbox", "logs", "syftbox.log")
+		if logData, logErr := os.ReadFile(bobLog); logErr == nil {
+			lines := strings.Split(string(logData), "\n")
+			t.Logf("DEBUG FAILURE: bob's last 30 log lines:")
+			start := len(lines) - 30
+			if start < 0 {
+				start = 0
+			}
+			for _, line := range lines[start:] {
+				t.Logf("  %s", line)
+			}
+		}
 		t.Fatalf("bob didn't receive: %v", err)
 	}
-	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, windowsTimeout(45*time.Second)); err != nil {
+	t.Log("   bob received ✓")
+
+	charlieTimeout := windowsTimeout(45 * time.Second)
+	t.Logf("DEBUG: waiting %v for charlie to receive %s", charlieTimeout, filename)
+	if err := charlie.WaitForFile(h.alice.email, filename, initialMD5, charlieTimeout); err != nil {
+		// Debug on failure: dump charlie's sync log
+		charlieLog := filepath.Join(charlie.state.HomePath, ".syftbox", "logs", "syftbox.log")
+		if logData, logErr := os.ReadFile(charlieLog); logErr == nil {
+			lines := strings.Split(string(logData), "\n")
+			t.Logf("DEBUG FAILURE: charlie's last 30 log lines:")
+			start := len(lines) - 30
+			if start < 0 {
+				start = 0
+			}
+			for _, line := range lines[start:] {
+				t.Logf("  %s", line)
+			}
+		}
 		t.Fatalf("charlie didn't receive: %v", err)
 	}
+	t.Log("   charlie received ✓")
 
 	// Prepare three different versions
 	aliceContent := []byte("alice's version - " + time.Now().String())

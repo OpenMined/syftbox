@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,16 +54,47 @@ func TestACLPropagationUpdates(t *testing.T) {
 	waitForPath := func(c *ClientHelper, sender, relPath, wantMD5 string, timeout time.Duration) error {
 		path := filepath.Join(c.dataDir, "datasites", sender, relPath)
 		deadline := time.Now().Add(timeout)
+		lastLog := time.Now()
+		var lastErr error
+		var lastMD5 string
 		for time.Now().Before(deadline) {
 			data, err := os.ReadFile(path)
 			if err == nil {
-				if fmt.Sprintf("%x", md5.Sum(data)) == wantMD5 {
+				gotMD5 := fmt.Sprintf("%x", md5.Sum(data))
+				if gotMD5 == wantMD5 {
 					return nil
 				}
+				lastMD5 = gotMD5
+				lastErr = nil
+			} else {
+				lastErr = err
+			}
+			// Log every 10 seconds during wait
+			if time.Since(lastLog) > 10*time.Second {
+				if lastErr != nil {
+					t.Logf("DEBUG waitForPath: %s waiting for %s from %s - file not found: %v", c.email, relPath, sender, lastErr)
+				} else {
+					t.Logf("DEBUG waitForPath: %s waiting for %s from %s - MD5 mismatch: got %s, want %s", c.email, relPath, sender, lastMD5, wantMD5)
+				}
+				// Also check parent directory
+				parentDir := filepath.Dir(path)
+				if entries, err := os.ReadDir(parentDir); err == nil {
+					t.Logf("DEBUG waitForPath: parent dir %s contains:", parentDir)
+					for _, e := range entries {
+						t.Logf("  - %s", e.Name())
+					}
+				} else {
+					t.Logf("DEBUG waitForPath: parent dir %s does not exist: %v", parentDir, err)
+				}
+				lastLog = time.Now()
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		return fmt.Errorf("timeout waiting for %s", relPath)
+		// Final debug on timeout
+		if lastErr != nil {
+			return fmt.Errorf("timeout waiting for %s (last error: %v)", relPath, lastErr)
+		}
+		return fmt.Errorf("timeout waiting for %s (MD5 mismatch: got %s, want %s)", relPath, lastMD5, wantMD5)
 	}
 
 	writeACL := func(c *ClientHelper, relPath, content string) (string, error) {
@@ -82,6 +114,19 @@ func TestACLPropagationUpdates(t *testing.T) {
 				continue
 			}
 			if err := waitForPath(peer, owner.email, relPath, wantMD5, timeout); err != nil {
+				// Debug: dump peer's sync log on failure
+				peerSyftboxLog := filepath.Join(peer.state.HomePath, ".syftbox", "logs", "syftbox.log")
+				if logData, logErr := os.ReadFile(peerSyftboxLog); logErr == nil {
+					lines := strings.Split(string(logData), "\n")
+					t.Logf("DEBUG FAILURE: %s's last 30 log lines:", peer.email)
+					start := len(lines) - 30
+					if start < 0 {
+						start = 0
+					}
+					for _, line := range lines[start:] {
+						t.Logf("  %s", line)
+					}
+				}
 				t.Fatalf("propagation of %s from %s to %s failed: %v", relPath, owner.email, peer.email, err)
 			}
 		}
@@ -144,11 +189,78 @@ rules:
 	// RPC ACL: update and verify propagation
 	app := "aclprop"
 	endpoint := "rpc1"
+
+	t.Logf("DEBUG: Setting up RPC endpoint for bob")
 	if err := h.bob.SetupRPCEndpoint(app, endpoint); err != nil {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
+
 	rpcRootRel := filepath.Join("app_data", app, "rpc", "syft.pub.yaml")
 	rpcRel := filepath.Join("app_data", app, "rpc", endpoint, "syft.pub.yaml")
+
+	// Debug: verify bob's files exist locally
+	bobRootACLPath := filepath.Join(h.bob.dataDir, "datasites", h.bob.email, rpcRootRel)
+	bobEndpointACLPath := filepath.Join(h.bob.dataDir, "datasites", h.bob.email, rpcRel)
+	if _, err := os.Stat(bobRootACLPath); err != nil {
+		t.Fatalf("DEBUG: bob's root ACL not created: %v", err)
+	}
+	t.Logf("DEBUG: bob's root ACL exists at %s", bobRootACLPath)
+	if _, err := os.Stat(bobEndpointACLPath); err != nil {
+		t.Fatalf("DEBUG: bob's endpoint ACL not created: %v", err)
+	}
+	t.Logf("DEBUG: bob's endpoint ACL exists at %s", bobEndpointACLPath)
+
+	// Debug: check what datasites alice is subscribed to
+	aliceDatasites := filepath.Join(h.alice.dataDir, "datasites")
+	entries, _ := os.ReadDir(aliceDatasites)
+	t.Logf("DEBUG: alice's datasites directory contains:")
+	for _, e := range entries {
+		t.Logf("  - %s", e.Name())
+	}
+
+	// Debug: trigger sync and wait briefly
+	t.Logf("DEBUG: Triggering sync for bob and waiting for upload...")
+	time.Sleep(2 * time.Second)
+
+	// Debug: check bob's sync log for upload activity
+	bobSyftboxLog := filepath.Join(h.bob.state.HomePath, ".syftbox", "logs", "syftbox.log")
+	if logData, err := os.ReadFile(bobSyftboxLog); err == nil {
+		lines := strings.Split(string(logData), "\n")
+		t.Logf("DEBUG: bob's last 20 log lines:")
+		start := len(lines) - 20
+		if start < 0 {
+			start = 0
+		}
+		for _, line := range lines[start:] {
+			if strings.Contains(line, "upload") || strings.Contains(line, "sync") || strings.Contains(line, "aclprop") {
+				t.Logf("  %s", line)
+			}
+		}
+	} else {
+		t.Logf("DEBUG: couldn't read bob's syftbox log: %v", err)
+	}
+
+	// Debug: check alice's view of bob's datasite
+	aliceViewOfBob := filepath.Join(h.alice.dataDir, "datasites", h.bob.email)
+	if _, err := os.Stat(aliceViewOfBob); err != nil {
+		t.Logf("DEBUG: alice has NO view of bob's datasite yet: %v", err)
+	} else {
+		t.Logf("DEBUG: alice has view of bob's datasite at %s", aliceViewOfBob)
+		bobEntries, _ := os.ReadDir(aliceViewOfBob)
+		t.Logf("DEBUG: alice sees in bob's datasite:")
+		for _, e := range bobEntries {
+			t.Logf("  - %s", e.Name())
+		}
+	}
+
+	// Debug: check charlie's view too
+	charlieViewOfBob := filepath.Join(charlie.dataDir, "datasites", h.bob.email)
+	if _, err := os.Stat(charlieViewOfBob); err != nil {
+		t.Logf("DEBUG: charlie has NO view of bob's datasite yet: %v", err)
+	} else {
+		t.Logf("DEBUG: charlie has view of bob's datasite at %s", charlieViewOfBob)
+	}
+
 	rpcACL := `rules:
   - pattern: '**.request'
     access:
