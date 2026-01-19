@@ -111,7 +111,7 @@ fn unlock_file(file: &fs::File) -> Result<()> {
 
 #[cfg(windows)]
 fn lock_file(_file: &fs::File) -> Result<()> {
-    // open_lock_file() uses create_new so locking is implicit.
+    // open_lock_file() uses share_mode(0) so locking is implicit.
     Ok(())
 }
 
@@ -133,15 +133,21 @@ fn open_lock_file(lock_path: &Path) -> Result<fs::File> {
 
 #[cfg(windows)]
 fn open_lock_file(lock_path: &Path) -> Result<fs::File> {
-    // Emulate an exclusive lock by atomically creating the file.
+    use std::os::windows::fs::OpenOptionsExt;
+
+    // Emulate an exclusive lock by opening with no sharing so other processes
+    // get PermissionDenied while this handle is alive.
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .create_new(true)
+        .create(true)
+        .share_mode(0)
         .open(lock_path);
     match file {
         Ok(f) => Ok(f),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(WorkspaceLockedError.into()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err(WorkspaceLockedError.into())
+        }
         Err(e) => Err(e).with_context(|| format!("open {}", lock_path.display())),
     }
 }
