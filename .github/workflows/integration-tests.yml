@@ -22,7 +22,7 @@ jobs:
           - os: macos-latest
             runner: namespace-profile-mac-medium
           - os: windows-latest
-            runner: warp-windows-2025-x64-8x
+            runner: warp-windows-latest-x64-8x
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
 
@@ -59,7 +59,7 @@ jobs:
           - os: macos-latest
             runner: namespace-profile-mac-medium
           - os: windows-latest
-            runner: warp-windows-2025-x64-8x
+            runner: warp-windows-latest-x64-8x
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
 
@@ -118,7 +118,14 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: ubuntu-latest
+            runner: namespace-profile-linux-medium
+          - os: macos-latest
+            runner: namespace-profile-mac-medium
+          - os: windows-latest
+            runner: warp-windows-latest-x64-8x
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
 
     steps:

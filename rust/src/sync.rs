@@ -721,13 +721,23 @@ pub async fn sync_once_with_control(
             let meta = fs::metadata(&abs)?;
             if meta.is_dir() {
                 match fs::remove_dir_all(&abs) {
-                    Ok(()) => crate::logging::info(format!("sync local_delete removed dir key={}", key)),
-                    Err(e) => crate::logging::error(format!("sync local_delete dir failed key={} err={:?}", key, e)),
+                    Ok(()) => {
+                        crate::logging::info(format!("sync local_delete removed dir key={}", key))
+                    }
+                    Err(e) => crate::logging::error(format!(
+                        "sync local_delete dir failed key={} err={:?}",
+                        key, e
+                    )),
                 }
             } else {
                 match fs::remove_file(&abs) {
-                    Ok(()) => crate::logging::info(format!("sync local_delete removed file key={}", key)),
-                    Err(e) => crate::logging::error(format!("sync local_delete file failed key={} err={:?}", key, e)),
+                    Ok(()) => {
+                        crate::logging::info(format!("sync local_delete removed file key={}", key))
+                    }
+                    Err(e) => crate::logging::error(format!(
+                        "sync local_delete file failed key={} err={:?}",
+                        key, e
+                    )),
                 }
             }
         }
@@ -933,21 +943,38 @@ async fn commit_staged_downloads(staged: Vec<StagedDownload>) -> Result<()> {
             let meta = fs::metadata(&item.target)?;
             if meta.is_dir() {
                 match fs::remove_dir_all(&item.target) {
-                    Ok(()) => crate::logging::info(format!("commit_staged removed dir target={}", item.target.display())),
+                    Ok(()) => crate::logging::info(format!(
+                        "commit_staged removed dir target={}",
+                        item.target.display()
+                    )),
                     Err(e) => {
-                        crate::logging::error(format!("commit_staged remove dir failed target={} err={:?}", item.target.display(), e));
+                        crate::logging::error(format!(
+                            "commit_staged remove dir failed target={} err={:?}",
+                            item.target.display(),
+                            e
+                        ));
                         return Err(e.into());
                     }
                 }
             } else {
                 match fs::remove_file(&item.target) {
-                    Ok(()) => crate::logging::info(format!("commit_staged removed file target={}", item.target.display())),
-                    Err(e) => crate::logging::error(format!("commit_staged remove file failed (continuing) target={} err={:?}", item.target.display(), e)),
+                    Ok(()) => crate::logging::info(format!(
+                        "commit_staged removed file target={}",
+                        item.target.display()
+                    )),
+                    Err(e) => crate::logging::error(format!(
+                        "commit_staged remove file failed (continuing) target={} err={:?}",
+                        item.target.display(),
+                        e
+                    )),
                 }
             }
         }
         match tokio::fs::rename(&item.tmp, &item.target).await {
-            Ok(()) => crate::logging::info(format!("commit_staged rename success target={}", item.target.display())),
+            Ok(()) => crate::logging::info(format!(
+                "commit_staged rename success target={}",
+                item.target.display()
+            )),
             Err(e) => {
                 crate::logging::error(format!(
                     "commit_staged rename failed tmp={} target={} err={:?}",
@@ -955,7 +982,12 @@ async fn commit_staged_downloads(staged: Vec<StagedDownload>) -> Result<()> {
                     item.target.display(),
                     e
                 ));
-                return Err(anyhow::anyhow!("rename {} -> {}: {}", item.tmp.display(), item.target.display(), e));
+                return Err(anyhow::anyhow!(
+                    "rename {} -> {}: {}",
+                    item.tmp.display(),
+                    item.target.display(),
+                    e
+                ));
             }
         }
     }
