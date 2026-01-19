@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        group: [ core, acl, conflict, journal, perf, upload, ws, chaos ]
+        group: [ core, acl, state, transfer ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
 
@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        group: [ core, acl, conflict, journal, perf, upload, ws, chaos ]
+        group: [ core, acl, state, transfer ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 

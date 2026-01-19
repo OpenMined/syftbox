@@ -442,15 +442,12 @@ sbdev-test-cleanup:
 # Integration test groups - each group can run in parallel in CI
 # IMPORTANT: When adding new tests, add them to the appropriate group below
 # Run `just sbdev-test-verify` to check all tests are covered
-_test_group_core := "TestDevstackIntegration|TestACKNACKMechanism|TestParseStartFlagsSkipClientDaemons"
+# Groups: core (foundational), acl (permissions), state (file state/conflicts), transfer (uploads/perf)
+_test_group_core := "TestDevstackIntegration|TestACKNACKMechanism|TestParseStartFlagsSkipClientDaemons|TestWebSocketReconnectAfterServerRestart|TestChaosSync"
 _test_group_acl := "TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestACLChangeDuringUpload"
-_test_group_conflict := "TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestDeleteDuringDownload|TestDeleteDuringTempRename|TestOverwriteDuringDownload"
-_test_group_journal := "TestJournalGapSpuriousConflict|TestJournalGapHealing"
-_test_group_perf := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance"
-_test_group_upload := "TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
-_test_group_ws := "TestWebSocketReconnectAfterServerRestart"
-_test_group_chaos := "TestChaosSync"
-_test_group_all := _test_group_core + "|" + _test_group_acl + "|" + _test_group_conflict + "|" + _test_group_journal + "|" + _test_group_perf + "|" + _test_group_upload + "|" + _test_group_ws + "|" + _test_group_chaos
+_test_group_state := "TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate|TestRapidSequentialEdits|TestJournalLossRecovery|TestDeleteDuringDownload|TestDeleteDuringTempRename|TestOverwriteDuringDownload|TestJournalGapSpuriousConflict|TestJournalGapHealing"
+_test_group_transfer := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_all := _test_group_core + "|" + _test_group_acl + "|" + _test_group_state + "|" + _test_group_transfer
 
 [group('devstack')]
 sbdev-test-group group mode="go":
@@ -465,14 +462,10 @@ sbdev-test-group group mode="go":
     case "$GROUP" in
         core)     PATTERN="{{_test_group_core}}" ;;
         acl)      PATTERN="{{_test_group_acl}}" ;;
-        conflict) PATTERN="{{_test_group_conflict}}" ;;
-        journal)  PATTERN="{{_test_group_journal}}" ;;
-        perf)     PATTERN="{{_test_group_perf}}" ;;
-        upload)   PATTERN="{{_test_group_upload}}" ;;
-        ws)       PATTERN="{{_test_group_ws}}" ;;
-        chaos)    PATTERN="{{_test_group_chaos}}" ;;
+        state)    PATTERN="{{_test_group_state}}" ;;
+        transfer) PATTERN="{{_test_group_transfer}}" ;;
         all)      PATTERN="{{_test_group_all}}" ;;
-        *)        echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, conflict, journal, perf, upload, ws, chaos, all"; exit 1 ;;
+        *)        echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, transfer, all"; exit 1 ;;
     esac
 
     echo "Running integration test group '$GROUP' (mode=$MODE)..."
@@ -557,12 +550,8 @@ sbdev-test-verify:
     echo "Groups:"
     echo "  core:     {{_test_group_core}}"
     echo "  acl:      {{_test_group_acl}}"
-    echo "  conflict: {{_test_group_conflict}}"
-    echo "  journal:  {{_test_group_journal}}"
-    echo "  perf:     {{_test_group_perf}}"
-    echo "  upload:   {{_test_group_upload}}"
-    echo "  ws:       {{_test_group_ws}}"
-    echo "  chaos:    {{_test_group_chaos}}"
+    echo "  state:    {{_test_group_state}}"
+    echo "  transfer: {{_test_group_transfer}}"
 
 [group('devstack')]
 sbdev-test-all-serial mode="go":
