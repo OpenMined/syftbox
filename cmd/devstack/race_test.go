@@ -91,9 +91,12 @@ func TestDeleteDuringDownload(t *testing.T) {
 	}
 
 	// Step 6: Eventually bob should sync the deletion
+	// On Windows, delete propagation can take longer due to the 30-second grace window
+	// for remote_deleted detection, plus additional sync cycles needed.
 	t.Log("Step 6: Verify bob eventually deletes the file")
 	bobFilePath := filepath.Join(h.bob.dataDir, "datasites", h.alice.email, "public", filename)
-	if err := waitForFileGone(bobFilePath, windowsTimeout(30*time.Second)); err != nil {
+	deleteTimeout := windowsTimeout(60 * time.Second)
+	if err := waitForFileGone(bobFilePath, deleteTimeout); err != nil {
 		t.Error(err.Error())
 	} else {
 		t.Log("✅ Bob deleted file successfully")

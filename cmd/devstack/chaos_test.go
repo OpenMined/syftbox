@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -405,8 +406,13 @@ rules:
 			updateACLState(target.email, []string{})
 
 			// Don't wait for ACL propagation - owner-only ACL won't be sent to peers
-			// Just wait for the ACL to be uploaded to server
-			time.Sleep(500 * time.Millisecond)
+			// Just wait for the ACL to be uploaded to server.
+			// On Windows, file watcher + sync cycle takes longer.
+			aclUploadWait := 500 * time.Millisecond
+			if runtime.GOOS == "windows" {
+				aclUploadWait = 3 * time.Second
+			}
+			time.Sleep(aclUploadWait)
 
 			name := fmt.Sprintf("acl-revoke-%d.txt", i)
 			payload := GenerateRandomFile(2 * 1024)

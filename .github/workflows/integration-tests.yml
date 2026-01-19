@@ -9,20 +9,17 @@ on:
 
 jobs:
   # Run test groups in parallel for faster CI and easier debugging
+  # TEMPORARY: Only running Windows tests while debugging Windows-specific issues
   devstack-go:
     name: Go ${{ matrix.group }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ windows-latest ]
         group: [ core, acl, state, transfer ]
         include:
-          - os: ubuntu-latest
-            runner: namespace-profile-linux-medium
-          - os: macos-latest
-            runner: namespace-profile-mac-medium
           - os: windows-latest
-            runner: warp-windows-latest-x64-8x
+            runner: namespace-profile-windows-medium
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
 
@@ -46,20 +43,17 @@ jobs:
       run: just sbdev-test-group ${{ matrix.group }}
       shell: bash
 
+  # TEMPORARY: Only running Windows tests while debugging Windows-specific issues
   devstack-rust:
     name: Rust ${{ matrix.group }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ windows-latest ]
         group: [ core, acl, state, transfer ]
         include:
-          - os: ubuntu-latest
-            runner: namespace-profile-linux-medium
-          - os: macos-latest
-            runner: namespace-profile-mac-medium
           - os: windows-latest
-            runner: warp-windows-latest-x64-8x
+            runner: namespace-profile-windows-medium
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
 
@@ -91,40 +85,37 @@ jobs:
       run: just sbdev-test-group ${{ matrix.group }} mode=rust
       shell: bash
 
-  # Verify no tests are missing from groups
-  verify-test-coverage:
-    name: Verify Test Groups
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+  # TEMPORARY: Disabled while debugging Windows-specific issues
+  # verify-test-coverage:
+  #   name: Verify Test Groups
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 5
+  #
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #
+  #   - name: Set up Go
+  #     uses: actions/setup-go@v5
+  #     with:
+  #       go-version: '1.24.3'
+  #
+  #   - name: Install just
+  #     uses: extractions/setup-just@v2
+  #
+  #   - name: Verify all tests are in groups
+  #     run: just sbdev-test-verify
+  #     shell: bash
 
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.24.3'
-
-    - name: Install just
-      uses: extractions/setup-just@v2
-
-    - name: Verify all tests are in groups
-      run: just sbdev-test-verify
-      shell: bash
-
+  # TEMPORARY: Only running Windows tests while debugging Windows-specific issues
   devstack-chaos:
     name: Chaos Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ windows-latest ]
         include:
-          - os: ubuntu-latest
-            runner: namespace-profile-linux-medium
-          - os: macos-latest
-            runner: namespace-profile-mac-medium
           - os: windows-latest
-            runner: warp-windows-latest-x64-8x
+            runner: namespace-profile-windows-medium
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
 

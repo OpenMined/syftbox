@@ -1118,12 +1118,98 @@ func runSyncCheck(root string, emails []string) error {
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
 		if err := waitForFile(target, content, windowsScaledTimeout(45*time.Second)); err != nil {
+			// Debug: dump client state on failure
+			debugSyncCheckFailure(root, email, src, filename)
 			return fmt.Errorf("sync probe not replicated to %s (%s): %w", email, target, err)
 		}
 	}
 
 	fmt.Printf("Sync check passed (%s replicated to %d clients)\n", filename, len(emails)-1)
 	return nil
+}
+
+// debugSyncCheckFailure dumps diagnostic information when a sync check fails.
+func debugSyncCheckFailure(root, email, src, filename string) {
+	fmt.Printf("\n[DEBUG] Sync check failure diagnostics for %s:\n", email)
+
+	// Check if client process is running
+	state, _, err := readState(root)
+	if err != nil {
+		fmt.Printf("[DEBUG]   Could not read state: %v\n", err)
+	} else {
+		for _, c := range state.Clients {
+			if c.Email == email {
+				fmt.Printf("[DEBUG]   Client PID: %d\n", c.PID)
+				// Check if process exists
+				if proc, err := os.FindProcess(c.PID); err == nil {
+					// On Unix, FindProcess always succeeds; need to send signal 0 to check
+					// On Windows, FindProcess returns error if process doesn't exist
+					fmt.Printf("[DEBUG]   Process found (may or may not be running): %v\n", proc)
+				}
+
+				// Dump last 50 lines of client log
+				logPath := c.LogPath
+				if logPath == "" {
+					logPath = filepath.Join(root, email, ".syftbox", "logs", "syftbox.log")
+				}
+				if logData, err := os.ReadFile(logPath); err == nil {
+					lines := strings.Split(string(logData), "\n")
+					start := len(lines) - 50
+					if start < 0 {
+						start = 0
+					}
+					fmt.Printf("[DEBUG]   Last %d log lines from %s:\n", len(lines)-start, logPath)
+					for _, line := range lines[start:] {
+						if line != "" {
+							fmt.Printf("[DEBUG]     %s\n", line)
+						}
+					}
+				} else {
+					fmt.Printf("[DEBUG]   Could not read log file %s: %v\n", logPath, err)
+				}
+				break
+			}
+		}
+	}
+
+	// List datasites directory
+	datasitesDir := filepath.Join(root, email, "datasites")
+	fmt.Printf("[DEBUG]   Datasites directory: %s\n", datasitesDir)
+	if entries, err := os.ReadDir(datasitesDir); err == nil {
+		fmt.Printf("[DEBUG]   Contains %d entries:\n", len(entries))
+		for _, e := range entries {
+			fmt.Printf("[DEBUG]     - %s\n", e.Name())
+		}
+	} else {
+		fmt.Printf("[DEBUG]   Could not read datasites dir: %v\n", err)
+	}
+
+	// Check source's public directory on this client
+	srcPublicDir := filepath.Join(root, email, "datasites", src, "public")
+	fmt.Printf("[DEBUG]   Source public dir: %s\n", srcPublicDir)
+	if entries, err := os.ReadDir(srcPublicDir); err == nil {
+		fmt.Printf("[DEBUG]   Contains %d entries:\n", len(entries))
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				fmt.Printf("[DEBUG]     - %s (size=%d, mod=%s)\n", e.Name(), info.Size(), info.ModTime().Format(time.RFC3339))
+			} else {
+				fmt.Printf("[DEBUG]     - %s\n", e.Name())
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG]   Could not read source public dir: %v\n", err)
+	}
+
+	// Check sync journal
+	journalPath := filepath.Join(root, email, ".data", "sync.db")
+	if _, err := os.Stat(journalPath); err == nil {
+		fmt.Printf("[DEBUG]   Sync journal exists at %s\n", journalPath)
+	} else {
+		fmt.Printf("[DEBUG]   Sync journal NOT found at %s: %v\n", journalPath, err)
+	}
+
+	fmt.Printf("[DEBUG] End of diagnostics for %s\n\n", email)
 }
 
 func publicPath(root, email string) string {

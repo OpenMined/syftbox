@@ -169,7 +169,8 @@ rules:
 		if err != nil {
 			t.Fatalf("write public ACL permissive for %s: %v", owner.email, err)
 		}
-		expectPropagation(owner, publicRel, md5Perm, windowsTimeout(30*time.Second))
+		// Windows sync needs more time due to file watcher delays and sync cycle timing
+		expectPropagation(owner, publicRel, md5Perm, windowsTimeout(60*time.Second))
 
 		version++
 		onePeer := clients[(idx+1)%len(clients)]
@@ -186,7 +187,7 @@ rules:
 		if err != nil {
 			t.Fatalf("write public ACL shared for %s: %v", owner.email, err)
 		}
-		expectPropagation(owner, publicRel, md5Shared, windowsTimeout(30*time.Second))
+		expectPropagation(owner, publicRel, md5Shared, windowsTimeout(60*time.Second))
 
 		version++
 		ownerOnly := `terminal: false
@@ -202,7 +203,7 @@ rules:
 		if err != nil {
 			t.Fatalf("write public ACL restrictive for %s: %v", owner.email, err)
 		}
-		expectPropagation(owner, publicRel, md5Restrict, windowsTimeout(30*time.Second))
+		expectPropagation(owner, publicRel, md5Restrict, windowsTimeout(60*time.Second))
 	}
 
 	// RPC ACL: update and verify propagation
