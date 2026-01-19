@@ -802,6 +802,12 @@ async fn handle_ws_file_write(
     let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
     if is_acl_file {
         if let Some(datasite) = file.path.split('/').next() {
+            // Note ACL activity BEFORE checking for pending manifest (matches Go behavior).
+            // This refreshes the grace window for the datasite, protecting ACL files from
+            // deletion even when the user doesn't receive a new manifest (e.g., when another
+            // user's ACL change triggers a broadcast that we receive).
+            acl_staging.note_acl_activity(datasite);
+
             if acl_staging.has_pending_manifest(datasite) {
                 // Get the ACL directory path (the parent of syft.pub.yaml)
                 let acl_dir = if file.path.contains('/') {

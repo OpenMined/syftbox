@@ -6,10 +6,8 @@ use crate::wsproto::ACLManifest;
 
 /// Grace period after ACL set is applied - protects ACL files from deletion
 /// during the window when remote state might not yet reflect the new ACLs.
-/// Extended to 30 seconds (matching Go's TTL) to handle cases where users
-/// lose access and don't receive new manifests - the grace window from
-/// the previous manifest needs to last long enough for test iterations.
-const ACL_GRACE_PERIOD: Duration = Duration::from_secs(30);
+/// This matches Go's behavior in acl_staging.go.
+const ACL_GRACE_PERIOD: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct StagedACL {
@@ -263,6 +261,24 @@ impl ACLStagingManager {
             }
             dominated
         });
+    }
+
+    /// Note ACL activity for a datasite - refreshes the grace window.
+    /// This should be called whenever an ACL file is received (via WebSocket),
+    /// regardless of whether there's a pending manifest. This matches Go's
+    /// NoteACLActivity behavior which protects ACL files from deletion
+    /// even when the user doesn't receive a new manifest (e.g., when access
+    /// is revoked but no new manifest is sent to the denied user).
+    pub fn note_acl_activity(&self, datasite: &str) {
+        if datasite.is_empty() {
+            return;
+        }
+        let mut recent = self.recent.lock().expect("acl recent lock");
+        recent.insert(datasite.to_string(), Instant::now());
+        crate::logging::info(format!(
+            "acl staging activity noted datasite={} grace_period={:?}",
+            datasite, ACL_GRACE_PERIOD
+        ));
     }
 }
 
