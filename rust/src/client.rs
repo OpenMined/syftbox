@@ -117,6 +117,19 @@ impl Client {
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
         let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
 
+        // Create ACL staging manager at this level so it's shared between WS listener and sync loop
+        let datasites_root = data_dir.join("datasites");
+        let datasites_root_for_staging = datasites_root.clone();
+        let data_dir_for_staging = data_dir.clone();
+        let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
+            on_acl_set_ready(
+                &datasites_root_for_staging,
+                &data_dir_for_staging,
+                &datasite,
+                acls,
+            );
+        }));
+
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
         // Ensure any existing ACLs are present on the server before normal sync begins.
@@ -135,12 +148,12 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone(), acl_staging.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler, acl_staging) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
@@ -171,6 +184,19 @@ impl Client {
         let sync_kick = std::sync::Arc::new(tokio::sync::Notify::new());
         let sync_scheduler = std::sync::Arc::new(AdaptiveSyncScheduler::new());
 
+        // Create ACL staging manager at this level so it's shared between WS listener and sync loop
+        let datasites_root = data_dir.join("datasites");
+        let datasites_root_for_staging = datasites_root.clone();
+        let data_dir_for_staging = data_dir.clone();
+        let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
+            on_acl_set_ready(
+                &datasites_root_for_staging,
+                &data_dir_for_staging,
+                &datasite,
+                acls,
+            );
+        }));
+
         crate::workspace::ensure_workspace_layout(&data_dir, &email)?;
         let _workspace_lock = maybe_lock_workspace(&data_dir)?;
         upload_existing_acls(&api, &data_dir.join("datasites"), &email).await?;
@@ -185,12 +211,12 @@ impl Client {
             _ = shutdown.notified() => {
                 crate::logging::info("shutdown requested");
             }
-            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone()) => {
+            res = run_ws_listener(api.clone(), server_url, data_dir.clone(), email.clone(), filters.clone(), sync_kick.clone(), sync_scheduler.clone(), shutdown.clone(), acl_staging.clone()) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler) => {
+            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler, acl_staging) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
@@ -273,6 +299,7 @@ async fn run_sync_loop(
     filters: std::sync::Arc<SyncFilters>,
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
     sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
+    acl_staging: std::sync::Arc<ACLStagingManager>,
 ) -> Result<()> {
     let mut journal = crate::sync::SyncJournal::load(&data_dir)?;
     let mut local_scanner = crate::sync::LocalScanner::default();
@@ -285,6 +312,7 @@ async fn run_sync_loop(
             &filters,
             &mut local_scanner,
             &mut journal,
+            &acl_staging,
         )
         .await
         {
@@ -521,22 +549,13 @@ async fn run_ws_listener(
     sync_kick: std::sync::Arc<tokio::sync::Notify>,
     sync_scheduler: std::sync::Arc<AdaptiveSyncScheduler>,
     shutdown: std::sync::Arc<tokio::sync::Notify>,
+    acl_staging: std::sync::Arc<ACLStagingManager>,
 ) -> Result<()> {
     let datasites_root = data_dir.join("datasites");
     if !datasites_root.exists() {
         fs::create_dir_all(&datasites_root)?;
     }
 
-    let datasites_root_for_staging = datasites_root.clone();
-    let data_dir_for_staging = data_dir.clone();
-    let acl_staging = std::sync::Arc::new(ACLStagingManager::new(move |datasite, acls| {
-        on_acl_set_ready(
-            &datasites_root_for_staging,
-            &data_dir_for_staging,
-            &datasite,
-            acls,
-        );
-    }));
     let ws_url = Url::parse(
         &server_url
             .replace("http://", "ws://")

@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
+use crate::acl_staging::ACLStagingManager;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
 use crate::http::{ApiClient, BlobInfo, HttpStatusError, PresignedParams};
@@ -355,6 +356,7 @@ pub async fn sync_once_with_control(
     filters: &SyncFilters,
     local_scanner: &mut LocalScanner,
     journal: &mut SyncJournal,
+    acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) -> Result<()> {
     journal
         .refresh_from_disk()
@@ -482,29 +484,23 @@ pub async fn sync_once_with_control(
         let remote_created = !local_exists && !journal_exists && remote_exists;
         let local_deleted = !local_exists && journal_exists && remote_exists;
         // remote_deleted: file exists locally and in journal but not remotely.
-        // However, if the journal entry was created very recently (within 30s), it's likely
-        // a file just received via WebSocket push where the remote manifest hasn't caught up yet.
-        // Don't treat such files as remotely deleted.
+        // Skip deletion if this is a pending ACL file delivered via WebSocket
+        // that hasn't been reflected in remote state yet (matches Go's IsPendingACLPath behavior).
         let remote_deleted = local_exists && journal_exists && !remote_exists && {
-            let now = chrono::Utc::now().timestamp();
-            let completed = journal_meta.map(|m| m.completed_at).unwrap_or(0);
-            let age_secs = now.saturating_sub(completed);
-            // Only treat as remote_deleted if the journal entry is older than 30 seconds
-            age_secs > 30
+            // Check if this is a pending ACL path - if so, don't treat as deleted
+            !acl_staging.is_pending_acl_path(&key)
         };
 
-        // Windows debug: log state for files that will be deleted or have interesting state
+        // Debug: log state for files that will be deleted or have interesting state
         if local_deleted || remote_deleted || (local_exists && remote_exists && !journal_exists) {
-            let now = chrono::Utc::now().timestamp();
-            let completed = journal_meta.map(|m| m.completed_at).unwrap_or(0);
-            let age_secs = now.saturating_sub(completed);
             let local_etag = local_meta.map(|m| m.etag.as_str()).unwrap_or("");
             let remote_etag = remote_meta.map(|m| m.etag.as_str()).unwrap_or("");
             let journal_etag = journal_meta.map(|m| m.etag.as_str()).unwrap_or("");
+            let is_pending_acl = acl_staging.is_pending_acl_path(&key);
             crate::logging::info(format!(
-                "sync state key={} local={} remote={} journal={} local_deleted={} remote_deleted={} age_secs={} local_etag={} remote_etag={} journal_etag={}",
+                "sync state key={} local={} remote={} journal={} local_deleted={} remote_deleted={} pending_acl={} local_etag={} remote_etag={} journal_etag={}",
                 key, local_exists, remote_exists, journal_exists,
-                local_deleted, remote_deleted, age_secs,
+                local_deleted, remote_deleted, is_pending_acl,
                 local_etag, remote_etag, journal_etag
             ));
         }

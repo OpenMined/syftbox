@@ -169,6 +169,29 @@ impl ACLStagingManager {
             None => Vec::new(),
         }
     }
+
+    /// Check if a relative path is a pending ACL file that shouldn't be deleted.
+    /// This matches Go's IsPendingACLPath behavior.
+    pub fn is_pending_acl_path(&self, rel_path: &str) -> bool {
+        // Extract datasite from the path (first component, e.g., "alice@example.com")
+        let datasite = match rel_path.split('/').next() {
+            Some(ds) if !ds.is_empty() => ds,
+            _ => return false,
+        };
+
+        let pending = self.pending.lock().expect("acl staging lock");
+        match pending.get(datasite) {
+            Some(p) if !p.applied => {
+                // Check if this path matches any expected ACL path
+                p.manifest.acl_order.iter().any(|entry| {
+                    // The entry.path might be just the relative part within the datasite
+                    // or the full path - handle both cases
+                    rel_path == entry.path || rel_path.ends_with(&entry.path)
+                })
+            }
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
