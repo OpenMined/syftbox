@@ -503,6 +503,13 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 			reconcileOps.RemoteDeletes[path] = &SyncOperation{Type: OpDeleteRemote, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else if remoteDeleted {
 			// Remote Delete + Local Exists
+			// Skip deletion if this is a pending ACL file delivered via WebSocket
+			// that hasn't been reflected in remote state yet due to ACL timing
+			if se.aclStaging.IsPendingACLPath(path.String()) {
+				slog.Debug("sync", "type", SyncStandard, "op", "SkipDelete", "path", path, "reason", "pending ACL manifest path")
+				reconcileOps.Ignored[path] = struct{}{}
+				continue
+			}
 			reconcileOps.LocalDeletes[path] = &SyncOperation{Type: OpDeleteLocal, RelPath: path, Local: local, Remote: remote, LastSynced: journal}
 		} else {
 			// Local Unchanged + Remote Unchanged

@@ -8,14 +8,16 @@ on:
     branches: [ main, madhava/biovault ]
 
 jobs:
-  devstack-all:
-    name: All Integration Tests (Go)
+  # Run test groups in parallel for faster CI and easier debugging
+  devstack-go:
+    name: Go ${{ matrix.group }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
+        group: [ core, acl, conflict, journal, perf, upload, ws, chaos ]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
     - uses: actions/checkout@v4
@@ -33,18 +35,19 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@v2
 
-    - name: Run all integration tests
-      run: just sbdev-test-all
+    - name: Run ${{ matrix.group }} tests
+      run: just sbdev-test-group ${{ matrix.group }}
       shell: bash
 
-  devstack-all-rust:
-    name: All Integration Tests (Rust)
+  devstack-rust:
+    name: Rust ${{ matrix.group }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
+        group: [ core, acl, conflict, journal, perf, upload, ws, chaos ]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 20
 
     steps:
     - uses: actions/checkout@v4
@@ -70,12 +73,33 @@ jobs:
     - name: Install just
       uses: extractions/setup-just@v2
 
-    - name: Run all integration tests (rust client)
-      run: just sbdev-test-all mode=rust
+    - name: Run ${{ matrix.group }} tests (rust client)
+      run: just sbdev-test-group ${{ matrix.group }} mode=rust
+      shell: bash
+
+  # Verify no tests are missing from groups
+  verify-test-coverage:
+    name: Verify Test Groups
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Verify all tests are in groups
+      run: just sbdev-test-verify
       shell: bash
 
   devstack-chaos:
-    name: Chaos Test
+    name: Chaos Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:

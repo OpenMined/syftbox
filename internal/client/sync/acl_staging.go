@@ -2,6 +2,7 @@ package sync
 
 import (
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -138,4 +139,24 @@ func (m *ACLStagingManager) GetPendingPaths(datasite string) []string {
 		paths = append(paths, entry.Path)
 	}
 	return paths
+}
+
+func (m *ACLStagingManager) IsPendingACLPath(path string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	normalizedPath := strings.ReplaceAll(path, "\\", "/")
+	for _, pending := range m.pending {
+		if pending == nil || pending.Applied {
+			continue
+		}
+		for _, entry := range pending.Manifest.ACLOrder {
+			normalizedEntry := strings.ReplaceAll(entry.Path, "\\", "/")
+			aclFilePath := normalizedEntry + "/syft.pub.yaml"
+			if normalizedPath == aclFilePath || normalizedPath == normalizedEntry {
+				return true
+			}
+		}
+	}
+	return false
 }
