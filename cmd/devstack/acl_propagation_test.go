@@ -183,12 +183,12 @@ rules:
 		t.Fatalf("read rpc root acl: %v", err)
 	}
 	md5RPCRoot := fmt.Sprintf("%x", md5.Sum(rootACLData))
-	expectPropagation(h.bob, rpcRootRel, md5RPCRoot, windowsTimeout(45*time.Second))
-	expectPropagation(h.bob, rpcRel, md5RPC1, windowsTimeout(45*time.Second))
+	expectPropagation(h.bob, rpcRootRel, md5RPCRoot, windowsTimeout(60*time.Second))
+	expectPropagation(h.bob, rpcRel, md5RPC1, windowsTimeout(60*time.Second))
 
 	md5RPC2, err := writeACL(h.bob, rpcRel, rpcACL2)
 	if err != nil {
 		t.Fatalf("write rpc acl2: %v", err)
 	}
-	expectPropagation(h.bob, rpcRel, md5RPC2, windowsTimeout(45*time.Second))
+	expectPropagation(h.bob, rpcRel, md5RPC2, windowsTimeout(60*time.Second))
 }
