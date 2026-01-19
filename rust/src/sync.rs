@@ -348,6 +348,7 @@ fn ensure_local_etag_column(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_once_with_control(
     api: &ApiClient,
     data_dir: &Path,

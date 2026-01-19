@@ -291,6 +291,7 @@ impl Client {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_sync_loop(
     api: ApiClient,
     data_dir: PathBuf,
