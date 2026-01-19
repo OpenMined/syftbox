@@ -1072,21 +1072,42 @@ func runSyncCheck(root string, emails []string) error {
 		return fmt.Errorf("ensure source public dir: %w", err)
 	}
 	if err := waitForDir(publicDir, windowsScaledTimeout(15*time.Second)); err != nil {
-		fmt.Printf("Sync probe note: source public dir not ready (%s): %v\n", publicDir, err)
-		return nil
+		return fmt.Errorf("source public dir not ready (%s): %w", publicDir, err)
+	}
+
+	aclPath := filepath.Join(publicDir, "syft.pub.yaml")
+	if err := waitForFile(aclPath, "", windowsScaledTimeout(15*time.Second)); err != nil {
+		return fmt.Errorf("source public ACL not ready (%s): %w", aclPath, err)
+	}
+	aclContent, err := os.ReadFile(aclPath)
+	if err != nil {
+		return fmt.Errorf("read source public ACL (%s): %w", aclPath, err)
+	}
+
+	for _, email := range emails[1:] {
+		peerACL := filepath.Join(root, email, "datasites", src, "public", "syft.pub.yaml")
+		if err := waitForFile(peerACL, string(aclContent), windowsScaledTimeout(30*time.Second)); err != nil {
+			return fmt.Errorf("wait for public ACL from %s on %s: %w", src, email, err)
+		}
 	}
 
 	filePath := filepath.Join(publicDir, filename)
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
-		fmt.Printf("Sync probe note: write failed: %v\n", err)
-		return nil
+		return fmt.Errorf("sync probe write failed: %w", err)
 	}
 
-	// Touch the file via the server to trigger notifications
+	// Wait for server to be ready
 	if err := waitForServerReady(root, windowsScaledTimeout(15*time.Second)); err != nil {
 		return fmt.Errorf("wait for server: %w", err)
 	}
-	time.Sleep(windowsScaledTimeout(500 * time.Millisecond))
+
+	// Wait for Alice's client to upload the probe file to the server
+	blobKey := fmt.Sprintf("%s/public/%s", src, filename)
+	if err := waitForBlobOnServer(root, blobKey, windowsScaledTimeout(30*time.Second)); err != nil {
+		return fmt.Errorf("wait for blob on server: %w", err)
+	}
+
+	// Trigger downloads to speed up sync
 	if err := triggerDownloadForAll(root, emails, filename); err != nil {
 		fmt.Printf("Sync probe trigger note: %v (continuing)\n", err)
 	}
@@ -1097,8 +1118,7 @@ func runSyncCheck(root string, emails []string) error {
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
 		if err := waitForFile(target, content, windowsScaledTimeout(45*time.Second)); err != nil {
-			fmt.Printf("Sync probe note: %s did not see probe yet (%v)\n", email, err)
-			return nil
+			return fmt.Errorf("sync probe not replicated to %s (%s): %w", email, target, err)
 		}
 	}
 
@@ -1145,7 +1165,7 @@ func waitForFile(path, want string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(path)
-		if err == nil && string(data) == want {
+		if err == nil && (want == "" || string(data) == want) {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -1546,6 +1566,46 @@ func getWithRetry(url string, timeout time.Duration) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fmt.Errorf("server not ready at %s", url)
+}
+
+// waitForBlobOnServer polls MinIO directly until the blob exists or timeout.
+func waitForBlobOnServer(root, blobKey string, timeout time.Duration) error {
+	state, _, err := readState(root)
+	if err != nil {
+		return err
+	}
+
+	// Create S3 client pointing to MinIO
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", state.Minio.APIPort)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(defaultMinioAdminUser, defaultMinioAdminPassword, ""),
+		),
+		config.WithRegion(defaultRegion),
+	)
+	if err != nil {
+		return fmt.Errorf("load aws config: %w", err)
+	}
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
+	})
+
+	fmt.Printf("Waiting for blob %s in MinIO (timeout %v)...\n", blobKey, timeout)
+	start := time.Now()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := s3Client.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(blobKey),
+		})
+		if err == nil {
+			fmt.Printf("Blob %s found in MinIO after %v\n", blobKey, time.Since(start))
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("blob %s not found in MinIO after %v", blobKey, timeout)
 }
 
 func copyFile(src, dst string) error {

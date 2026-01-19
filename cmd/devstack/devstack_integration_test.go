@@ -200,6 +200,12 @@ func TestDevstackIntegration(t *testing.T) {
 		t.Logf("  Client: %s (pid %d)", c.Email, c.PID)
 	}
 
+	for _, email := range emails {
+		if err := writeDefaultACLs(opts.root, email); err != nil {
+			t.Fatalf("create default ACLs for %s: %v", email, err)
+		}
+	}
+
 	// Run sync check
 	t.Logf("Running sync check...")
 	if err := runSyncCheck(opts.root, emails); err != nil {
@@ -224,4 +230,37 @@ func TestDevstackIntegration(t *testing.T) {
 	}
 
 	t.Logf("✅ Devstack integration test completed successfully")
+}
+
+func writeDefaultACLs(root, email string) error {
+	userDir := filepath.Join(root, email, "datasites", email)
+	publicDir := filepath.Join(userDir, "public")
+
+	rootACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: []
+`
+	publicACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: ['*']
+`
+
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		return fmt.Errorf("create public dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, "syft.pub.yaml"), []byte(rootACL), 0o644); err != nil {
+		return fmt.Errorf("write root ACL: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "syft.pub.yaml"), []byte(publicACL), 0o644); err != nil {
+		return fmt.Errorf("write public ACL: %w", err)
+	}
+	return nil
 }
