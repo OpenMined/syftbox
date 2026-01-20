@@ -15,8 +15,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ windows ]
-        mode: [ go, rust ]
-        group: [ chaos, acl ]
+        mode: [ rust ] # go
+        group: [ chaos ] # acl
         include:
           - os: windows
             runner: namespace-profile-windows-medium

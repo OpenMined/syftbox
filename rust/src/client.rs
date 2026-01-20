@@ -1388,7 +1388,7 @@ async fn send_priority_if_small(
         Some(rel) => rel,
         None => return Ok(false),
     };
-    let rel_str = rel.to_string_lossy().to_string();
+    let rel_str = normalize_ws_path(&rel);
 
     if filters.ignore.should_ignore_rel(&rel, false) {
         return Ok(false);
@@ -1464,6 +1464,10 @@ fn strip_datasites_prefix(root: &Path, path: &Path) -> Option<PathBuf> {
         .strip_prefix(&root_resolved)
         .ok()
         .map(|p| p.to_path_buf())
+}
+
+fn normalize_ws_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn resolve_path(path: &Path) -> PathBuf {
