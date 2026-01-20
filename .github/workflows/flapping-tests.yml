@@ -2,8 +2,6 @@ name: Flapping Tests
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [ madhava/biovault ]
 
 jobs:
   flapping-tests:
@@ -13,7 +11,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
         mode: [ rust ]
-        group: [ transfer ]
+        group: [ transfer1, transfer2 ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 

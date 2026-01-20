@@ -449,7 +449,9 @@ _test_group_acl := "TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRace
 _test_group_state1 := "TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate"
 _test_group_state2 := "TestRapidSequentialEdits|TestJournalLossRecovery|TestDeleteDuringDownload|TestDeleteDuringTempRename|TestOverwriteDuringDownload|TestJournalGapSpuriousConflict|TestJournalGapHealing"
 _test_group_state := _test_group_state1 + "|" + _test_group_state2
-_test_group_transfer := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_transfer1 := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance"
+_test_group_transfer2 := "TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_transfer := _test_group_transfer1 + "|" + _test_group_transfer2
 _test_group_chaos := "TestChaosSync"
 _test_group_flapping := "TestDevstackIntegration|TestLargeUploadViaDaemonStress"
 _test_group_all := _test_group_core + "|" + _test_group_acl + "|" + _test_group_state + "|" + _test_group_transfer + "|" + _test_group_chaos + "|" + _test_group_flapping
@@ -468,13 +470,15 @@ sbdev-test-group group mode="go":
         core)     PATTERN="{{_test_group_core}}" ;;
         acl)      PATTERN="{{_test_group_acl}}" ;;
         state)    PATTERN="{{_test_group_state}}" ;;
-        state1)   PATTERN="{{_test_group_state1}}" ;;
-        state2)   PATTERN="{{_test_group_state2}}" ;;
-        transfer) PATTERN="{{_test_group_transfer}}" ;;
-        chaos)    PATTERN="{{_test_group_chaos}}" ;;
-        flapping) PATTERN="{{_test_group_flapping}}" ;;
-        all)      PATTERN="{{_test_group_all}}" ;;
-        *)        echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, chaos, flapping, all"; exit 1 ;;
+        state1)    PATTERN="{{_test_group_state1}}" ;;
+        state2)    PATTERN="{{_test_group_state2}}" ;;
+        transfer)  PATTERN="{{_test_group_transfer}}" ;;
+        transfer1) PATTERN="{{_test_group_transfer1}}" ;;
+        transfer2) PATTERN="{{_test_group_transfer2}}" ;;
+        chaos)     PATTERN="{{_test_group_chaos}}" ;;
+        flapping)  PATTERN="{{_test_group_flapping}}" ;;
+        all)       PATTERN="{{_test_group_all}}" ;;
+        *)         echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, transfer1, transfer2, chaos, flapping, all"; exit 1 ;;
     esac
 
     echo "Running integration test group '$GROUP' (mode=$MODE)..."
