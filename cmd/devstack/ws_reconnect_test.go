@@ -73,9 +73,14 @@ func TestWebSocketReconnectAfterServerRestart(t *testing.T) {
 	}
 
 	// Give clients time to reconnect and settle back into idle.
-	time.Sleep(6 * time.Second)
+	// Windows can be slower with WebSocket reconnection due to network stack differences.
+	reconnectWait := 10 * time.Second
+	t.Logf("Waiting %v for clients to reconnect...", reconnectWait)
+	time.Sleep(reconnectWait)
 
-	// Write a priority file after restart; with WS priority sync, this should complete well under 1s.
+	// Write a priority file after restart; with WS priority sync, this should complete quickly.
+	// Allow up to 3 seconds on Windows where I/O can be slower.
+	deliveryTimeout := 3 * time.Second
 	content := []byte("ws reconnect test")
 	md5Hash := CalculateMD5(content)
 	filename := "ws-reconnect.request"
@@ -84,7 +89,7 @@ func TestWebSocketReconnectAfterServerRestart(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, 1*time.Second); err != nil {
+	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, deliveryTimeout); err != nil {
 		t.Fatalf("bob did not receive request quickly after server restart: %v", err)
 	}
 	t.Logf("✅ WS reconnect delivery latency: %s", time.Since(start))

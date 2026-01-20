@@ -1072,22 +1072,54 @@ pub(crate) fn ensure_parent_dirs(target: &std::path::Path) -> Result<()> {
     }
 }
 
-/// Write `bytes` to `target`, removing any conflicting directory first.
+/// Write `bytes` to `target` atomically using temp-then-rename, removing any conflicting directory first.
+/// This matches Go's writeFileWithIntegrityCheck behavior for atomic writes.
 pub(crate) fn write_file_resolving_conflicts(target: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    match fs::write(target, bytes) {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            if target.exists() {
-                let meta = fs::metadata(target)?;
-                if meta.is_dir() {
-                    fs::remove_dir_all(target)?;
-                    fs::write(target, bytes)?;
-                    return Ok(());
-                }
+    use std::io::Write;
+
+    // Get parent directory and filename for temp file
+    let parent = target.parent().unwrap_or(Path::new("."));
+    let fname = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let tmp = parent.join(format!(".{}.syft.tmp.{}", fname, uuid::Uuid::new_v4()));
+
+    // Write to temp file first with explicit sync for durability
+    let write_result = (|| -> Result<()> {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?; // Sync to disk before rename (matches Go behavior)
+        Ok(())
+    })();
+
+    if let Err(err) = write_result {
+        // Clean up temp file on error
+        let _ = fs::remove_file(&tmp);
+        return Err(err).with_context(|| format!("write temp {}", tmp.display()));
+    }
+
+    // Remove conflicting directory if exists
+    if target.exists() {
+        if let Ok(meta) = fs::metadata(target) {
+            if meta.is_dir() {
+                fs::remove_dir_all(target)?;
+            } else {
+                // Remove existing file to allow rename on Windows
+                let _ = fs::remove_file(target);
             }
-            Err(err).with_context(|| format!("write {}", target.display()))
         }
     }
+
+    // Atomic rename
+    if let Err(err) = fs::rename(&tmp, target) {
+        // Clean up temp file on error
+        let _ = fs::remove_file(&tmp);
+        return Err(err)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()));
+    }
+
+    Ok(())
 }
 
 fn is_marked_key(key: &str) -> bool {

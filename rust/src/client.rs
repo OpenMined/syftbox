@@ -1100,7 +1100,8 @@ async fn upload_existing_acls(
                 let Some(rel) = strip_datasites_prefix(datasites_root, path) else {
                     continue;
                 };
-                let key = rel.to_string_lossy().to_string();
+                // Normalize path separators for Windows compatibility (server expects forward slashes)
+                let key = rel.to_string_lossy().replace('\\', "/");
                 if key.starts_with(my_email) {
                     // Best-effort upload; ignore errors so startup continues.
                     let _ = api.upload_blob(&key, path).await;

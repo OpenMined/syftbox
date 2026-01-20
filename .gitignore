@@ -61,3 +61,4 @@ cmd/devstack/.gocache/*
 cmd/devstack/.test-sandbox/
 .devstack
 .cache/*
+licenses/cache/*

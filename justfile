@@ -1,3 +1,4 @@
+
 CLIENT_BUILD_TAGS := "go_json nomsgpack"
 SERVER_BUILD_TAGS := "sonic avx nomsgpack"
 
@@ -442,15 +443,19 @@ sbdev-test-cleanup:
 # Integration test groups - each group can run in parallel in CI
 # IMPORTANT: When adding new tests, add them to the appropriate group below
 # Run `just sbdev-test-verify` to check all tests are covered
-# Groups: core (foundational), acl (permissions), state1/state2 (file state/conflicts split), transfer (uploads/perf), chaos (stress test)
+# Groups: core (foundational), acl (permissions), state1/state2 (file state/conflicts split), transfer (uploads/perf), chaos (stress test), flapping (unstable)
 _test_group_core := "TestDevstackIntegration|TestACKNACKMechanism|TestParseStartFlagsSkipClientDaemons|TestWebSocketReconnectAfterServerRestart"
 _test_group_acl := "TestACLEnablesDownload|TestACLPropagationUpdates|TestACLRaceCondition|TestACLChangeDuringUpload"
 _test_group_state1 := "TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConflict|TestConflictDuringACLChange|TestNestedPathConflict|TestJournalWriteTiming|TestNonConflictUpdate"
 _test_group_state2 := "TestRapidSequentialEdits|TestJournalLossRecovery|TestDeleteDuringDownload|TestDeleteDuringTempRename|TestOverwriteDuringDownload|TestJournalGapSpuriousConflict|TestJournalGapHealing"
 _test_group_state := _test_group_state1 + "|" + _test_group_state2
-_test_group_transfer := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance|TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_transfer1 := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance"
+_test_group_transfer2 := "TestLargeUploadViaDaemon|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_stress := "TestLargeUploadViaDaemonStress"
+_test_group_transfer := _test_group_transfer1 + "|" + _test_group_transfer2
 _test_group_chaos := "TestChaosSync"
-_test_group_all := _test_group_core + "|" + _test_group_acl + "|" + _test_group_state + "|" + _test_group_transfer + "|" + _test_group_chaos
+_test_group_flapping := "TestDevstackIntegration|TestLargeUploadViaDaemonStress"
+_test_group_all := _test_group_core + "|" + _test_group_acl + "|" + _test_group_state + "|" + _test_group_transfer + "|" + _test_group_chaos + "|" + _test_group_flapping
 
 [group('devstack')]
 sbdev-test-group group mode="go":
@@ -466,12 +471,16 @@ sbdev-test-group group mode="go":
         core)     PATTERN="{{_test_group_core}}" ;;
         acl)      PATTERN="{{_test_group_acl}}" ;;
         state)    PATTERN="{{_test_group_state}}" ;;
-        state1)   PATTERN="{{_test_group_state1}}" ;;
-        state2)   PATTERN="{{_test_group_state2}}" ;;
-        transfer) PATTERN="{{_test_group_transfer}}" ;;
-        chaos)    PATTERN="{{_test_group_chaos}}" ;;
-        all)      PATTERN="{{_test_group_all}}" ;;
-        *)        echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, chaos, all"; exit 1 ;;
+        state1)    PATTERN="{{_test_group_state1}}" ;;
+        state2)    PATTERN="{{_test_group_state2}}" ;;
+        transfer)  PATTERN="{{_test_group_transfer}}" ;;
+        transfer1) PATTERN="{{_test_group_transfer1}}" ;;
+        transfer2) PATTERN="{{_test_group_transfer2}}" ;;
+        stress)    PATTERN="{{_test_group_stress}}" ;;
+        chaos)     PATTERN="{{_test_group_chaos}}" ;;
+        flapping)  PATTERN="{{_test_group_flapping}}" ;;
+        all)       PATTERN="{{_test_group_all}}" ;;
+        *)         echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, transfer1, transfer2, stress, chaos, flapping, all"; exit 1 ;;
     esac
 
     echo "Running integration test group '$GROUP' (mode=$MODE)..."
@@ -1171,7 +1180,6 @@ sbdev-test-conflict-rust:
 
 [group('devstack')]
 sbdev-test-concurrent-rust:
-    #!/bin/bash
     # Back-compat shim: call unified recipe with rust mode
     just sbdev-test-concurrent mode="rust"
 
@@ -1462,7 +1470,6 @@ build-all:
 
 [group('deploy')]
 deploy-client remote: build-all
-    #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
     
     rm -rf releases && mkdir releases
@@ -1473,7 +1480,6 @@ deploy-client remote: build-all
 
 [group('deploy')]
 deploy-server remote: build-server
-    #!/bin/bash
     echo "Deploying syftbox server to {{ _cyan }}{{ remote }}{{ _nc }}"
 
     scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
