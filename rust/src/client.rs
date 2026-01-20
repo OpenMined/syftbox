@@ -801,7 +801,14 @@ async fn handle_ws_file_write(
     // When all ACLs arrive, on_acl_set_ready will re-apply them in order
     let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
     if is_acl_file {
-        if let Some(datasite) = file.path.split('/').next() {
+        // Extract datasite from path, handling potential leading slash
+        let path_without_leading = file.path.trim_start_matches('/');
+        let datasite = path_without_leading.split('/').next().unwrap_or("");
+        crate::logging::info(format!(
+            "ws_acl_file path={} extracted_datasite={}",
+            file.path, datasite
+        ));
+        if !datasite.is_empty() {
             // Note ACL activity BEFORE checking for pending manifest (matches Go behavior).
             // This refreshes the grace window for the datasite, protecting ACL files from
             // deletion even when the user doesn't receive a new manifest (e.g., when another

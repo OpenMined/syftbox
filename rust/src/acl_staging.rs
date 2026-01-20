@@ -199,22 +199,35 @@ impl ACLStagingManager {
     /// Check if a relative path is a pending ACL file that shouldn't be deleted.
     /// This matches Go's IsPendingACLPath behavior with grace window support.
     pub fn is_pending_acl_path(&self, rel_path: &str) -> bool {
-        // Normalize path separators for Windows compatibility
+        // Normalize path separators for Windows compatibility and handle leading slashes
         let normalized_path = rel_path.replace('\\', "/");
+        let normalized_path = normalized_path.trim_start_matches('/');
 
         // Extract datasite from the path (first component, e.g., "alice@example.com")
         let datasite = match normalized_path.split('/').next() {
             Some(ds) if !ds.is_empty() => ds,
-            _ => return false,
+            _ => {
+                crate::logging::info(format!(
+                    "acl staging is_pending_acl_path no datasite path={}",
+                    rel_path
+                ));
+                return false;
+            }
         };
 
         // Check 1: Grace window for ACL files (like Go's m.recent check)
         // If this is a syft.pub.yaml file and we recently applied ACLs for this datasite,
         // protect it from deletion during the grace window.
-        if normalized_path.ends_with("/syft.pub.yaml")
-            || normalized_path.ends_with("\\syft.pub.yaml")
-        {
+        let is_acl_file = normalized_path.ends_with("/syft.pub.yaml")
+            || normalized_path.ends_with("\\syft.pub.yaml");
+
+        if is_acl_file {
             let recent = self.recent.lock().expect("acl recent lock");
+            let recent_keys: Vec<_> = recent.keys().collect();
+            crate::logging::info(format!(
+                "acl staging grace check path={} datasite={} recent_datasites={:?}",
+                rel_path, datasite, recent_keys
+            ));
             if let Some(applied_at) = recent.get(datasite) {
                 let elapsed = applied_at.elapsed();
                 if elapsed <= ACL_GRACE_PERIOD {
@@ -223,7 +236,17 @@ impl ACLStagingManager {
                         rel_path, datasite, elapsed, ACL_GRACE_PERIOD - elapsed
                     ));
                     return true;
+                } else {
+                    crate::logging::info(format!(
+                        "acl staging grace window EXPIRED path={} datasite={} elapsed={:?} grace_period={:?}",
+                        rel_path, datasite, elapsed, ACL_GRACE_PERIOD
+                    ));
                 }
+            } else {
+                crate::logging::info(format!(
+                    "acl staging grace window NOT FOUND path={} datasite={} recent_datasites={:?}",
+                    rel_path, datasite, recent_keys
+                ));
             }
         }
 
