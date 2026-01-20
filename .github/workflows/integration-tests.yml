@@ -16,14 +16,7 @@ jobs:
         os: [ windows ] # ubuntu-latest, macos-latest
         mode: [ rust ] # go
         group: [ flapping ] # core, acl, state1, state2, transfer, chaos
-        include:
-          - os: windows
-            runner: namespace-profile-windows-medium
-          - os: ubuntu-latest
-            runner: namespace-profile-linux-medium
-          - os: macos-latest
-            runner: namespace-profile-mac-medium
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
     steps:
