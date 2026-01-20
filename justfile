@@ -1,3 +1,4 @@
+
 CLIENT_BUILD_TAGS := "go_json nomsgpack"
 SERVER_BUILD_TAGS := "sonic avx nomsgpack"
 
@@ -1173,7 +1174,6 @@ sbdev-test-conflict-rust:
 
 [group('devstack')]
 sbdev-test-concurrent-rust:
-    #!/bin/bash
     # Back-compat shim: call unified recipe with rust mode
     just sbdev-test-concurrent mode="rust"
 
@@ -1464,7 +1464,6 @@ build-all:
 
 [group('deploy')]
 deploy-client remote: build-all
-    #!/bin/bash
     echo "Deploying syftbox client to {{ _cyan }}{{ remote }}{{ _nc }}"
     
     rm -rf releases && mkdir releases
@@ -1475,7 +1474,6 @@ deploy-client remote: build-all
 
 [group('deploy')]
 deploy-server remote: build-server
-    #!/bin/bash
     echo "Deploying syftbox server to {{ _cyan }}{{ remote }}{{ _nc }}"
 
     scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new

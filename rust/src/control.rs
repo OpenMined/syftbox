@@ -117,8 +117,8 @@ impl ControlPlane {
     /// Start the control plane HTTP server.
     ///
     /// This function will:
-    /// 1. Try to bind to the configured address
-    /// 2. If that fails (e.g., port in use), try binding to port 0 (OS assigns random available port)
+    /// 1. Try to bind to the configured address with retries (handles port TIME_WAIT after process kill)
+    /// 2. If that fails after retries, try binding to port 0 (OS assigns random available port)
     /// 3. Return the actual bound address so callers know where the server is listening
     ///
     /// All operations are logged for debugging.
@@ -151,53 +151,84 @@ impl ControlPlane {
             }
         };
 
-        // Try to bind to the requested address
-        let (listener, bound_addr) = match tokio::net::TcpListener::bind(requested_addr).await {
-            Ok(listener) => {
-                let bound = listener.local_addr()?;
-                crate::logging::info_kv(
-                    "control plane bound to requested port",
-                    &[("addr", &bound.to_string())],
-                );
-                (listener, bound)
-            }
-            Err(e) => {
-                crate::logging::info_kv(
-                    "control plane requested port unavailable, trying fallback",
-                    &[
-                        ("requested_addr", &requested_addr.to_string()),
-                        ("error", &e.to_string()),
-                    ],
-                );
+        // Try to bind to the requested address with retries.
+        // On Windows especially, ports can remain in TIME_WAIT for a short period after
+        // a process is killed, so we retry a few times before falling back to port 0.
+        const MAX_BIND_RETRIES: u32 = 5;
+        const RETRY_DELAY_MS: u64 = 200;
 
-                // Try port 0 (OS assigns random available port)
-                let fallback_addr: SocketAddr = format!("{}:0", requested_addr.ip()).parse()?;
-                match tokio::net::TcpListener::bind(fallback_addr).await {
-                    Ok(listener) => {
-                        let bound = listener.local_addr()?;
+        let mut last_error = None;
+        for attempt in 1..=MAX_BIND_RETRIES {
+            match tokio::net::TcpListener::bind(requested_addr).await {
+                Ok(listener) => {
+                    let bound = listener.local_addr()?;
+                    crate::logging::info_kv(
+                        "control plane bound to requested port",
+                        &[("addr", &bound.to_string()), ("attempt", &attempt.to_string())],
+                    );
+                    return Self::finish_start(listener, bound, token, http_stats, shutdown).await;
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if attempt < MAX_BIND_RETRIES {
                         crate::logging::info_kv(
-                            "control plane bound to fallback port",
+                            "control plane bind attempt failed, retrying",
                             &[
-                                ("original_request", &requested_addr.to_string()),
-                                ("actual_addr", &bound.to_string()),
+                                ("requested_addr", &requested_addr.to_string()),
+                                ("attempt", &attempt.to_string()),
+                                ("max_attempts", &MAX_BIND_RETRIES.to_string()),
                             ],
                         );
-                        (listener, bound)
-                    }
-                    Err(fallback_err) => {
-                        crate::logging::error(format!(
-                            "control plane FAILED to bind - both requested port {} and fallback failed: original={}, fallback={}",
-                            requested_addr, e, fallback_err
-                        ));
-                        return Err(anyhow::anyhow!(
-                            "Failed to bind control plane: requested {} failed ({}), fallback to port 0 also failed ({})",
-                            requested_addr, e, fallback_err
-                        ));
+                        tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
                     }
                 }
             }
-        };
+        }
 
+        let e = last_error.unwrap();
+        crate::logging::info_kv(
+            "control plane requested port unavailable after retries, trying fallback",
+            &[
+                ("requested_addr", &requested_addr.to_string()),
+                ("error", &e.to_string()),
+            ],
+        );
+
+        // Try port 0 (OS assigns random available port)
+        let fallback_addr: SocketAddr = format!("{}:0", requested_addr.ip()).parse()?;
+        match tokio::net::TcpListener::bind(fallback_addr).await {
+            Ok(listener) => {
+                let bound = listener.local_addr()?;
+                crate::logging::info_kv(
+                    "control plane bound to fallback port",
+                    &[
+                        ("original_request", &requested_addr.to_string()),
+                        ("actual_addr", &bound.to_string()),
+                    ],
+                );
+                Self::finish_start(listener, bound, token, http_stats, shutdown).await
+            }
+            Err(fallback_err) => {
+                crate::logging::error(format!(
+                    "control plane FAILED to bind - both requested port {} and fallback failed: original={}, fallback={}",
+                    requested_addr, e, fallback_err
+                ));
+                Err(anyhow::anyhow!(
+                    "Failed to bind control plane: requested {} failed ({}), fallback to port 0 also failed ({})",
+                    requested_addr, e, fallback_err
+                ))
+            }
+        }
+    }
+
+    /// Helper to complete the control plane startup once we have a bound listener.
+    async fn finish_start(
+        listener: tokio::net::TcpListener,
+        bound_addr: SocketAddr,
+        token: String,
+        http_stats: Arc<HttpStats>,
+        shutdown: Option<Arc<Notify>>,
+    ) -> anyhow::Result<ControlPlaneStartResult> {
         let state = Arc::new(ControlState {
             token,
             uploads: Mutex::new(HashMap::new()),
