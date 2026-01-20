@@ -13,10 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ windows ] # ubuntu-latest, macos-latest
-        mode: [ rust ] # go
-        group: [ flapping ] # core, acl, state1, state2, transfer, chaos
-    runs-on: namespace-profile-windows-medium
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        mode: [ go, rust ]
+        group: [ core, acl, state1, state2, transfer, chaos ]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
     steps:

@@ -164,7 +164,10 @@ impl ControlPlane {
                     let bound = listener.local_addr()?;
                     crate::logging::info_kv(
                         "control plane bound to requested port",
-                        &[("addr", &bound.to_string()), ("attempt", &attempt.to_string())],
+                        &[
+                            ("addr", &bound.to_string()),
+                            ("attempt", &attempt.to_string()),
+                        ],
                     );
                     return Self::finish_start(listener, bound, token, http_stats, shutdown).await;
                 }

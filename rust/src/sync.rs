@@ -1115,7 +1115,8 @@ pub(crate) fn write_file_resolving_conflicts(target: &std::path::Path, bytes: &[
     if let Err(err) = fs::rename(&tmp, target) {
         // Clean up temp file on error
         let _ = fs::remove_file(&tmp);
-        return Err(err).with_context(|| format!("rename {} -> {}", tmp.display(), target.display()));
+        return Err(err)
+            .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()));
     }
 
     Ok(())
