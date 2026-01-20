@@ -801,7 +801,20 @@ async fn handle_ws_file_write(
     // When all ACLs arrive, on_acl_set_ready will re-apply them in order
     let is_acl_file = file.path.ends_with("/syft.pub.yaml") || file.path == "syft.pub.yaml";
     if is_acl_file {
-        if let Some(datasite) = file.path.split('/').next() {
+        // Extract datasite from path, handling potential leading slash
+        let path_without_leading = file.path.trim_start_matches('/');
+        let datasite = path_without_leading.split('/').next().unwrap_or("");
+        crate::logging::info(format!(
+            "ws_acl_file path={} extracted_datasite={}",
+            file.path, datasite
+        ));
+        if !datasite.is_empty() {
+            // Note ACL activity BEFORE checking for pending manifest (matches Go behavior).
+            // This refreshes the grace window for the datasite, protecting ACL files from
+            // deletion even when the user doesn't receive a new manifest (e.g., when another
+            // user's ACL change triggers a broadcast that we receive).
+            acl_staging.note_acl_activity(datasite);
+
             if acl_staging.has_pending_manifest(datasite) {
                 // Get the ACL directory path (the parent of syft.pub.yaml)
                 let acl_dir = if file.path.contains('/') {
@@ -1375,7 +1388,7 @@ async fn send_priority_if_small(
         Some(rel) => rel,
         None => return Ok(false),
     };
-    let rel_str = rel.to_string_lossy().to_string();
+    let rel_str = normalize_ws_path(&rel);
 
     if filters.ignore.should_ignore_rel(&rel, false) {
         return Ok(false);
@@ -1451,6 +1464,10 @@ fn strip_datasites_prefix(root: &Path, path: &Path) -> Option<PathBuf> {
         .strip_prefix(&root_resolved)
         .ok()
         .map(|p| p.to_path_buf())
+}
+
+fn normalize_ws_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn resolve_path(path: &Path) -> PathBuf {

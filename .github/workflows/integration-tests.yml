@@ -13,15 +13,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ windows, linux, mac ]
+        os: [ windows, ubuntu-latest, macos-latest ]
         mode: [ go, rust ]
         group: [ core, acl, state1, state2, transfer, chaos ]
         include:
           - os: windows
             runner: namespace-profile-windows-medium
-          - os: linux
+          - os: ubuntu-latest
             runner: namespace-profile-linux-medium
-          - os: mac
+          - os: macos-latest
             runner: namespace-profile-mac-medium
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20

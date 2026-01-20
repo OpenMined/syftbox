@@ -642,6 +642,19 @@ pub async fn sync_once_with_control(
         commit_staged_downloads(staged).await?;
 
         for key in &download_keys_list {
+            // Note ACL activity for downloaded ACL files to set grace window.
+            // This matches Go behavior where NoteACLActivity is called in the
+            // WebSocket handler, but we also need it for HTTP sync downloads
+            // to protect ACL files that were downloaded before the user lost access.
+            if key.ends_with("/syft.pub.yaml") || key == "syft.pub.yaml" {
+                let normalized = key.replace('\\', "/");
+                if let Some(datasite) = normalized.trim_start_matches('/').split('/').next() {
+                    if !datasite.is_empty() {
+                        acl_staging.note_acl_activity(datasite);
+                    }
+                }
+            }
+
             if let Some(r) = remote.get(key) {
                 let local_path = datasites_root.join(key);
                 let local_etag = match fs::metadata(&local_path) {
