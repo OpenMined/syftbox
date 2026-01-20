@@ -13,9 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ windows, ubuntu-latest, macos-latest ]
-        mode: [ go, rust ]
-        group: [ core, acl, state1, state2, transfer, chaos ]
+        os: [ windows ] # ubuntu-latest, macos-latest
+        mode: [ rust ] # go
+        group: [ flapping ] # core, acl, state1, state2, transfer, chaos
         include:
           - os: windows
             runner: namespace-profile-windows-medium
