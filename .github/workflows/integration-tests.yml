@@ -16,7 +16,7 @@ jobs:
         os: [ windows ] # ubuntu-latest, macos-latest
         mode: [ rust ] # go
         group: [ flapping ] # core, acl, state1, state2, transfer, chaos
-    runs-on: ${{ matrix.os }}
+    runs-on: namespace-profile-windows-medium
     timeout-minutes: 20
 
     steps:
