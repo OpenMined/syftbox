@@ -450,7 +450,8 @@ _test_group_state1 := "TestSimultaneousWrite|TestDivergentEdits|TestThreeWayConf
 _test_group_state2 := "TestRapidSequentialEdits|TestJournalLossRecovery|TestDeleteDuringDownload|TestDeleteDuringTempRename|TestOverwriteDuringDownload|TestJournalGapSpuriousConflict|TestJournalGapHealing"
 _test_group_state := _test_group_state1 + "|" + _test_group_state2
 _test_group_transfer1 := "TestLargeFileTransfer|TestWebSocketLatency|TestConcurrentUploads|TestManySmallFiles|TestFileModificationDuringSync|TestProfilePerformance"
-_test_group_transfer2 := "TestLargeUploadViaDaemon|TestLargeUploadViaDaemonStress|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_transfer2 := "TestLargeUploadViaDaemon|TestProgressAPI|TestProgressAPIWithUpload|TestProgressAPIDemo|TestProgressAPIPauseResumeUpload"
+_test_group_stress := "TestLargeUploadViaDaemonStress"
 _test_group_transfer := _test_group_transfer1 + "|" + _test_group_transfer2
 _test_group_chaos := "TestChaosSync"
 _test_group_flapping := "TestDevstackIntegration|TestLargeUploadViaDaemonStress"
@@ -475,10 +476,11 @@ sbdev-test-group group mode="go":
         transfer)  PATTERN="{{_test_group_transfer}}" ;;
         transfer1) PATTERN="{{_test_group_transfer1}}" ;;
         transfer2) PATTERN="{{_test_group_transfer2}}" ;;
+        stress)    PATTERN="{{_test_group_stress}}" ;;
         chaos)     PATTERN="{{_test_group_chaos}}" ;;
         flapping)  PATTERN="{{_test_group_flapping}}" ;;
         all)       PATTERN="{{_test_group_all}}" ;;
-        *)         echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, transfer1, transfer2, chaos, flapping, all"; exit 1 ;;
+        *)         echo "Unknown group: $GROUP"; echo "Valid groups: core, acl, state, state1, state2, transfer, transfer1, transfer2, stress, chaos, flapping, all"; exit 1 ;;
     esac
 
     echo "Running integration test group '$GROUP' (mode=$MODE)..."

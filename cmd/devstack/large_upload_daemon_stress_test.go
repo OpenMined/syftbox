@@ -82,24 +82,53 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	)
 
 	// Kill alice mid-upload.
+	t.Logf("DEBUG: Killing alice daemon (PID=%d)...", h.alice.state.PID)
 	if err := killProcess(h.alice.state.PID); err != nil {
 		t.Fatalf("kill alice: %v", err)
 	}
+	t.Logf("DEBUG: Alice daemon killed successfully")
+
 	uploadKey := filepath.ToSlash(filepath.Join(h.alice.email, "public", relName))
 	uploadResumeDir := filepath.Join(h.alice.dataDir, ".data", "upload-sessions")
+	t.Logf("DEBUG: Looking for upload session at key=%s resumeDir=%s", uploadKey, uploadResumeDir)
+
+	// List upload session files for debugging
+	if entries, err := os.ReadDir(uploadResumeDir); err == nil {
+		t.Logf("DEBUG: Upload session dir contents (%d files):", len(entries))
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				t.Logf("DEBUG:   - %s (size=%d)", e.Name(), info.Size())
+			} else {
+				t.Logf("DEBUG:   - %s", e.Name())
+			}
+		}
+	} else {
+		t.Logf("DEBUG: Could not read upload session dir: %v", err)
+	}
+
 	uploadedBeforeKill := readUploadSessionBytes(t, uploadResumeDir, uploadKey, testFile)
-	t.Logf("upload session completed bytes before restart: %d", uploadedBeforeKill)
+	t.Logf("upload session completed bytes before restart: %d (%.1f MB)", uploadedBeforeKill, float64(uploadedBeforeKill)/(1024*1024))
 
 	// Restart alice on same port/root so it can resume from sessions.
+	t.Logf("DEBUG: Restarting alice on port %d...", h.alice.state.Port)
 	newState, err := startClient(h.alice.state.BinPath, h.root, h.alice.email, serverURL, h.alice.state.Port)
 	if err != nil {
 		t.Fatalf("restart alice: %v", err)
 	}
+	t.Logf("DEBUG: Alice restarted with PID=%d", newState.PID)
 	h.alice.state = newState
 	h.state.Clients[0] = newState
 	h.alice.dataDir = newState.DataPath
 	h.alice.publicDir = filepath.Join(newState.DataPath, "datasites", h.alice.email, "public")
 	aliceClientURL = fmt.Sprintf("http://127.0.0.1:%d", newState.Port)
+
+	// Verify the test file still exists after restart
+	if fi, err := os.Stat(testFile); err != nil {
+		t.Logf("DEBUG: WARNING - test file missing after restart: %v", err)
+	} else {
+		t.Logf("DEBUG: Test file exists after restart: size=%d", fi.Size())
+	}
 
 	// Give daemon a moment to boot and rewrite log/token.
 	// Windows needs more time for port release and process startup.
@@ -132,11 +161,20 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	t.Logf("alice HTTP totals after restart baseline: sent=%d recv=%d", aliceSentRestart0, aliceRecvRestart0)
 
 	// Trigger sync repeatedly until bob sees the file.
+	t.Logf("DEBUG: Starting wait loop for bob to receive file (timeout=10min)")
 	deadline := time.Now().Add(10 * time.Minute)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	loopIteration := 0
 	for time.Now().Before(deadline) {
+		loopIteration++
 		demoTriggerSync(t, aliceClientURL, authToken)
+
+		// Log alice's current upload state
+		if loopIteration%3 == 1 { // Every 3rd iteration to reduce noise
+			logAliceUploadState(t, aliceClientURL, authToken, relName)
+		}
+
 		if err := h.bob.WaitForFile(h.alice.email, relName, "", 2*time.Second); err == nil {
 			// Probe both clients' /v1/status while daemons are alive.
 			aliceSent, aliceRecv := probeHTTPBytes(t, aliceClientURL, authToken)
@@ -163,12 +201,122 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 		}
 		select {
 		case <-ticker.C:
-			t.Log("Still waiting for bob to receive file; re-triggering sync...")
+			elapsed := time.Since(deadline.Add(-10 * time.Minute))
+			t.Logf("Still waiting for bob to receive file (elapsed=%v, iteration=%d)...", elapsed.Round(time.Second), loopIteration)
 		default:
 		}
 		time.Sleep(2 * time.Second)
 	}
+
+	// Final debug logging before failing
+	t.Logf("DEBUG: TIMEOUT - Final state dump:")
+	logAliceUploadState(t, aliceClientURL, authToken, relName)
+	logAliceSyncStatus(t, aliceClientURL, authToken)
+
+	// Check what's in bob's directory
+	bobAlicePublic := filepath.Join(h.bob.dataDir, "datasites", h.alice.email, "public")
+	if entries, err := os.ReadDir(bobAlicePublic); err == nil {
+		t.Logf("DEBUG: Bob's alice/public dir contents (%d files):", len(entries))
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				t.Logf("DEBUG:   - %s (size=%d)", e.Name(), info.Size())
+			}
+		}
+	} else {
+		t.Logf("DEBUG: Could not read bob's alice/public dir: %v", err)
+	}
+
 	t.Fatalf("bob did not receive stress upload within timeout")
+}
+
+// logAliceUploadState logs the current upload state from alice's /v1/uploads/ endpoint
+func logAliceUploadState(t *testing.T, baseURL, token, fileNameSuffix string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/v1/uploads/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Logf("DEBUG: Failed to get alice uploads: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var uploads struct {
+		Uploads []struct {
+			ID             string  `json:"id"`
+			Key            string  `json:"key"`
+			State          string  `json:"state"`
+			Error          string  `json:"error,omitempty"`
+			CompletedParts []int   `json:"completedParts"`
+			PartCount      int     `json:"partCount"`
+			Size           int64   `json:"size"`
+			UploadedBytes  int64   `json:"uploadedBytes"`
+			Progress       float64 `json:"progress"`
+		} `json:"uploads"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&uploads); err != nil {
+		t.Logf("DEBUG: Failed to decode alice uploads: %v", err)
+		return
+	}
+
+	if len(uploads.Uploads) == 0 {
+		t.Logf("DEBUG: Alice has NO active uploads")
+		return
+	}
+
+	for _, u := range uploads.Uploads {
+		if strings.HasSuffix(u.Key, fileNameSuffix) {
+			t.Logf("DEBUG: Alice upload for %s: state=%s progress=%.1f%% parts=%d/%d uploaded=%d err=%s",
+				fileNameSuffix, u.State, u.Progress, len(u.CompletedParts), u.PartCount, u.UploadedBytes, u.Error)
+		} else {
+			t.Logf("DEBUG: Alice has other upload: key=%s state=%s", u.Key, u.State)
+		}
+	}
+}
+
+// logAliceSyncStatus logs alice's sync status from /v1/sync/status
+func logAliceSyncStatus(t *testing.T, baseURL, token string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, baseURL+"/v1/sync/status", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Logf("DEBUG: Failed to get alice sync status: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var status struct {
+		Files []struct {
+			Path     string `json:"path"`
+			State    string `json:"state"`
+			Progress float64 `json:"progress"`
+			Error    string `json:"error,omitempty"`
+		} `json:"files"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		t.Logf("DEBUG: Failed to decode alice sync status: %v", err)
+		return
+	}
+
+	pending, syncing, completed, errored := 0, 0, 0, 0
+	for _, f := range status.Files {
+		switch f.State {
+		case "pending":
+			pending++
+		case "syncing", "uploading":
+			syncing++
+			t.Logf("DEBUG: Syncing file: %s state=%s progress=%.1f%% err=%s", f.Path, f.State, f.Progress, f.Error)
+		case "completed":
+			completed++
+		case "error":
+			errored++
+			t.Logf("DEBUG: Error file: %s err=%s", f.Path, f.Error)
+		}
+	}
+	t.Logf("DEBUG: Alice sync status: total=%d pending=%d syncing=%d completed=%d error=%d",
+		len(status.Files), pending, syncing, completed, errored)
 }
 
 // waitForUploadParts polls /v1/uploads until the upload matching suffix has at least minParts completed.
