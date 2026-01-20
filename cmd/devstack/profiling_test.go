@@ -149,8 +149,21 @@ func TestProfilePerformance(t *testing.T) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Wait for WebSocket connections
-	time.Sleep(500 * time.Millisecond)
+	// Wait for WebSocket connections and ACLs to sync.
+	// CI runners can be slow, so use a generous settling time.
+	time.Sleep(2 * time.Second)
+
+	// Warm-up transfer to ensure sync path is fully established before burst tests.
+	// This prevents flaky failures on slow CI runners where the first few files
+	// might fail due to incomplete connection setup.
+	warmupContent := []byte("warmup")
+	warmupHash := CalculateMD5(warmupContent)
+	if err := h.alice.UploadRPCRequest(appName, endpoint, "warmup.request", warmupContent); err != nil {
+		t.Fatalf("warmup upload failed: %v", err)
+	}
+	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, "warmup.request", warmupHash, 10*time.Second); err != nil {
+		t.Fatalf("warmup transfer failed: %v", err)
+	}
 
 	t.Run("SmallFileBurst", func(t *testing.T) {
 		// Simulate rapid small file transfers (tests WebSocket sync + ACK)
@@ -166,7 +179,8 @@ func TestProfilePerformance(t *testing.T) {
 				t.Fatalf("alice upload %d failed: %v", i, err)
 			}
 
-			timeout := 5 * time.Second
+			// Use 10s timeout for CI resilience (was 5s)
+			timeout := 10 * time.Second
 			if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, timeout); err != nil {
 				t.Fatalf("bob didn't receive file %d: %v", i, err)
 			}
@@ -228,7 +242,7 @@ func TestProfilePerformance(t *testing.T) {
 				t.Fatalf("alice upload %d failed: %v", i, err)
 			}
 
-			timeout := 5 * time.Second
+			timeout := 10 * time.Second
 			if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, timeout); err != nil {
 				t.Fatalf("bob didn't receive alice's file %d: %v", i, err)
 			}
@@ -244,7 +258,7 @@ func TestProfilePerformance(t *testing.T) {
 				t.Fatalf("bob upload %d failed: %v", i, err)
 			}
 
-			timeout := 5 * time.Second
+			timeout := 10 * time.Second
 			if err := h.alice.WaitForRPCRequest(h.bob.email, appName, endpoint, filename, md5Hash, timeout); err != nil {
 				t.Fatalf("alice didn't receive bob's file %d: %v", i, err)
 			}

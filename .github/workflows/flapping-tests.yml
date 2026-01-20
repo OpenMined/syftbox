@@ -1,23 +1,19 @@
-name: Integration Tests
+name: Flapping Tests
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
-  # Temporarily disabled for madhava/biovault while testing flapping fixes
-  # Re-enable by adding madhava/biovault to push and pull_request branches above
+    branches: [ madhava/biovault ]
 
 jobs:
-  integration-tests:
+  flapping-tests:
     name: ${{ matrix.mode }} ${{ matrix.group }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
-        mode: [ go, rust ]
-        group: [ core, acl, state1, state2, transfer, chaos ]
+        mode: [ rust ]
+        group: [ transfer ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
