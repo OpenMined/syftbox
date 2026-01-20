@@ -8,18 +8,21 @@ on:
     branches: [ main, madhava/biovault ]
 
 jobs:
-  # DEBUG: Only running chaos on Windows to debug failure
   integration-tests:
     name: ${{ matrix.mode }} ${{ matrix.group }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ windows ]
-        mode: [ rust ] # go
-        group: [ chaos ] # acl
+        os: [ windows, ubuntu-latest, macos-latest ]
+        mode: [ go, rust ]
+        group: [ core, acl, state1, state2, transfer, chaos ]
         include:
           - os: windows
             runner: namespace-profile-windows-medium
+          - os: ubuntu-latest
+            runner: namespace-profile-linux-medium
+          - os: macos-latest
+            runner: namespace-profile-mac-medium
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
 
