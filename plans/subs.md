@@ -181,3 +181,7 @@ Add control plane endpoints so apps can query and modify subscription state and 
   - `DELETE /v1/subscriptions/rules`
   - `POST /v1/sync/refresh`
 - Added integration test `cmd/devstack/subscriptions_api_test.go` covering the new endpoints.
+- Added integration tests for edge cases in `cmd/devstack/subscriptions_integration_test.go`:
+  - `TestSubscriptionsPauseKeepsLocal`
+  - `TestSubscriptionsDatasiteGlob`
+  - `TestSubscriptionsLastMatchWins`

@@ -238,6 +238,7 @@ impl ControlPlane {
     /// 3. Return the actual bound address so callers know where the server is listening
     ///
     /// All operations are logged for debugging.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_async(
         addr: &str,
         token: Option<String>,
@@ -469,6 +470,7 @@ impl ControlPlane {
 
     /// Synchronous wrapper for start_async that blocks until binding completes.
     /// This ensures the port is actually bound before returning.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         addr: &str,
         token: Option<String>,
