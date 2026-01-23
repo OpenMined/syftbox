@@ -23,12 +23,20 @@ func (se *SyncEngine) shouldSyncPath(path string) bool {
 	if subscriptions.IsSubFile(path) {
 		return false
 	}
+	if se.workspace.Owner == "" {
+		slog.Warn("subscriptions: cannot determine owner, defaulting to allow", "path", path)
+		return true
+	}
 	action := se.subscriptionAction(path)
 	return action == subscriptions.ActionAllow
 }
 
 func (se *SyncEngine) shouldPrunePath(path string) bool {
 	if aclspec.IsACLFile(path) || subscriptions.IsSubFile(path) {
+		return false
+	}
+	if se.workspace.Owner == "" {
+		slog.Warn("subscriptions: cannot determine owner, skipping prune", "path", path)
 		return false
 	}
 	action := se.subscriptionAction(path)
