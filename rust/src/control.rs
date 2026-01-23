@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fs, net::SocketAddr, path::PathBuf, sync::Arc, sync::Mutex};
 
 use axum::{
-    extract::{Path as AxumPath, Query, State},
+    extract::{Path as AxumPath, Query, Request, State},
     http::{HeaderMap, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
     response::IntoResponse,
@@ -434,7 +434,8 @@ impl ControlPlane {
             .route("/v1/sync/events", get(sync_events_with_query_auth))
             .route("/v1/stats/latency", get(server_latency))
             .with_state(state.clone())
-            .merge(authenticated_routes);
+            .merge(authenticated_routes)
+            .fallback(fallback_handler);
 
         // Spawn the server
         let shutdown_clone = shutdown.clone();
@@ -735,6 +736,20 @@ struct HttpInfo {
     bytes_recv_total: i64,
     #[serde(skip_serializing_if = "String::is_empty")]
     last_error: String,
+}
+
+/// Fallback handler for unmatched routes - logs the path for debugging
+async fn fallback_handler(request: Request) -> impl IntoResponse {
+    let method = request.method().to_string();
+    let uri = request.uri().to_string();
+    crate::logging::error(format!(
+        "control plane 404: {} {} - route not found (check for trailing slash mismatch)",
+        method, uri
+    ));
+    (
+        StatusCode::NOT_FOUND,
+        format!("Route not found: {} {}", method, uri),
+    )
 }
 
 async fn status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
