@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -27,11 +28,12 @@ const (
 
 // Server represents the main application server and its dependencies
 type Server struct {
-	config *Config
-	server *http.Server
-	db     *sqlx.DB
-	hub    *ws.WebsocketHub
-	svc    *Services
+	config        *Config
+	server        *http.Server
+	db            *sqlx.DB
+	hub           *ws.WebsocketHub
+	svc           *Services
+	manifestStore *ws.ManifestStore
 }
 
 // New creates a new server instance with the provided configuration
@@ -51,21 +53,23 @@ func New(config *Config) (*Server, error) {
 	}
 
 	hub := ws.NewHub()
+	manifestStore := ws.NewManifestStore()
 	httpHandler := SetupRoutes(config, services, hub)
 
 	return &Server{
-		config: config,
-		db:     sqliteDb,
-		hub:    hub,
-		svc:    services,
+		config:        config,
+		db:            sqliteDb,
+		hub:           hub,
+		svc:           services,
+		manifestStore: manifestStore,
 		server: &http.Server{
 			Addr:    config.HTTP.Addr,
 			Handler: httpHandler,
 			// Timeouts to prevent slow client attacks
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      60 * time.Second,
-			IdleTimeout:       120 * time.Second,
-			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       config.HTTP.ReadTimeout,
+			WriteTimeout:      config.HTTP.WriteTimeout,
+			IdleTimeout:       config.HTTP.IdleTimeout,
+			ReadHeaderTimeout: config.HTTP.ReadHeaderTimeout,
 			// Connection control
 			MaxHeaderBytes: 1 << 20, // 1 MB,
 			TLSConfig: &tls.Config{
@@ -188,6 +192,7 @@ func (s *Server) handleSocketMessages(ctx context.Context) {
 	for {
 		select {
 		case msg := <-s.hub.Messages():
+			slog.Debug("server received websocket message", "msgType", msg.Message.Type, "msgId", msg.Message.Id, "connId", msg.ConnID, "from", msg.ClientInfo.User)
 			s.onMessage(msg)
 
 		case <-ctx.Done():
@@ -200,6 +205,8 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 	switch msg.Message.Type {
 	case syftmsg.MsgFileWrite:
 		s.handleFileWrite(msg)
+	case syftmsg.MsgACLManifest:
+		s.handleACLManifest(msg)
 	default:
 		slog.Info("unhandled message", "msgType", msg.Message.Type)
 	}
@@ -225,7 +232,12 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 
 	slog.Info("wsmsg handler recieved", msgGroup)
 
-	go func() {
+	// Check if this is an ACL file
+	isACLFile := strings.HasSuffix(data.Path, "/syft.pub.yaml") || data.Path == "syft.pub.yaml"
+
+	// For ACL files, upload synchronously to ensure they're loaded before broadcasting
+	// For other files, upload asynchronously for better performance
+	uploadFunc := func() error {
 		if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 			Key:  data.Path,
 			ETag: msg.Message.Id,
@@ -233,8 +245,50 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			Size: data.Length,
 		}); err != nil {
 			slog.Error("ws file write put object", "error", err)
+			return err
 		}
-	}()
+		return nil
+	}
+
+	if isACLFile {
+		// Synchronous upload for ACL files - wait for upload + ACL loading before broadcasting
+		if err := uploadFunc(); err != nil {
+			// Send NACK to sender
+			nackMsg := syftmsg.NewNack(msg.Message.Id, err.Error())
+			s.hub.SendMessage(msg.ConnID, nackMsg)
+			return
+		}
+
+		// Load the ACL immediately after upload to ensure it's available for permission checks
+		// This is more reliable than waiting for the async blob change callback
+		ruleSet, err := s.svc.ACL.LoadACLFromContent(data.Path, data.Content)
+		if err != nil {
+			slog.Error("ws file write ACL parse error", msgGroup, "error", err)
+		} else if ruleSet != nil {
+			if _, err := s.svc.ACL.AddRuleSet(ruleSet); err != nil {
+				slog.Error("ws file write ACL add ruleset error", msgGroup, "error", err)
+			} else {
+				slog.Info("ws file write ACL loaded synchronously", msgGroup, "path", ruleSet.Path)
+			}
+		}
+
+		// Send ACK to sender after successful ACL file write
+		ackMsg := syftmsg.NewAck(msg.Message.Id)
+		s.hub.SendMessage(msg.ConnID, ackMsg)
+	} else {
+		// Asynchronous upload for regular files - send ACK/NACK when done
+		go func() {
+			if err := uploadFunc(); err != nil {
+				// Send NACK to sender
+				nackMsg := syftmsg.NewNack(msg.Message.Id, err.Error())
+				s.hub.SendMessage(msg.ConnID, nackMsg)
+			} else {
+				// Send ACK to sender after successful file write
+				ackMsg := syftmsg.NewAck(msg.Message.Id)
+				s.hub.SendMessage(msg.ConnID, ackMsg)
+			}
+		}()
+	}
 
 	// broadcast the message to all clients except the sender
 	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
@@ -245,16 +299,64 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 			return false
 		}
 
-		// check if the RECIPIENT has permission to read the file
-		if err := s.svc.ACL.CanAccess(
-			acl.NewRequest(data.Path, &acl.User{ID: to}, acl.AccessRead),
-		); err != nil {
-			slog.Warn("wsmsg handler permission denied", msgGroup, "to", to, "error", err)
-			return false
+		// ACL files (syft.pub.yaml) are metadata - always broadcast them
+		// This prevents chicken-and-egg problem where ACL can't be read because it hasn't synced yet
+		isACLFile := strings.HasSuffix(data.Path, "/syft.pub.yaml") || data.Path == "syft.pub.yaml"
+
+		if isACLFile {
+			slog.Info("wsmsg handler ACL bypass", msgGroup, "to", to, "reason", "ACL metadata file")
 		} else {
-			slog.Info("wsmsg handler broadcast", msgGroup, "to", to)
+			// check if the RECIPIENT has permission to read the file
+			if err := s.svc.ACL.CanAccess(
+				acl.NewRequest(data.Path, &acl.User{ID: to}, acl.AccessRead),
+			); err != nil {
+				slog.Warn("wsmsg handler permission denied", msgGroup, "to", to, "error", err)
+				return false
+			}
 		}
 
+		slog.Info("wsmsg handler broadcast", msgGroup, "to", to)
+
 		return true
+	})
+}
+
+func (s *Server) handleACLManifest(msg *ws.ClientMessage) {
+	manifest, ok := msg.Message.Data.(*syftmsg.ACLManifest)
+	if !ok {
+		slog.Error("wsmsg handler invalid manifest data type")
+		return
+	}
+
+	from := msg.ClientInfo.User
+	msgGroup := slog.Group("wsmsg", "id", msg.Message.Id, "type", msg.Message.Type, "connId", msg.ConnID, "from", from, "datasite", manifest.Datasite, "for", manifest.For, "forHash", manifest.ForHash)
+
+	// Only accept manifests from the datasite owner
+	if manifest.Datasite != from {
+		slog.Warn("wsmsg manifest rejected - not owner", msgGroup)
+		return
+	}
+
+	// Store the manifest
+	s.manifestStore.Store(manifest)
+	slog.Info("wsmsg manifest stored", msgGroup, "aclCount", len(manifest.ACLOrder))
+
+	// Route the manifest to the appropriate user(s)
+	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
+		to := info.User
+
+		// Don't send back to sender
+		if to == from {
+			return false
+		}
+
+		// Check if this manifest is for this user
+		toHash := syftmsg.HashPrincipal(to)
+		if manifest.ForHash == toHash || manifest.ForHash == "public" {
+			slog.Info("wsmsg manifest routed", msgGroup, "to", to)
+			return true
+		}
+
+		return false
 	})
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -66,6 +67,11 @@ func NewS3BackendWithConfig(cfg *S3Config) *S3Backend {
 		),
 		config.WithRegion(cfg.Region),
 		config.WithHTTPClient(httpClient),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 10
+			})
+		}),
 	)
 	if err != nil {
 		panic("failed to load AWS config: " + err.Error())
@@ -162,36 +168,49 @@ func (s *S3Backend) PutObjectMultipart(ctx context.Context, params *PutObjectMul
 		return nil, ErrInvalidKey
 	}
 
-	// Create a multipart upload
-	result, err := s.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
-		Bucket: &s.config.BucketName,
-		Key:    &params.Key,
-	})
-
-	if err != nil {
-		return nil, err
+	uploadID := params.UploadID
+	if uploadID == "" {
+		// Create a new multipart upload
+		result, err := s.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+			Bucket: &s.config.BucketName,
+			Key:    &params.Key,
+		})
+		if err != nil {
+			return nil, err
+		}
+		uploadID = aws.ToString(result.UploadId)
 	}
 
-	urls := make([]string, 0, params.Parts)
-	for i := range params.Parts {
-		// Presign the URL for each part
+	parts := params.PartNumbers
+	if len(parts) == 0 {
+		if params.Parts == 0 {
+			return nil, fmt.Errorf("parts not specified for multipart upload")
+		}
+		for i := 0; i < int(params.Parts); i++ {
+			parts = append(parts, i+1)
+		}
+	}
+
+	urls := make(map[int]string, len(parts))
+	for _, partNum := range parts {
+		pn := int32(partNum)
 		url, err := s.s3Presigner.PresignUploadPart(ctx, &s3.UploadPartInput{
 			Bucket:     &s.config.BucketName,
 			Key:        &params.Key,
-			UploadId:   result.UploadId,
-			PartNumber: aws.Int32(int32(i + 1)),
+			UploadId:   aws.String(uploadID),
+			PartNumber: aws.Int32(pn),
 		}, func(opts *s3.PresignOptions) {
 			opts.Expires = 2 * uploadExpiry
 		})
 		if err != nil {
 			return nil, err
 		}
-		urls = append(urls, url.URL)
+		urls[partNum] = url.URL
 	}
 
 	return &PutObjectMultipartResponse{
 		Key:      params.Key,
-		UploadID: aws.ToString(result.UploadId),
+		UploadID: uploadID,
 		URLs:     urls,
 	}, nil
 }
@@ -221,12 +240,42 @@ func (s *S3Backend) CompleteMultipartUpload(ctx context.Context, params *Complet
 		return nil, err
 	}
 
-	return &PutObjectResponse{
+	result := &PutObjectResponse{
 		Key:          params.Key,
 		Version:      aws.ToString(res.VersionId),
 		ETag:         strings.ReplaceAll(aws.ToString(res.ETag), "\"", ""),
 		LastModified: time.Now().UTC(),
-	}, nil
+	}
+
+	if head, headErr := s.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: &s.config.BucketName,
+		Key:    &params.Key,
+	}); headErr == nil {
+		result.Size = aws.ToInt64(head.ContentLength)
+		result.LastModified = aws.ToTime(head.LastModified)
+	}
+
+	if s.hooks.AfterPutObject != nil {
+		s.hooks.AfterPutObject(&PutObjectParams{
+			Key:  params.Key,
+			Size: result.Size,
+		}, result)
+	}
+
+	return result, nil
+}
+
+func (s *S3Backend) AbortMultipartUpload(ctx context.Context, params *AbortMultipartUploadParams) error {
+	if !ValidateKey(params.Key) {
+		return ErrInvalidKey
+	}
+
+	_, err := s.s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
+		Bucket:   &s.config.BucketName,
+		Key:      &params.Key,
+		UploadId: &params.UploadID,
+	})
+	return err
 }
 
 // ===================================================================================================

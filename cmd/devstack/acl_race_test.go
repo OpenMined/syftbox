@@ -25,7 +25,20 @@ func TestACLRaceCondition(t *testing.T) {
 
 	t.Log("=== TESTING ACL PRIORITY SYNC FIX ===")
 	t.Log("")
-	t.Log("Step 1: Create fresh RPC endpoint with ACL")
+	t.Log("Step 1: Create default root ACLs (bootstrap)")
+
+	// Create default root and public ACLs (like real client bootstrap)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+
+	t.Log("Step 2: Create fresh RPC endpoint with ACL")
 
 	// Create RPC endpoints
 	if err := h.alice.SetupRPCEndpoint(appName, endpoint); err != nil {
@@ -61,7 +74,7 @@ func TestACLRaceCondition(t *testing.T) {
 	t.Logf("⏱️  Alice uploaded at T+%v", time.Since(start))
 
 	// Try to receive with generous timeout to see what happens
-	timeout := 10 * time.Second
+	timeout := windowsTimeout(10 * time.Second)
 	err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hash, timeout)
 
 	latency := time.Since(start)
@@ -111,7 +124,7 @@ func TestACLRaceCondition(t *testing.T) {
 		t.Fatalf("upload failed: %v", err)
 	}
 
-	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename2, md5Hash2, 3*time.Second); err != nil {
+	if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename2, md5Hash2, windowsTimeout(3*time.Second)); err != nil {
 		t.Fatalf("sync failed even with ACL ready: %v", err)
 	}
 

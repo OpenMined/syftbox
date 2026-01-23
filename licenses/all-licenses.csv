@@ -1,0 +1,22 @@
+license,languages
+(Apache-2.0 OR MIT) AND Unicode-3.0,rust
+0BSD OR Apache-2.0 OR MIT,rust
+Apache-2.0,"go,rust"
+Apache-2.0 AND ISC,rust
+Apache-2.0 OR Apache-2.0 WITH LLVM-exception OR MIT,rust
+Apache-2.0 OR BSD-2-Clause OR MIT,rust
+Apache-2.0 OR BSL-1.0,rust
+Apache-2.0 OR ISC OR MIT,rust
+Apache-2.0 OR LGPL-2.1-or-later OR MIT,rust
+Apache-2.0 OR MIT,rust
+Apache-2.0 OR MIT OR Zlib,rust
+BSD-2-Clause,go
+BSD-3-Clause,"go,rust"
+BSD-3-Clause AND MIT,rust
+CC0-1.0,rust
+CDLA-Permissive-2.0,rust
+ISC,"go,rust"
+MIT,"go,rust"
+MIT OR Unlicense,rust
+MPL-2.0,go
+Unicode-3.0,rust

@@ -3,6 +3,7 @@
 The Dockerfile.client.ds builds an image containing the SyftBox client CLI.
 
 ### Features
+
 - **Multi-architecture support**: Supports both `linux/amd64` and `linux/arm64`
 - **Security-focused**: Runs as non-root user, includes checksum verification
 - **Python runtime**: Includes Python 3.11 for running SyftBox applications built in Python
@@ -10,7 +11,9 @@ The Dockerfile.client.ds builds an image containing the SyftBox client CLI.
 - **Minimal size**: Uses Alpine Linux base
 
 ### Building
+
 Please refer to https://github.com/OpenMined/syftbox to get the latest version (for example it's `v0.8.4` as of Sep 12, 2025).
+
 ```bash
 # Build for current architecture
 docker build -f docker/Dockerfile.client.ds \
@@ -29,6 +32,7 @@ docker buildx build -f docker/Dockerfile.client.ds \
   --build-arg SYFTBOX_VERSION=v0.8.3 \
   -t syftbox-client:multi .
 ```
+
 ### Deployment
 
 To deploy this docker image, a minimal interaction is required. The container should run with an infinite command (it is the default entrypoint).

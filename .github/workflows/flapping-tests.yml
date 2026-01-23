@@ -1,0 +1,46 @@
+name: Flapping Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  flapping-tests:
+    name: ${{ matrix.mode }} ${{ matrix.group }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        mode: [ rust ]
+        group: [ transfer1, transfer2 ]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+        cache: ${{ matrix.os != 'windows' }}
+
+    - name: Download Go dependencies
+      if: matrix.os == 'windows'
+      run: go mod download
+
+    - name: Set up Rust
+      if: matrix.mode == 'rust'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust cache
+      if: matrix.mode == 'rust'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run ${{ matrix.group }} tests (${{ matrix.mode }} client)
+      run: just sbdev-test-group ${{ matrix.group }} mode=${{ matrix.mode }}
+      shell: bash

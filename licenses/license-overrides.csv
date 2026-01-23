@@ -1,0 +1,6 @@
+original_url,override_url
+https://github.com/charmbracelet/x/blob/ansi/v0.9.3/ansi/LICENSE,https://raw.githubusercontent.com/charmbracelet/x/ansi/v0.9.3/LICENSE
+https://github.com/charmbracelet/x/blob/cellbuf/v0.0.13/cellbuf/LICENSE,https://raw.githubusercontent.com/charmbracelet/x/cellbuf/v0.0.13/LICENSE
+https://github.com/charmbracelet/x/blob/term/v0.2.1/term/LICENSE,https://raw.githubusercontent.com/charmbracelet/x/term/v0.2.1/LICENSE
+https://github.com/ugorji/go/blob/codec/v1.3.0/codec/LICENSE,https://raw.githubusercontent.com/ugorji/go/codec/v1.3.0/LICENSE
+https://github.com/open-telemetry/opentelemetry-go/blob/trace/v1.37.0/trace/LICENSE,https://raw.githubusercontent.com/open-telemetry/opentelemetry-go/trace/v1.37.0/LICENSE

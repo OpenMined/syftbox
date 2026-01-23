@@ -26,11 +26,13 @@ type RuntimeConfig struct {
 }
 
 type DatasiteManager struct {
-	datasite    *datasite.Datasite
-	status      DatasiteStatus
-	runtimeCfg  *RuntimeConfig
-	datasiteErr error
-	mu          sync.RWMutex
+	datasite     *datasite.Datasite
+	status       DatasiteStatus
+	runtimeCfg   *RuntimeConfig
+	datasiteErr  error
+	configPath   string
+	latencyStats *LatencyStats
+	mu           sync.RWMutex
 }
 
 func New() *DatasiteManager {
@@ -47,16 +49,26 @@ func (d *DatasiteManager) SetRuntimeConfig(cfg *RuntimeConfig) {
 	d.runtimeCfg = cfg
 }
 
+func (d *DatasiteManager) SetConfigPath(path string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.configPath = path
+}
+
 func (d *DatasiteManager) Start(ctx context.Context) error {
 	slog.Info("datasite manager start")
 
-	if !d.defaultConfigExists() {
-		slog.Info("default config not found. waiting to be provisioned.")
+	// Use the configured path or fall back to default
+	configPath := d.getConfigPath()
+	
+	if !d.configExists(configPath) {
+		slog.Info("config not found. waiting to be provisioned.", "path", configPath)
 		return nil
 	}
 
-	slog.Info("default config found. provisioning datasite.")
-	cfg, err := config.LoadFromFile(config.DefaultConfigPath)
+	slog.Info("config found. provisioning datasite.", "path", configPath)
+	cfg, err := config.LoadFromFile(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -91,6 +103,12 @@ func (d *DatasiteManager) Get() (*datasite.Datasite, error) {
 	}
 
 	return d.datasite, nil
+}
+
+func (d *DatasiteManager) GetPrimaryDatasite() *datasite.Datasite {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.datasite
 }
 
 func (d *DatasiteManager) Status() *DatasiteManagerStatus {
@@ -154,6 +172,34 @@ func (d *DatasiteManager) newDatasite(ctx context.Context, cfg *config.Config) e
 	return nil
 }
 
+func (d *DatasiteManager) getConfigPath() string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	
+	if d.configPath != "" {
+		return d.configPath
+	}
+	return config.DefaultConfigPath
+}
+
+func (d *DatasiteManager) configExists(path string) bool {
+	return utils.FileExists(path)
+}
+
 func (d *DatasiteManager) defaultConfigExists() bool {
 	return utils.FileExists(config.DefaultConfigPath)
+}
+
+// SetLatencyStats sets the latency stats tracker
+func (d *DatasiteManager) SetLatencyStats(stats *LatencyStats) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.latencyStats = stats
+}
+
+// GetLatencyStats returns the latency stats tracker
+func (d *DatasiteManager) GetLatencyStats() *LatencyStats {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.latencyStats
 }

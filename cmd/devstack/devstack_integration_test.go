@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -20,13 +19,27 @@ func TestDevstackIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping devstack integration on Windows runner")
+
+	// Repository root (go up two levels from cmd/devstack)
+	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
+	if err != nil {
+		t.Fatalf("find repo root: %v", err)
 	}
 
-	// Setup test directory
-	tmpDir := t.TempDir()
-	stackRoot := filepath.Join(tmpDir, "teststack")
+	// Setup test directory; allow overriding via PERF_TEST_SANDBOX for persisted artifacts.
+	var stackRoot string
+	if sandbox := os.Getenv("PERF_TEST_SANDBOX"); sandbox != "" {
+		if filepath.IsAbs(sandbox) {
+			stackRoot = sandbox
+		} else {
+			stackRoot = filepath.Join(repoRoot, sandbox)
+		}
+		t.Logf("Using PERF_TEST_SANDBOX: %s", stackRoot)
+	} else {
+		tmpDir := t.TempDir()
+		stackRoot = filepath.Join(tmpDir, "teststack")
+		t.Logf("Using temporary directory: %s", stackRoot)
+	}
 
 	// Test parameters
 	emails := []string{"alice@example.com", "bob@example.com"}
@@ -40,13 +53,21 @@ func TestDevstackIntegration(t *testing.T) {
 	}
 
 	// Resolve absolute path
-	var err error
 	opts.root, err = filepath.Abs(opts.root)
 	if err != nil {
 		t.Fatalf("resolve root: %v", err)
 	}
 
 	t.Logf("Starting devstack at %s", opts.root)
+
+	// Stop any existing stack for this root before starting
+	preflightCleanup(opts.root, t)
+
+	// Ensure cleanup runs even if test fails
+	t.Cleanup(func() {
+		t.Logf("Stopping devstack...")
+		_ = stopStack(opts.root)
+	})
 
 	// Create root directory
 	if err := os.MkdirAll(opts.root, 0o755); err != nil {
@@ -65,13 +86,7 @@ func TestDevstackIntegration(t *testing.T) {
 
 	// Build binaries
 	serverBin := addExe(filepath.Join(binDir, "server"))
-	clientBin := addExe(filepath.Join(binDir, "syftbox"))
-
-	// Find repository root (go up two levels from cmd/devstack)
-	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
-	if err != nil {
-		t.Fatalf("find repo root: %v", err)
-	}
+	clientBin := filepath.Join(binDir, "syftbox")
 
 	t.Logf("Building server binary...")
 	serverPkg := filepath.Join(repoRoot, "cmd", "server")
@@ -81,7 +96,8 @@ func TestDevstackIntegration(t *testing.T) {
 
 	t.Logf("Building client binary...")
 	clientPkg := filepath.Join(repoRoot, "cmd", "client")
-	if err := buildBinary(clientBin, clientPkg, clientBuildTags); err != nil {
+	clientBin, err = resolveClientBinary(binDir, clientPkg, clientBuildTags)
+	if err != nil {
 		t.Fatalf("build client: %v", err)
 	}
 
@@ -146,7 +162,11 @@ func TestDevstackIntegration(t *testing.T) {
 			port = clientPortStart + i
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
+		if err != nil {
+			t.Fatalf("client bin for %s: %v", email, err)
+		}
+		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
 		if err != nil {
 			t.Fatalf("start client %s: %v", email, err)
 		}
@@ -168,12 +188,22 @@ func TestDevstackIntegration(t *testing.T) {
 	if err := writeState(statePath, &state); err != nil {
 		t.Fatalf("write state: %v", err)
 	}
+	// Also save to global state so waitForServerReady finds the correct port
+	if err := saveGlobalState(opts.root, &state); err != nil {
+		t.Logf("warning: failed to save global state: %v", err)
+	}
 
 	t.Logf("Devstack started successfully")
 	t.Logf("  Server: %s (pid %d)", serverURL, sState.PID)
 	t.Logf("  MinIO:  http://127.0.0.1:%d", mState.APIPort)
 	for _, c := range clients {
 		t.Logf("  Client: %s (pid %d)", c.Email, c.PID)
+	}
+
+	for _, email := range emails {
+		if err := writeDefaultACLs(opts.root, email); err != nil {
+			t.Fatalf("create default ACLs for %s: %v", email, err)
+		}
 	}
 
 	// Run sync check
@@ -184,7 +214,7 @@ func TestDevstackIntegration(t *testing.T) {
 
 	t.Logf("✅ Sync check passed - files replicated successfully")
 
-	// Verify the probe file exists
+	// Verify the probe file exists (under <root>/<client>/datasites/<src>/public/)
 	src := emails[0]
 	for _, email := range emails[1:] {
 		// Check that bob has alice's public files
@@ -199,11 +229,38 @@ func TestDevstackIntegration(t *testing.T) {
 		}
 	}
 
-	// Cleanup
-	t.Logf("Stopping devstack...")
-	if err := stopStack(opts.root); err != nil {
-		t.Fatalf("stop stack: %v", err)
-	}
-
 	t.Logf("✅ Devstack integration test completed successfully")
+}
+
+func writeDefaultACLs(root, email string) error {
+	userDir := filepath.Join(root, email, "datasites", email)
+	publicDir := filepath.Join(userDir, "public")
+
+	rootACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: []
+`
+	publicACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: ['*']
+`
+
+	if err := os.MkdirAll(publicDir, 0o755); err != nil {
+		return fmt.Errorf("create public dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, "syft.pub.yaml"), []byte(rootACL), 0o644); err != nil {
+		return fmt.Errorf("write root ACL: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(publicDir, "syft.pub.yaml"), []byte(publicACL), 0o644); err != nil {
+		return fmt.Errorf("write public ACL: %w", err)
+	}
+	return nil
 }
