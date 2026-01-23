@@ -12,12 +12,12 @@ import (
 )
 
 type ResourceSnapshot struct {
-	Timestamp   time.Time
-	AllocMB     float64
+	Timestamp    time.Time
+	AllocMB      float64
 	TotalAllocMB float64
-	SysMB       float64
-	NumGC       uint32
-	Goroutines  int
+	SysMB        float64
+	NumGC        uint32
+	Goroutines   int
 }
 
 type ResourceTracker struct {
@@ -137,6 +137,9 @@ func TestProfilePerformance(t *testing.T) {
 	}
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
 	}
 
 	// Setup RPC endpoint

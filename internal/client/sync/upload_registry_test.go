@@ -430,6 +430,49 @@ func TestUploadRegistry_LoadFromDisk(t *testing.T) {
 	}
 }
 
+func TestUploadRegistry_LoadFromDisk_TryRegisterResumesPaused(t *testing.T) {
+	resumeDir := t.TempDir()
+
+	r := NewUploadRegistry(resumeDir)
+	key := "user@example.com/file.txt"
+	localPath := "/local/path/file.txt"
+	expectedID := r.generateID(key, localPath)
+
+	sessionData := map[string]interface{}{
+		"uploadId":  "test-upload-id",
+		"key":       key,
+		"filePath":  localPath,
+		"size":      int64(1024),
+		"partSize":  int64(256),
+		"partCount": 4,
+		"completed": map[string]string{"1": "etag1"},
+	}
+	data, _ := json.Marshal(sessionData)
+
+	sessionFile := filepath.Join(resumeDir, expectedID+".json")
+	_ = os.WriteFile(sessionFile, data, 0644)
+
+	if err := r.LoadFromDisk(); err != nil {
+		t.Fatalf("failed to load from disk: %v", err)
+	}
+
+	info, ctx, cancel, alreadyActive := r.TryRegister(key, localPath, 1024)
+	if alreadyActive {
+		t.Fatal("expected TryRegister to allow resume for paused session")
+	}
+	if ctx == nil || cancel == nil {
+		t.Fatal("expected non-nil ctx/cancel for resumed session")
+	}
+	defer cancel()
+
+	if info.State != UploadStateUploading {
+		t.Fatalf("expected state=uploading after resume, got %s", info.State)
+	}
+	if info.Paused {
+		t.Fatal("expected paused=false after resume")
+	}
+}
+
 func TestUploadRegistry_LoadFromDiskEmptyDir(t *testing.T) {
 	r := NewUploadRegistry(t.TempDir())
 

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/openmined/syftbox/internal/client/subscriptions"
 	"github.com/dustin/go-humanize"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -48,6 +49,7 @@ type SyncEngine struct {
 	lastSyncNs        atomic.Int64
 	adaptiveScheduler *AdaptiveSyncScheduler
 	aclStaging        *ACLStagingManager
+	subs              *SubscriptionManager
 	wg                sync.WaitGroup
 	muSync            sync.Mutex
 }
@@ -70,7 +72,7 @@ func NewSyncEngine(
 	syncStatus := NewSyncStatus()
 	adaptiveScheduler := NewAdaptiveSyncScheduler()
 
-	resumeDir := filepath.Join(workspace.MetadataDir, "upload_sessions")
+	resumeDir := filepath.Join(workspace.MetadataDir, uploadSessionsDirName)
 	uploadRegistry := NewUploadRegistry(resumeDir)
 
 	se := &SyncEngine{
@@ -87,6 +89,7 @@ func NewSyncEngine(
 	}
 
 	se.aclStaging = NewACLStagingManager(se.onACLSetReady)
+	se.subs = NewSubscriptionManager(filepath.Join(workspace.MetadataDir, subscriptions.FileName))
 
 	return se, nil
 }
@@ -275,6 +278,16 @@ func (se *SyncEngine) runFullSync(ctx context.Context) error {
 		}
 	}
 
+	se.pruneBlockedPaths(localState, journalState)
+
+	filteredRemote := make(map[SyncPath]*FileMetadata, len(remoteState))
+	for path, meta := range remoteState {
+		if se.shouldSyncPath(path.String()) {
+			filteredRemote[path] = meta
+		}
+	}
+	remoteState = filteredRemote
+
 	// reconcile trees
 	tReconcileStart := time.Now()
 	result := se.reconcile(localState, remoteState, journalState)
@@ -415,6 +428,11 @@ func (se *SyncEngine) reconcile(localState, remoteState, journalState map[SyncPa
 		local, localExists := localState[path]
 		remote, remoteExists := remoteState[path]
 		journal, journalExists := journalState[path]
+
+		if !se.shouldSyncPath(path.String()) {
+			reconcileOps.Ignored[path] = struct{}{}
+			continue
+		}
 
 		isSyncing := se.isSyncing(path)
 		isIgnored := se.ignoreList.ShouldIgnore(path.String()) // conflicts and rejects are ignored in the list

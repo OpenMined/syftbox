@@ -31,6 +31,10 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 	}
 
 	syncRelPath := SyncPath(relPath)
+	if !se.shouldSyncPath(relPath) {
+		slog.Warn("sync", "type", SyncPriority, "op", OpSkipped, "reason", "subscription", "path", relPath)
+		return
+	}
 
 	// If we already have a rejected marker for this path, don't keep retrying until resolved.
 	localAbsPath := se.workspace.DatasiteAbsPath(syncRelPath.String())

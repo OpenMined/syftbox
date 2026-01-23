@@ -9,6 +9,7 @@ pub mod filters;
 pub mod http;
 pub mod logging;
 pub mod login;
+pub mod subscriptions;
 mod sync;
 pub mod telemetry;
 pub mod uploader;

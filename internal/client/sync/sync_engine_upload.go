@@ -83,7 +83,7 @@ func (se *SyncEngine) handleRemoteWrites(ctx context.Context, batch BatchRemoteW
 			return
 		}
 
-		resumeDir := filepath.Join(se.workspace.MetadataDir, "upload-sessions")
+		resumeDir := filepath.Join(se.workspace.MetadataDir, uploadSessionsDirName)
 		cleanupOldUploadSessions(resumeDir, uploadSessionTTL)
 
 		uploadInfo, uploadCtx, cancel, alreadyActive := se.uploadRegistry.TryRegister(op.RelPath.String(), localAbsPath, op.Local.Size)

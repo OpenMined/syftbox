@@ -68,6 +68,11 @@ func waitForSyncEvent(ctx context.Context, baseURL, token, wantPathSuffix string
 		return SyncFileStatus{}, err
 	}
 	u.Path = "/v1/sync/events"
+	if token != "" {
+		q := u.Query()
+		q.Set("token", token) // Rust expects query auth for SSE; Go ignores it.
+		u.RawQuery = q.Encode()
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {

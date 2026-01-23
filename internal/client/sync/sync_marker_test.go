@@ -119,3 +119,62 @@ func TestSetMarker_Rejected_DedupesWithoutRotation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, matches, 1)
 }
+
+func TestListMarkedFiles(t *testing.T) {
+	baseDir := t.TempDir()
+
+	// Create directory structure
+	aliceDir := filepath.Join(baseDir, "alice@example.com", "public")
+	bobDir := filepath.Join(baseDir, "bob@example.com", "shared")
+	require.NoError(t, os.MkdirAll(aliceDir, 0o755))
+	require.NoError(t, os.MkdirAll(bobDir, 0o755))
+
+	// Create conflict files
+	conflict1 := filepath.Join(aliceDir, "data.conflict.txt")
+	conflict2 := filepath.Join(bobDir, "config.conflict.json")
+	require.NoError(t, os.WriteFile(conflict1, []byte("conflict1"), 0o644))
+	require.NoError(t, os.WriteFile(conflict2, []byte("conflict2"), 0o644))
+
+	// Create rejected files
+	rejected1 := filepath.Join(aliceDir, "secret.rejected.txt")
+	rejected2 := filepath.Join(bobDir, "private.rejected.json")
+	require.NoError(t, os.WriteFile(rejected1, []byte("rejected1"), 0o644))
+	require.NoError(t, os.WriteFile(rejected2, []byte("rejected2"), 0o644))
+
+	// Create a legacy marker file
+	legacyRejected := filepath.Join(aliceDir, "old.syftrejected.txt")
+	require.NoError(t, os.WriteFile(legacyRejected, []byte("legacy"), 0o644))
+
+	// Create regular files that should NOT be listed
+	regularFile := filepath.Join(aliceDir, "normal.txt")
+	require.NoError(t, os.WriteFile(regularFile, []byte("regular"), 0o644))
+
+	// Run ListMarkedFiles
+	conflicts, rejected, err := ListMarkedFiles(baseDir)
+	require.NoError(t, err)
+
+	// Verify results
+	assert.Len(t, conflicts, 2, "should find 2 conflict files")
+	assert.Len(t, rejected, 3, "should find 3 rejected files (including legacy)")
+
+	// Verify conflict file details
+	conflictPaths := make(map[string]bool)
+	for _, f := range conflicts {
+		conflictPaths[f.Path] = true
+		assert.Equal(t, "conflict", f.MarkerType)
+		assert.NotEmpty(t, f.OriginalPath)
+		assert.NotContains(t, f.OriginalPath, ".conflict")
+	}
+	assert.True(t, conflictPaths["alice@example.com/public/data.conflict.txt"])
+	assert.True(t, conflictPaths["bob@example.com/shared/config.conflict.json"])
+
+	// Verify rejected file details
+	rejectedPaths := make(map[string]bool)
+	for _, f := range rejected {
+		rejectedPaths[f.Path] = true
+		assert.Equal(t, "rejected", f.MarkerType)
+	}
+	assert.True(t, rejectedPaths["alice@example.com/public/secret.rejected.txt"])
+	assert.True(t, rejectedPaths["bob@example.com/shared/private.rejected.json"])
+	assert.True(t, rejectedPaths["alice@example.com/public/old.syftrejected.txt"])
+}

@@ -34,6 +34,9 @@ func TestACLRaceCondition(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
 
 	t.Log("Step 2: Create fresh RPC endpoint with ACL")
 

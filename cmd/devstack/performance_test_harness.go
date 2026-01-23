@@ -759,6 +759,16 @@ func (h *DevstackTestHarness) Cleanup() {
 	})
 }
 
+func (h *DevstackTestHarness) AllowSubscriptionsBetween(a, b *ClientHelper) error {
+	if err := a.SetSubscriptionsAllow(b.email); err != nil {
+		return err
+	}
+	if err := b.SetSubscriptionsAllow(a.email); err != nil {
+		return err
+	}
+	return nil
+}
+
 // UploadFile creates and uploads a file from a client
 func (c *ClientHelper) UploadFile(relPath string, content []byte) error {
 	c.t.Helper()
@@ -788,6 +798,33 @@ func (c *ClientHelper) UploadFile(relPath string, content []byte) error {
 	c.metrics.mu.Unlock()
 
 	c.t.Logf("%s uploaded %s (%d bytes)", c.email, relPath, len(content))
+	return nil
+}
+
+// SetSubscriptionsAllow writes a local-only syft.sub.yaml allowing the given datasites.
+func (c *ClientHelper) SetSubscriptionsAllow(datasites ...string) error {
+	c.t.Helper()
+
+	subPath := filepath.Join(c.dataDir, ".data", "syft.sub.yaml")
+	if err := os.MkdirAll(filepath.Dir(subPath), 0o755); err != nil {
+		return fmt.Errorf("create sub dir: %w", err)
+	}
+
+	var b strings.Builder
+	b.WriteString("version: 1\n")
+	b.WriteString("defaults:\n")
+	b.WriteString("  action: block\n")
+	b.WriteString("rules:\n")
+	for _, ds := range datasites {
+		b.WriteString("  - action: allow\n")
+		b.WriteString(fmt.Sprintf("    datasite: %q\n", ds))
+		b.WriteString("    path: \"**\"\n")
+	}
+
+	if err := os.WriteFile(subPath, []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("write syft.sub.yaml: %w", err)
+	}
+
 	return nil
 }
 

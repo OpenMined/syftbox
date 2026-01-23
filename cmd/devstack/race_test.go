@@ -11,6 +11,20 @@ import (
 	"time"
 )
 
+func allowRaceSubs(t *testing.T, h *DevstackTestHarness) {
+	t.Helper()
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+	time.Sleep(2 * time.Second)
+}
+
 // TestDeleteDuringDownload tests the race condition where a file is deleted
 // while a peer is actively downloading it.
 func TestDeleteDuringDownload(t *testing.T) {
@@ -19,6 +33,8 @@ func TestDeleteDuringDownload(t *testing.T) {
 	}
 
 	h := NewDevstackHarness(t)
+	allowRaceSubs(t, h)
+	allowRaceSubs(t, h)
 
 	t.Log("=== TEST: Delete During Download ===")
 	t.Log("Setup: Alice uploads 5MB file, bob starts download, alice deletes mid-download")
@@ -143,6 +159,7 @@ func TestACLChangeDuringUpload(t *testing.T) {
 	}
 
 	h := NewDevstackHarness(t)
+	allowRaceSubs(t, h)
 
 	t.Log("=== TEST: ACL Change During Upload ===")
 	t.Log("Setup: Alice has public ACL, bob starts upload, alice revokes mid-upload")
@@ -224,6 +241,7 @@ func TestOverwriteDuringDownload(t *testing.T) {
 	}
 
 	h := NewDevstackHarness(t)
+	allowRaceSubs(t, h)
 
 	t.Log("=== TEST: Overwrite During Download ===")
 	t.Log("Setup: Alice uploads v1, bob downloads, alice uploads v2 mid-download")

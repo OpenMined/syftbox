@@ -36,6 +36,15 @@ func TestLargeUploadViaDaemonStress(t *testing.T) {
 	t.Setenv("SBDEV_HTTP_WRITE_TIMEOUT", "8s")
 
 	h := NewDevstackHarness(t)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.bob.SetSubscriptionsAllow(h.alice.email); err != nil {
+		t.Fatalf("set bob subscriptions: %v", err)
+	}
 	time.Sleep(2 * time.Second)
 
 	serverURL := fmt.Sprintf("http://127.0.0.1:%d", h.state.Server.Port)
@@ -289,10 +298,10 @@ func logAliceSyncStatus(t *testing.T, baseURL, token string) {
 
 	var status struct {
 		Files []struct {
-			Path     string `json:"path"`
-			State    string `json:"state"`
+			Path     string  `json:"path"`
+			State    string  `json:"state"`
 			Progress float64 `json:"progress"`
-			Error    string `json:"error,omitempty"`
+			Error    string  `json:"error,omitempty"`
 		} `json:"files"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
@@ -333,20 +342,20 @@ func waitForUploadParts(t *testing.T, baseURL, token, fileNameSuffix string, min
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
-	var uploads struct {
-		Uploads []struct {
-			ID             string  `json:"id"`
-			Key            string  `json:"key"`
-			State          string  `json:"state"`
-			Error          string  `json:"error,omitempty"`
-			CompletedParts []int   `json:"completedParts"`
-			PartCount      int     `json:"partCount"`
-			PartSize       int64   `json:"partSize"`
-			Size           int64   `json:"size"`
-			UploadedBytes  int64   `json:"uploadedBytes"`
-			Progress       float64 `json:"progress"`
-		} `json:"uploads"`
-	}
+		var uploads struct {
+			Uploads []struct {
+				ID             string  `json:"id"`
+				Key            string  `json:"key"`
+				State          string  `json:"state"`
+				Error          string  `json:"error,omitempty"`
+				CompletedParts []int   `json:"completedParts"`
+				PartCount      int     `json:"partCount"`
+				PartSize       int64   `json:"partSize"`
+				Size           int64   `json:"size"`
+				UploadedBytes  int64   `json:"uploadedBytes"`
+				Progress       float64 `json:"progress"`
+			} `json:"uploads"`
+		}
 		_ = json.NewDecoder(resp.Body).Decode(&uploads)
 		resp.Body.Close()
 		for _, u := range uploads.Uploads {

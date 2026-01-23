@@ -46,12 +46,15 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	})
 
 	syncH := handlers.NewSyncHandler(datasiteMgr)
+	subH := handlers.NewSubscriptionHandler(datasiteMgr)
+	pubH := handlers.NewPublicationHandler(datasiteMgr)
 	uploadH := handlers.NewUploadHandler(datasiteMgr)
 	appH := handlers.NewAppHandler(datasiteMgr)
 	initH := handlers.NewInitHandler(datasiteMgr, routeConfig.ControlPlaneURL)
 	statusH := handlers.NewStatusHandler(datasiteMgr)
 	workspaceH := handlers.NewWorkspaceHandler(datasiteMgr)
 	logsH := handlers.NewLogsHandler(datasiteMgr)
+	latencyH := handlers.NewLatencyHandler(datasiteMgr)
 
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
@@ -60,6 +63,9 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	r.Use(middleware.Logger())
 
 	r.GET("/", IndexHandler)
+
+	// Public endpoint for latency stats (no auth required, like Rust implementation)
+	r.GET("/v1/stats/latency", latencyH.GetLatency)
 
 	//	@Security	APIToken
 	v1 := r.Group("/v1")
@@ -104,8 +110,23 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 			v1Sync.GET("/status", syncH.Status)
 			v1Sync.GET("/status/file", syncH.StatusByPath)
 			v1Sync.GET("/events", syncH.Events)
+			v1Sync.GET("/queue", syncH.Queue)
+			v1Sync.GET("/conflicts", syncH.Conflicts)
 			v1Sync.POST("/now", syncH.TriggerSync)
+			v1Sync.POST("/refresh", syncH.Refresh)
+			v1Sync.POST("/cleanup", syncH.CleanupTempFiles)
 		}
+
+		v1Subscriptions := v1.Group("/subscriptions")
+		{
+			v1Subscriptions.GET("/", subH.Get)
+			v1Subscriptions.PUT("/", subH.Update)
+			v1Subscriptions.GET("/effective", subH.Effective)
+			v1Subscriptions.POST("/rules", subH.AddOrUpdateRule)
+			v1Subscriptions.DELETE("/rules", subH.DeleteRule)
+		}
+		v1.GET("/discovery/files", subH.Discovery)
+		v1.GET("/publications", pubH.List)
 
 		// Upload management endpoints
 		v1Uploads := v1.Group("/uploads")

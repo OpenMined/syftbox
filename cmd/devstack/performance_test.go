@@ -35,6 +35,9 @@ func TestLargeFileTransfer(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
 
 	// Wait for ACL propagation - need more time for periodic sync to upload ACLs
 	t.Log("Waiting for ACL files to sync to server...")
@@ -111,6 +114,9 @@ func TestWebSocketLatency(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
 
 	// Setup RPC endpoint for both clients
 	appName := "perftest"
@@ -158,9 +164,9 @@ func TestWebSocketLatency(t *testing.T) {
 	})
 
 	testCases := []struct {
-		name          string
-		size          int
-		maxLatency    time.Duration
+		name       string
+		size       int
+		maxLatency time.Duration
 	}{
 		{"1KB", 1 * 1024, 100 * time.Millisecond},
 		{"10KB", 10 * 1024, 150 * time.Millisecond},
@@ -227,6 +233,9 @@ func TestConcurrentUploads(t *testing.T) {
 	}
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
 	}
 
 	// Wait for ACL propagation
@@ -310,6 +319,9 @@ func TestFileModificationDuringSync(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
 
 	// Wait for ACL propagation
 	time.Sleep(1 * time.Second)
@@ -365,6 +377,9 @@ func TestManySmallFiles(t *testing.T) {
 	}
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
 	}
 
 	// Setup RPC endpoint

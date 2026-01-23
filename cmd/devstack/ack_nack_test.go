@@ -24,6 +24,9 @@ func TestACKNACKMechanism(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
 
 	// Setup RPC endpoint for both Alice and Bob (like WebSocket latency test)
 	appName := "acktest"

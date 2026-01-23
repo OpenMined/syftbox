@@ -10,13 +10,16 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 const DEFAULT_IGNORE_LINES: &[&str] = &[
     // syft
     "syftignore",
+    "**/syft.sub.yaml",
     "**/*syftrejected*", // legacy marker
     "**/*syftconflict*", // legacy marker
     "**/*.conflict.*",
     "**/*.conflict",
     "**/*.rejected.*",
     "**/*.rejected",
-    "*.syft.tmp.*", // temporary files
+    "*.syft.tmp.*", // temporary files (Go atomic writes)
+    "**/.*.tmp-*",  // temporary files (Rust download temp)
+    "**/*.tmp-*",   // temporary files (without leading dot)
     ".syftkeep",
     // python
     ".ipynb_checkpoints/",
@@ -197,5 +200,64 @@ mod tests {
         assert!(prio.should_prioritize_rel(Path::new("alice/app_data/rpc/x.request"), false));
         assert!(prio.should_prioritize_rel(Path::new("alice/app_data/rpc/x.response"), false));
         assert!(prio.should_prioritize_rel(Path::new("alice/public/syft.pub.yaml"), false));
+    }
+
+    #[test]
+    fn default_ignore_matches_rust_download_temp_files() {
+        let root = make_temp_dir("syftbox-rs-temp-ignore-test");
+        let ignore = SyncIgnoreList::load(&root).unwrap();
+
+        // Rust-style download temp files: .filename.tmp-uuid
+        assert!(
+            ignore.should_ignore_rel(
+                Path::new("alice/public/.syft.pub.yaml.tmp-8cd89f7b-1234"),
+                false
+            ),
+            "Rust download temp file should be ignored"
+        );
+
+        assert!(
+            ignore.should_ignore_rel(
+                Path::new("bob/app_data/.config.json.tmp-abcdef12-3456"),
+                false
+            ),
+            "Rust download temp with dot prefix should be ignored"
+        );
+
+        // Temp files without leading dot
+        assert!(
+            ignore.should_ignore_rel(Path::new("alice/public/data.tmp-12345678"), false),
+            "temp file without leading dot should be ignored"
+        );
+    }
+
+    #[test]
+    fn default_ignore_matches_go_atomic_temp_files() {
+        let root = make_temp_dir("syftbox-rs-go-temp-ignore-test");
+        let ignore = SyncIgnoreList::load(&root).unwrap();
+
+        // Go-style atomic write temp files: *.syft.tmp.*
+        assert!(
+            ignore.should_ignore_rel(Path::new("alice/public/data.syft.tmp.123456"), false),
+            "Go atomic write temp file should be ignored"
+        );
+    }
+
+    #[test]
+    fn regular_files_not_ignored() {
+        let root = make_temp_dir("syftbox-rs-regular-test");
+        let ignore = SyncIgnoreList::load(&root).unwrap();
+
+        // Regular files should NOT be ignored
+        assert!(
+            !ignore.should_ignore_rel(Path::new("alice/public/data.txt"), false),
+            "regular files should not be ignored"
+        );
+
+        // ACL files should NOT be ignored
+        assert!(
+            !ignore.should_ignore_rel(Path::new("alice/public/syft.pub.yaml"), false),
+            "ACL files should not be ignored"
+        );
     }
 }

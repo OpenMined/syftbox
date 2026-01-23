@@ -56,6 +56,9 @@ func TestJournalGapSpuriousConflict(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob ACLs: %v", err)
 	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
 	settleTime := 2 * time.Second
 	if runtime.GOOS == "windows" {
 		settleTime = 5 * time.Second
@@ -443,6 +446,9 @@ func runJournalGapScenario(t *testing.T, expectJournalHealed bool) {
 	}
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
 	}
 
 	appName := "perftest"

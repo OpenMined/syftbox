@@ -15,14 +15,18 @@ import (
 var defaultIgnoreLines = []string{
 	// syft
 	"syftignore",
+	"**/syft.sub.yaml",
 	"**/*syftrejected*", // legacy marker
 	"**/*syftconflict*", // legacy marker
 	"**/*.conflict.*",
 	"**/*.conflict",
 	"**/*.rejected.*",
 	"**/*.rejected",
-	"*.syft.tmp.*", // temporary files
+	"*.syft.tmp.*",  // temporary files (Go atomic writes)
+	"**/.*.tmp-*",   // temporary files (Rust download temp)
+	"**/*.tmp-*",    // temporary files (without leading dot)
 	".syftkeep",
+	".data/",
 	// python
 	".ipynb_checkpoints/",
 	"__pycache__/",

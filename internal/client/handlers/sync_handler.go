@@ -221,3 +221,166 @@ func (h *SyncHandler) TriggerSync(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "sync triggered"})
 }
+
+// Refresh godoc
+//
+//	@Summary		Trigger full sync refresh
+//	@Description	Triggers a full sync refresh (path parameter is currently ignored)
+//	@Tags			sync
+//	@Produce		json
+//	@Param			path	query		string	false	"Optional path hint"
+//	@Success		200	{object}	map[string]string
+//	@Failure		500	{object}	ControlPlaneError
+//	@Router			/v1/sync/refresh [post]
+//	@Security		APIToken
+func (h *SyncHandler) Refresh(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	ds.GetSyncManager().TriggerSync()
+
+	resp := gin.H{"status": "sync triggered"}
+	if path := c.Query("path"); path != "" {
+		resp["path"] = path
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// Queue godoc
+//
+//	@Summary		Get sync queue
+//	@Description	Returns pending and syncing items from the current sync status
+//	@Tags			sync
+//	@Produce		json
+//	@Success		200	{object}	SyncQueueResponse
+//	@Failure		500	{object}	ControlPlaneError
+//	@Router			/v1/sync/queue [get]
+//	@Security		APIToken
+func (h *SyncHandler) Queue(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	syncStatus := ds.GetSyncManager().GetSyncStatus()
+	if syncStatus == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("sync not available"))
+		return
+	}
+
+	allStatus := syncStatus.GetAllStatus()
+	files := make([]SyncFileStatus, 0)
+
+	for path, status := range allStatus {
+		if status.SyncState != sync.SyncStatePending && status.SyncState != sync.SyncStateSyncing {
+			continue
+		}
+
+		var errMsg string
+		if status.Error != nil {
+			errMsg = status.Error.Error()
+		}
+
+		files = append(files, SyncFileStatus{
+			Path:          path.String(),
+			State:         string(status.SyncState),
+			ConflictState: string(status.ConflictState),
+			Progress:      status.Progress * 100.0,
+			Error:         errMsg,
+			ErrorCount:    status.ErrorCount,
+			UpdatedAt:     status.LastUpdated,
+		})
+	}
+
+	c.JSON(http.StatusOK, SyncQueueResponse{Files: files})
+}
+
+// Conflicts godoc
+//
+//	@Summary		Get conflicts and rejected files
+//	@Description	Returns lists of conflict and rejected files in the workspace
+//	@Tags			sync
+//	@Produce		json
+//	@Success		200	{object}	ConflictsResponse
+//	@Failure		500	{object}	ControlPlaneError
+//	@Router			/v1/sync/conflicts [get]
+//	@Security		APIToken
+func (h *SyncHandler) Conflicts(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	conflicts, rejected, err := sync.ListMarkedFiles(ds.GetWorkspace().DatasitesDir)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	// Convert to handler types
+	conflictInfos := make([]MarkedFileInfo, len(conflicts))
+	for i, f := range conflicts {
+		conflictInfos[i] = MarkedFileInfo{
+			Path:         f.Path,
+			MarkerType:   f.MarkerType,
+			OriginalPath: f.OriginalPath,
+			Size:         f.Size,
+			ModTime:      f.ModTime,
+		}
+	}
+
+	rejectedInfos := make([]MarkedFileInfo, len(rejected))
+	for i, f := range rejected {
+		rejectedInfos[i] = MarkedFileInfo{
+			Path:         f.Path,
+			MarkerType:   f.MarkerType,
+			OriginalPath: f.OriginalPath,
+			Size:         f.Size,
+			ModTime:      f.ModTime,
+		}
+	}
+
+	c.JSON(http.StatusOK, ConflictsResponse{
+		Conflicts: conflictInfos,
+		Rejected:  rejectedInfos,
+		Summary: ConflictsSummary{
+			ConflictCount: len(conflictInfos),
+			RejectedCount: len(rejectedInfos),
+		},
+	})
+}
+
+// CleanupTempFiles godoc
+//
+//	@Summary		Cleanup orphaned temp files
+//	@Description	Removes orphaned temporary files from the workspace
+//	@Tags			sync
+//	@Produce		json
+//	@Success		200	{object}	CleanupResponse
+//	@Failure		500	{object}	ControlPlaneError
+//	@Router			/v1/sync/cleanup [post]
+//	@Security		APIToken
+func (h *SyncHandler) CleanupTempFiles(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	cleaned, errs := sync.CleanupOrphanedTempFiles(ds.GetWorkspace().DatasitesDir)
+
+	errStrs := make([]string, len(errs))
+	for i, e := range errs {
+		errStrs[i] = e.Error()
+	}
+
+	c.JSON(http.StatusOK, CleanupResponse{
+		CleanedCount: cleaned,
+		Errors:       errStrs,
+	})
+}
