@@ -741,6 +741,7 @@ async fn run_ws_listener(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_ws_message(
     api: &ApiClient,
     datasites_root: &Path,
@@ -777,8 +778,15 @@ async fn handle_ws_message(
             }
         }
         Decoded::FileWrite(file) => {
-            handle_ws_file_write(api, datasites_root, data_dir, owner_email, file, acl_staging)
-                .await
+            handle_ws_file_write(
+                api,
+                datasites_root,
+                data_dir,
+                owner_email,
+                file,
+                acl_staging,
+            )
+            .await
         }
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
         Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),

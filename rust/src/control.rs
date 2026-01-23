@@ -1,11 +1,11 @@
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, sync::Mutex};
+use std::{collections::HashMap, fs, net::SocketAddr, path::PathBuf, sync::Arc, sync::Mutex};
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::{HeaderMap, StatusCode},
     response::sse::{Event, KeepAlive, Sse},
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -99,6 +99,15 @@ fn is_zero(v: &i64) -> bool {
     *v == 0
 }
 
+fn parse_action(raw: &str) -> Option<subscriptions::Action> {
+    match raw.trim().to_lowercase().as_str() {
+        "allow" => Some(subscriptions::Action::Allow),
+        "pause" => Some(subscriptions::Action::Pause),
+        "block" | "deny" => Some(subscriptions::Action::Block),
+        _ => None,
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SyncSummary {
     pending: usize,
@@ -145,6 +154,18 @@ struct DiscoveryResponse {
 }
 
 #[derive(Serialize)]
+struct EffectiveFile {
+    path: String,
+    action: String,
+    allowed: bool,
+}
+
+#[derive(Serialize)]
+struct EffectiveResponse {
+    files: Vec<EffectiveFile>,
+}
+
+#[derive(Serialize)]
 struct SyncQueueResponse {
     files: Vec<SyncFileStatus>,
 }
@@ -156,8 +177,55 @@ struct PublicationEntry {
 }
 
 #[derive(Serialize)]
+struct MarkedFileInfo {
+    path: String,
+    #[serde(rename = "markerType")]
+    marker_type: String,
+    #[serde(rename = "originalPath")]
+    original_path: String,
+    size: u64,
+    #[serde(rename = "modTime")]
+    mod_time: DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct ConflictsSummary {
+    #[serde(rename = "conflictCount")]
+    conflict_count: usize,
+    #[serde(rename = "rejectedCount")]
+    rejected_count: usize,
+}
+
+#[derive(Serialize)]
+struct ConflictsResponse {
+    conflicts: Vec<MarkedFileInfo>,
+    rejected: Vec<MarkedFileInfo>,
+    summary: ConflictsSummary,
+}
+
+#[derive(Serialize)]
+struct CleanupResponse {
+    #[serde(rename = "cleanedCount")]
+    cleaned_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    errors: Vec<String>,
+}
+
+#[derive(Serialize)]
 struct PublicationsResponse {
     files: Vec<PublicationEntry>,
+}
+
+#[derive(Deserialize)]
+struct SubscriptionsRuleRequest {
+    rule: subscriptions::Rule,
+}
+
+#[derive(Deserialize)]
+struct SubscriptionsRuleDeleteQuery {
+    datasite: Option<String>,
+    path: String,
+    action: Option<String>,
 }
 
 impl ControlPlane {
@@ -295,6 +363,7 @@ impl ControlPlane {
     }
 
     /// Helper to complete the control plane startup once we have a bound listener.
+    #[allow(clippy::too_many_arguments)]
     async fn finish_start(
         listener: tokio::net::TcpListener,
         bound_addr: SocketAddr,
@@ -323,13 +392,25 @@ impl ControlPlane {
             .route("/v1/sync/status/file", get(sync_status_file))
             .route("/v1/sync/events", get(sync_events))
             .route("/v1/sync/queue", get(sync_queue))
+            .route("/v1/sync/conflicts", get(sync_conflicts))
             .route("/v1/sync/now", post(sync_now))
+            .route("/v1/sync/refresh", post(sync_refresh))
+            .route("/v1/sync/cleanup", post(sync_cleanup))
             .route("/v1/uploads/", get(list_uploads))
             .route("/v1/uploads/:id", get(get_upload).delete(delete_upload))
             .route("/v1/uploads/:id/pause", post(pause_upload))
             .route("/v1/uploads/:id/resume", post(resume_upload))
             .route("/v1/uploads/:id/restart", post(restart_upload))
-            .route("/v1/subscriptions", get(subscriptions_get).put(subscriptions_put))
+            .route(
+                "/v1/subscriptions",
+                get(subscriptions_get).put(subscriptions_put),
+            )
+            .route("/v1/subscriptions/effective", get(subscriptions_effective))
+            .route("/v1/subscriptions/rules", post(subscriptions_rules_post))
+            .route(
+                "/v1/subscriptions/rules",
+                delete(subscriptions_rules_delete),
+            )
             .route("/v1/discovery/files", get(discovery_files))
             .route("/v1/publications", get(publications))
             .with_state(state.clone())
@@ -391,16 +472,15 @@ impl ControlPlane {
         // We need a runtime to run the async code. Since we're already in a tokio context
         // (called from daemon), we can use block_in_place to avoid nested runtime issues.
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(Self::start_async(
-                    addr,
-                    token,
-                    http_stats,
-                    shutdown,
-                    data_dir,
-                    owner_email,
-                    api,
-                ))
+            tokio::runtime::Handle::current().block_on(Self::start_async(
+                addr,
+                token,
+                http_stats,
+                shutdown,
+                data_dir,
+                owner_email,
+                api,
+            ))
         })
     }
 
@@ -725,6 +805,18 @@ async fn sync_now(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
     )
 }
 
+async fn sync_refresh(
+    State(state): State<Arc<ControlState>>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    state.sync_now.notify_one();
+    let mut resp = serde_json::json!({ "status": "sync triggered" });
+    if let Some(path) = q.get("path") {
+        resp["path"] = serde_json::Value::String(path.clone());
+    }
+    (StatusCode::OK, Json(resp))
+}
+
 async fn sync_queue(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
     let sync = state.sync_status.lock().unwrap();
     let mut files: Vec<SyncFileStatus> = sync
@@ -734,6 +826,143 @@ async fn sync_queue(State(state): State<Arc<ControlState>>) -> impl IntoResponse
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Json(SyncQueueResponse { files })
+}
+
+async fn sync_conflicts(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let datasites_dir = state.data_dir.join("datasites");
+    let (conflicts, rejected) = list_marked_files(&datasites_dir);
+    Json(ConflictsResponse {
+        summary: ConflictsSummary {
+            conflict_count: conflicts.len(),
+            rejected_count: rejected.len(),
+        },
+        conflicts,
+        rejected,
+    })
+}
+
+async fn sync_cleanup(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let datasites_dir = state.data_dir.join("datasites");
+    let (cleaned, errors) = cleanup_orphaned_temp_files(&datasites_dir);
+    Json(CleanupResponse {
+        cleaned_count: cleaned,
+        errors,
+    })
+}
+
+fn is_temp_file(name: &str) -> bool {
+    // Match patterns: .*.tmp-* or *.syft.tmp.*
+    name.contains(".tmp-") || (name.contains(".syft.tmp.") && !name.ends_with(".syft.tmp."))
+}
+
+fn cleanup_orphaned_temp_files(datasites_dir: &std::path::Path) -> (usize, Vec<String>) {
+    let mut cleaned = 0;
+    let mut errors = Vec::new();
+
+    for entry in WalkDir::new(datasites_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if is_temp_file(&name) {
+            match fs::remove_file(entry.path()) {
+                Ok(()) => {
+                    crate::logging::info(format!(
+                        "cleaned up orphaned temp file: {}",
+                        entry.path().display()
+                    ));
+                    cleaned += 1;
+                }
+                Err(e) => {
+                    errors.push(format!(
+                        "failed to remove {}: {}",
+                        entry.path().display(),
+                        e
+                    ));
+                }
+            }
+        }
+    }
+
+    (cleaned, errors)
+}
+
+fn is_marked_path(path: &str) -> bool {
+    path.contains(".conflict")
+        || path.contains(".rejected")
+        || path.contains("syftrejected")
+        || path.contains("syftconflict")
+}
+
+fn get_unmarked_path(path: &str) -> String {
+    use regex::Regex;
+    // Remove .conflict and .rejected markers with optional timestamps
+    let re = Regex::new(r"\.(conflict|rejected)(\.\d{14})?").unwrap();
+    let result = re.replace_all(path, "");
+    // Also handle legacy markers
+    let legacy_re = Regex::new(r"\.(syftconflict|syftrejected)(\.\d{14})?").unwrap();
+    legacy_re.replace_all(&result, "").to_string()
+}
+
+fn list_marked_files(
+    datasites_dir: &std::path::Path,
+) -> (Vec<MarkedFileInfo>, Vec<MarkedFileInfo>) {
+    let mut conflicts = Vec::new();
+    let mut rejected = Vec::new();
+
+    let walker = WalkDir::new(datasites_dir);
+    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        let rel_path = entry
+            .path()
+            .strip_prefix(datasites_dir)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+
+        if !is_marked_path(&rel_path) {
+            continue;
+        }
+
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        let mod_time = metadata
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| DateTime::<Utc>::from_timestamp(d.as_secs() as i64, 0).unwrap_or_default())
+            .unwrap_or_default();
+
+        let original_path = get_unmarked_path(&rel_path);
+
+        let info = MarkedFileInfo {
+            path: rel_path.clone(),
+            original_path,
+            size: metadata.len(),
+            mod_time,
+            marker_type: if rel_path.contains(".conflict") || rel_path.contains("syftconflict") {
+                "conflict".to_string()
+            } else {
+                "rejected".to_string()
+            },
+        };
+
+        if info.marker_type == "conflict" {
+            conflicts.push(info);
+        } else {
+            rejected.push(info);
+        }
+    }
+
+    (conflicts, rejected)
 }
 
 async fn subscriptions_get(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
@@ -768,6 +997,168 @@ async fn subscriptions_put(
     Json(SubscriptionsResponse {
         path: path.display().to_string(),
         config: req.config,
+    })
+    .into_response()
+}
+
+async fn subscriptions_effective(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let Some(api) = state.api.clone() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+
+    let path = subscriptions::config_path(&state.data_dir);
+    let cfg = subscriptions::load(&path).unwrap_or_else(|err| {
+        crate::logging::error(format!(
+            "subscriptions load error path={} err={:?}",
+            path.display(),
+            err
+        ));
+        subscriptions::default_config()
+    });
+
+    let view = match api.datasite_view().await {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut files = Vec::new();
+    for file in view.files {
+        if file.key.ends_with("/syft.pub.yaml") || file.key == "syft.pub.yaml" {
+            continue;
+        }
+        if subscriptions::is_sub_file(&file.key) {
+            continue;
+        }
+        let action = subscriptions::action_for_path(&cfg, &state.owner_email, &file.key);
+        files.push(EffectiveFile {
+            path: file.key,
+            action: format!("{:?}", action).to_lowercase(),
+            allowed: action == subscriptions::Action::Allow,
+        });
+    }
+
+    Json(EffectiveResponse { files }).into_response()
+}
+
+async fn subscriptions_rules_post(
+    State(state): State<Arc<ControlState>>,
+    Json(req): Json<SubscriptionsRuleRequest>,
+) -> axum::response::Response {
+    if req.rule.path.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "rule.path is required" })),
+        )
+            .into_response();
+    }
+
+    let path = subscriptions::config_path(&state.data_dir);
+    let mut cfg = subscriptions::load(&path).unwrap_or_else(|err| {
+        crate::logging::error(format!(
+            "subscriptions load error path={} err={:?}",
+            path.display(),
+            err
+        ));
+        subscriptions::default_config()
+    });
+
+    let mut updated = false;
+    for rule in &mut cfg.rules {
+        if rule.datasite == req.rule.datasite && rule.path == req.rule.path {
+            rule.action = req.rule.action.clone();
+            updated = true;
+            break;
+        }
+    }
+    if !updated {
+        cfg.rules.push(req.rule);
+    }
+
+    if let Err(err) = subscriptions::save(&path, &cfg) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.to_string() })),
+        )
+            .into_response();
+    }
+    state.sync_now.notify_one();
+
+    Json(SubscriptionsResponse {
+        path: path.display().to_string(),
+        config: cfg,
+    })
+    .into_response()
+}
+
+async fn subscriptions_rules_delete(
+    State(state): State<Arc<ControlState>>,
+    Query(q): Query<SubscriptionsRuleDeleteQuery>,
+) -> axum::response::Response {
+    if q.path.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "path is required" })),
+        )
+            .into_response();
+    }
+
+    let action_filter = match q.action.as_deref() {
+        None => None,
+        Some(raw) => match parse_action(raw) {
+            Some(action) => Some(action),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "invalid action" })),
+                )
+                    .into_response()
+            }
+        },
+    };
+
+    let path = subscriptions::config_path(&state.data_dir);
+    let mut cfg = subscriptions::load(&path).unwrap_or_else(|err| {
+        crate::logging::error(format!(
+            "subscriptions load error path={} err={:?}",
+            path.display(),
+            err
+        ));
+        subscriptions::default_config()
+    });
+
+    cfg.rules.retain(|rule| {
+        if rule.path != q.path {
+            return true;
+        }
+        if let Some(ref datasite) = q.datasite {
+            if rule.datasite.as_deref() != Some(datasite.as_str()) {
+                return true;
+            }
+        }
+        if let Some(action) = action_filter.as_ref() {
+            return &rule.action != action;
+        }
+        false
+    });
+
+    if let Err(err) = subscriptions::save(&path, &cfg) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.to_string() })),
+        )
+            .into_response();
+    }
+    state.sync_now.notify_one();
+
+    Json(SubscriptionsResponse {
+        path: path.display().to_string(),
+        config: cfg,
     })
     .into_response()
 }
@@ -823,10 +1214,7 @@ async fn discovery_files(State(state): State<Arc<ControlState>>) -> impl IntoRes
 }
 
 async fn publications(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
-    let root = state
-        .data_dir
-        .join("datasites")
-        .join(&state.owner_email);
+    let root = state.data_dir.join("datasites").join(&state.owner_email);
     let base = state.data_dir.join("datasites");
     let mut files = Vec::new();
 
@@ -865,7 +1253,7 @@ async fn list_uploads(State(state): State<Arc<ControlState>>) -> impl IntoRespon
 
 async fn get_upload(
     State(state): State<Arc<ControlState>>,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
     let uploads = state.uploads.lock().unwrap();
     if let Some(u) = uploads.get(&id) {
@@ -876,7 +1264,7 @@ async fn get_upload(
 
 async fn delete_upload(
     State(state): State<Arc<ControlState>>,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
     let mut uploads = state.uploads.lock().unwrap();
     if uploads.remove(&id).is_some() {
@@ -891,7 +1279,7 @@ async fn delete_upload(
 
 async fn pause_upload(
     State(state): State<Arc<ControlState>>,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
     let mut uploads = state.uploads.lock().unwrap();
     if let Some(u) = uploads.get_mut(&id) {
@@ -914,7 +1302,7 @@ async fn pause_upload(
 
 async fn resume_upload(
     State(state): State<Arc<ControlState>>,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
     let mut uploads = state.uploads.lock().unwrap();
     if let Some(u) = uploads.get_mut(&id) {
@@ -937,7 +1325,7 @@ async fn resume_upload(
 
 async fn restart_upload(
     State(state): State<Arc<ControlState>>,
-    Path(id): Path<String>,
+    AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
     let mut uploads = state.uploads.lock().unwrap();
     if let Some(u) = uploads.get_mut(&id) {
@@ -970,11 +1358,24 @@ async fn restart_upload(
 mod tests {
     use super::*;
     use axum::body::to_bytes;
+    use std::time::SystemTime;
+
+    fn make_temp_dir() -> PathBuf {
+        let mut root = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        root.push(format!("syftbox-control-test-{nanos}"));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[tokio::test]
     async fn uploads_are_listed_and_sync_status_completed() {
         let stats = Arc::new(HttpStats::default());
         let (tx, _) = broadcast::channel(16);
+        let tmp_dir = make_temp_dir();
         let state = Arc::new(ControlState {
             token: "secret".into(),
             uploads: Mutex::new(HashMap::new()),
@@ -982,6 +1383,9 @@ mod tests {
             sync_events: tx,
             sync_now: Notify::new(),
             http_stats: stats,
+            data_dir: tmp_dir.clone(),
+            owner_email: "test@example.com".into(),
+            api: None,
         });
         let cp = ControlPlane {
             state: state.clone(),
@@ -1010,5 +1414,137 @@ mod tests {
         assert_eq!(status.summary.completed, 1);
         assert_eq!(status.files.len(), 1);
         assert_eq!(status.files[0].state, "completed");
+
+        let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_is_temp_file() {
+        // Rust download temp files: .filename.tmp-uuid
+        assert!(is_temp_file(".syft.pub.yaml.tmp-8cd89f7b-1234"));
+        assert!(is_temp_file(".config.json.tmp-abcdef12"));
+        assert!(is_temp_file("data.tmp-12345678"));
+
+        // Go atomic write temp files: *.syft.tmp.*
+        assert!(is_temp_file("file.syft.tmp.123456"));
+
+        // Regular files should NOT match
+        assert!(!is_temp_file("data.txt"));
+        assert!(!is_temp_file("syft.pub.yaml"));
+        assert!(!is_temp_file("file.rejected.txt"));
+        assert!(!is_temp_file("file.conflict.txt"));
+    }
+
+    #[test]
+    fn test_is_marked_path() {
+        // Conflict files
+        assert!(is_marked_path("file.conflict.txt"));
+        assert!(is_marked_path("data.conflict.20250101120000.json"));
+
+        // Rejected files
+        assert!(is_marked_path("file.rejected.txt"));
+        assert!(is_marked_path("data.rejected.20250101120000.json"));
+
+        // Legacy markers
+        assert!(is_marked_path("file.syftrejected.txt"));
+        assert!(is_marked_path("file.syftconflict.txt"));
+
+        // Regular files should NOT match
+        assert!(!is_marked_path("data.txt"));
+        assert!(!is_marked_path("syft.pub.yaml"));
+    }
+
+    #[test]
+    fn test_get_unmarked_path() {
+        assert_eq!(get_unmarked_path("file.conflict.txt"), "file.txt");
+        assert_eq!(get_unmarked_path("file.rejected.txt"), "file.txt");
+        assert_eq!(
+            get_unmarked_path("file.conflict.20250101120000.txt"),
+            "file.txt"
+        );
+        assert_eq!(
+            get_unmarked_path("data.rejected.20250101120000.json"),
+            "data.json"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_temp_files() {
+        let root = make_temp_dir();
+        let datasites = root.join("datasites");
+        let alice_dir = datasites.join("alice@example.com/public");
+        fs::create_dir_all(&alice_dir).unwrap();
+
+        // Create temp files that should be cleaned up
+        let temp1 = alice_dir.join(".syft.pub.yaml.tmp-8cd89f7b");
+        let temp2 = alice_dir.join("data.tmp-12345678");
+        let temp3 = alice_dir.join("config.syft.tmp.999999");
+        fs::write(&temp1, b"temp1").unwrap();
+        fs::write(&temp2, b"temp2").unwrap();
+        fs::write(&temp3, b"temp3").unwrap();
+
+        // Create regular files that should NOT be cleaned up
+        let regular = alice_dir.join("data.txt");
+        let acl = alice_dir.join("syft.pub.yaml");
+        fs::write(&regular, b"regular").unwrap();
+        fs::write(&acl, b"acl").unwrap();
+
+        let (cleaned, errors) = cleanup_orphaned_temp_files(&datasites);
+
+        assert!(errors.is_empty(), "cleanup should not have errors");
+        assert_eq!(cleaned, 3, "should have cleaned up 3 temp files");
+
+        // Verify temp files are gone
+        assert!(!temp1.exists(), "temp file 1 should be removed");
+        assert!(!temp2.exists(), "temp file 2 should be removed");
+        assert!(!temp3.exists(), "temp file 3 should be removed");
+
+        // Verify regular files still exist
+        assert!(regular.exists(), "regular file should still exist");
+        assert!(acl.exists(), "ACL file should still exist");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_list_marked_files() {
+        let root = make_temp_dir();
+        let alice_dir = root.join("alice@example.com/public");
+        let bob_dir = root.join("bob@example.com/shared");
+        fs::create_dir_all(&alice_dir).unwrap();
+        fs::create_dir_all(&bob_dir).unwrap();
+
+        // Create conflict files
+        fs::write(alice_dir.join("data.conflict.txt"), b"conflict1").unwrap();
+        fs::write(bob_dir.join("config.conflict.json"), b"conflict2").unwrap();
+
+        // Create rejected files
+        fs::write(alice_dir.join("secret.rejected.txt"), b"rejected1").unwrap();
+        fs::write(bob_dir.join("private.rejected.json"), b"rejected2").unwrap();
+
+        // Create a legacy marker file
+        fs::write(alice_dir.join("old.syftrejected.txt"), b"legacy").unwrap();
+
+        // Create regular files that should NOT be listed
+        fs::write(alice_dir.join("normal.txt"), b"regular").unwrap();
+
+        let (conflicts, rejected) = list_marked_files(&root);
+
+        assert_eq!(conflicts.len(), 2, "should find 2 conflict files");
+        assert_eq!(
+            rejected.len(),
+            3,
+            "should find 3 rejected files (including legacy)"
+        );
+
+        // Verify marker types
+        for c in &conflicts {
+            assert_eq!(c.marker_type, "conflict");
+        }
+        for r in &rejected {
+            assert_eq!(r.marker_type, "rejected");
+        }
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

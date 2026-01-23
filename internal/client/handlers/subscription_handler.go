@@ -74,6 +74,169 @@ func (h *SubscriptionHandler) Update(c *gin.Context) {
 	})
 }
 
+// Effective returns the subscription action for each discovered file.
+func (h *SubscriptionHandler) Effective(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	path := filepath.Join(ds.GetWorkspace().MetadataDir, subscriptions.FileName)
+	cfg, err := subscriptions.Load(path)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	view, err := ds.GetSDK().Datasite.GetView(c.Request.Context(), nil)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	files := make([]EffectiveFile, 0)
+	for _, file := range view.Files {
+		if aclspec.IsACLFile(file.Key) || subscriptions.IsSubFile(file.Key) {
+			continue
+		}
+		action := cfg.ActionForPath(ds.GetWorkspace().Owner, file.Key)
+		files = append(files, EffectiveFile{
+			Path:    file.Key,
+			Action:  string(action),
+			Allowed: action == subscriptions.ActionAllow,
+		})
+	}
+
+	c.JSON(http.StatusOK, EffectiveResponse{Files: files})
+}
+
+// AddOrUpdateRule inserts a rule or updates an existing rule with the same datasite/path.
+func (h *SubscriptionHandler) AddOrUpdateRule(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	var req SubscriptionsRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		AbortWithError(c, http.StatusBadRequest, ErrCodeBadRequest, err)
+		return
+	}
+	if req.Rule.Path == "" {
+		AbortWithError(c, http.StatusBadRequest, ErrCodeBadRequest, errors.New("rule.path is required"))
+		return
+	}
+
+	action, err := parseSubAction(req.Rule.Action)
+	if err != nil {
+		AbortWithError(c, http.StatusBadRequest, ErrCodeBadRequest, err)
+		return
+	}
+
+	path := filepath.Join(ds.GetWorkspace().MetadataDir, subscriptions.FileName)
+	cfg, err := subscriptions.Load(path)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	updated := false
+	for i := range cfg.Rules {
+		if cfg.Rules[i].Datasite == req.Rule.Datasite && cfg.Rules[i].Path == req.Rule.Path {
+			cfg.Rules[i].Action = action
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		cfg.Rules = append(cfg.Rules, subscriptions.Rule{
+			Action:   action,
+			Datasite: req.Rule.Datasite,
+			Path:     req.Rule.Path,
+		})
+	}
+
+	if err := subscriptions.Save(path, cfg); err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	ds.GetSyncManager().TriggerSync()
+
+	c.JSON(http.StatusOK, SubscriptionsResponse{
+		Path:   path,
+		Config: toSubscriptionConfig(cfg),
+	})
+}
+
+// DeleteRule removes rules that match datasite/path (and optional action).
+func (h *SubscriptionHandler) DeleteRule(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	datasite := c.Query("datasite")
+	rulePath := c.Query("path")
+	actionRaw := c.Query("action")
+
+	if rulePath == "" {
+		AbortWithError(c, http.StatusBadRequest, ErrCodeBadRequest, errors.New("path is required"))
+		return
+	}
+
+	var actionFilter subscriptions.Action
+	var filterByAction bool
+	if actionRaw != "" {
+		parsed, err := parseSubAction(actionRaw)
+		if err != nil {
+			AbortWithError(c, http.StatusBadRequest, ErrCodeBadRequest, err)
+			return
+		}
+		actionFilter = parsed
+		filterByAction = true
+	}
+
+	path := filepath.Join(ds.GetWorkspace().MetadataDir, subscriptions.FileName)
+	cfg, err := subscriptions.Load(path)
+	if err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	out := make([]subscriptions.Rule, 0, len(cfg.Rules))
+	for _, rule := range cfg.Rules {
+		if rule.Path != rulePath {
+			out = append(out, rule)
+			continue
+		}
+		if datasite != "" && rule.Datasite != datasite {
+			out = append(out, rule)
+			continue
+		}
+		if filterByAction && rule.Action != actionFilter {
+			out = append(out, rule)
+			continue
+		}
+	}
+	cfg.Rules = out
+
+	if err := subscriptions.Save(path, cfg); err != nil {
+		AbortWithError(c, http.StatusInternalServerError, ErrCodeUnknownError, err)
+		return
+	}
+
+	ds.GetSyncManager().TriggerSync()
+
+	c.JSON(http.StatusOK, SubscriptionsResponse{
+		Path:   path,
+		Config: toSubscriptionConfig(cfg),
+	})
+}
+
 // Discovery returns metadata for accessible files that are not currently allowed by subscriptions.
 func (h *SubscriptionHandler) Discovery(c *gin.Context) {
 	ds := h.datasiteMgr.GetPrimaryDatasite()

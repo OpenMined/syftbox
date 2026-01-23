@@ -174,5 +174,10 @@ Add control plane endpoints so apps can query and modify subscription state and 
 
 - Added a short ACL propagation wait in `cmd/devstack/conflict_test.go` to stabilize `TestRapidSequentialEdits`.
 - Fixed Rust control plane `subscriptions_put` response type in `rust/src/control.rs` and removed an unused import.
-- Ran `just sbdev-test-all` in Go mode (pass).
-- Ran `just sbdev-test-all mode=rust` in Rust mode (pass).
+- Added empty-directory cleanup after subscription pruning in Rust (`rust/src/sync.rs`) to match Go behavior.
+- Added control plane endpoints:
+  - `GET /v1/subscriptions/effective`
+  - `POST /v1/subscriptions/rules`
+  - `DELETE /v1/subscriptions/rules`
+  - `POST /v1/sync/refresh`
+- Added integration test `cmd/devstack/subscriptions_api_test.go` covering the new endpoints.
