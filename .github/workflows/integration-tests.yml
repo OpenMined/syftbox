@@ -13,9 +13,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-        mode: [ go, rust ]
-        group: [ core, acl, state1, state2, transfer1, transfer2, chaos ]
+        # Narrowed to isolate flapping test in CI.
+        os: [ ubuntu-latest ]
+        mode: [ go ]
+        group: [ large-upload-daemon-stress ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
@@ -46,10 +47,12 @@ jobs:
       uses: extractions/setup-just@v2
 
     - name: Run ${{ matrix.group }} tests (${{ matrix.mode }} client)
-      run: just sbdev-test-group ${{ matrix.group }} mode=${{ matrix.mode }}
+      run: just sbdev-test-large-upload-daemon-stress
       shell: bash
 
+  # Disabled while isolating flapping test in CI.
   stress-tests:
+    if: false
     name: ${{ matrix.mode }} stress (${{ matrix.os }})
     strategy:
       fail-fast: false

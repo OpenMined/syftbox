@@ -72,7 +72,7 @@ func NewSyncEngine(
 	syncStatus := NewSyncStatus()
 	adaptiveScheduler := NewAdaptiveSyncScheduler()
 
-	resumeDir := filepath.Join(workspace.MetadataDir, "upload_sessions")
+	resumeDir := filepath.Join(workspace.MetadataDir, uploadSessionsDirName)
 	uploadRegistry := NewUploadRegistry(resumeDir)
 
 	se := &SyncEngine{

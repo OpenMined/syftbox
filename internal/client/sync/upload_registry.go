@@ -28,6 +28,8 @@ const (
 	UploadStateError     UploadState = "error"
 )
 
+const uploadSessionsDirName = "upload-sessions"
+
 type UploadInfo struct {
 	ID             string      `json:"id"`
 	Key            string      `json:"key"`
@@ -131,6 +133,19 @@ func (r *UploadRegistry) TryRegister(key, localPath string, size int64) (*Upload
 
 		switch state {
 		case UploadStateUploading, UploadStatePending, UploadStatePaused:
+			// If we loaded a paused session from disk (no live cancel ctx), allow it
+			// to be re-registered so the next sync can resume automatically.
+			if state == UploadStatePaused && existing.cancel == nil {
+				existing.mu.Lock()
+				existing.info.State = UploadStateUploading
+				existing.info.UpdatedAt = time.Now()
+				existing.info.Paused = false
+				existing.mu.Unlock()
+
+				ctx, cancel := context.WithCancel(context.Background())
+				existing.cancel = cancel
+				return existing.info, ctx, cancel, false
+			}
 			// Already tracked and active/paused; don't start another goroutine.
 			return existing.info, nil, nil, true
 		default:
