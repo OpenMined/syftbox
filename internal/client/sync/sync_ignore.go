@@ -15,6 +15,7 @@ import (
 var defaultIgnoreLines = []string{
 	// syft
 	"syftignore",
+	"**/syft.sub.yaml",
 	"**/*syftrejected*", // legacy marker
 	"**/*syftconflict*", // legacy marker
 	"**/*.conflict.*",
@@ -23,6 +24,7 @@ var defaultIgnoreLines = []string{
 	"**/*.rejected",
 	"*.syft.tmp.*", // temporary files
 	".syftkeep",
+	".data/",
 	// python
 	".ipynb_checkpoints/",
 	"__pycache__/",

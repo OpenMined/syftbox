@@ -221,3 +221,53 @@ func (h *SyncHandler) TriggerSync(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"status": "sync triggered"})
 }
+
+// Queue godoc
+//
+//	@Summary		Get sync queue
+//	@Description	Returns pending and syncing items from the current sync status
+//	@Tags			sync
+//	@Produce		json
+//	@Success		200	{object}	SyncQueueResponse
+//	@Failure		500	{object}	ControlPlaneError
+//	@Router			/v1/sync/queue [get]
+//	@Security		APIToken
+func (h *SyncHandler) Queue(c *gin.Context) {
+	ds := h.datasiteMgr.GetPrimaryDatasite()
+	if ds == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("no active datasite"))
+		return
+	}
+
+	syncStatus := ds.GetSyncManager().GetSyncStatus()
+	if syncStatus == nil {
+		AbortWithError(c, http.StatusServiceUnavailable, ErrCodeDatasiteNotReady, errors.New("sync not available"))
+		return
+	}
+
+	allStatus := syncStatus.GetAllStatus()
+	files := make([]SyncFileStatus, 0)
+
+	for path, status := range allStatus {
+		if status.SyncState != sync.SyncStatePending && status.SyncState != sync.SyncStateSyncing {
+			continue
+		}
+
+		var errMsg string
+		if status.Error != nil {
+			errMsg = status.Error.Error()
+		}
+
+		files = append(files, SyncFileStatus{
+			Path:          path.String(),
+			State:         string(status.SyncState),
+			ConflictState: string(status.ConflictState),
+			Progress:      status.Progress * 100.0,
+			Error:         errMsg,
+			ErrorCount:    status.ErrorCount,
+			UpdatedAt:     status.LastUpdated,
+		})
+	}
+
+	c.JSON(http.StatusOK, SyncQueueResponse{Files: files})
+}

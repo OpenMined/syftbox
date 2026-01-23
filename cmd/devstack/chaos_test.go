@@ -73,6 +73,11 @@ func TestChaosSync(t *testing.T) {
 			t.Fatalf("broadcast default ACL for %s: %v", c.email, err)
 		}
 	}
+	for _, c := range []*ClientHelper{h.alice, h.bob, charlieHelper} {
+		if err := c.SetSubscriptionsAllow(h.alice.email, h.bob.email, charlieHelper.email); err != nil {
+			t.Fatalf("set subscriptions for %s: %v", c.email, err)
+		}
+	}
 
 	// Wait for baseline public ACLs to be present on all peers before chaos begins.
 	t.Logf("[DEBUG] Waiting for baseline ACL propagation...")

@@ -28,6 +28,9 @@ func TestACLEnablesDownload(t *testing.T) {
 	if err := h.bob.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create bob default ACLs: %v", err)
 	}
+	if err := h.bob.SetSubscriptionsAllow(h.alice.email); err != nil {
+		t.Fatalf("set bob subscriptions: %v", err)
+	}
 
 	// Step 2: Wait for ACL files to sync to server (periodic sync runs every 100ms-5s)
 	t.Log("Step 2: Waiting for ACL files to sync to server...")

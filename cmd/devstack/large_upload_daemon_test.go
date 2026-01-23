@@ -23,6 +23,15 @@ func TestLargeUploadViaDaemon(t *testing.T) {
 	t.Setenv("SBDEV_HTTP_WRITE_TIMEOUT", "1s")
 
 	h := NewDevstackHarness(t)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.bob.SetSubscriptionsAllow(h.alice.email); err != nil {
+		t.Fatalf("set bob subscriptions: %v", err)
+	}
 	time.Sleep(2 * time.Second)
 
 	aliceClientURL := fmt.Sprintf("http://127.0.0.1:%d", h.alice.state.Port)

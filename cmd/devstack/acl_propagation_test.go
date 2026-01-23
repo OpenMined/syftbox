@@ -56,6 +56,11 @@ func TestACLPropagationUpdates(t *testing.T) {
 		}
 	}
 	t.Logf("Default ACLs created for all clients")
+	for _, c := range clients {
+		if err := c.SetSubscriptionsAllow(h.alice.email, h.bob.email, charlie.email); err != nil {
+			t.Fatalf("set subscriptions for %s: %v", c.email, err)
+		}
+	}
 
 	// Wait for file to arrive at peer with specific MD5
 	waitForPath := func(c *ClientHelper, sender, relPath, wantMD5 string, timeout time.Duration) error {
@@ -118,6 +123,37 @@ func TestACLPropagationUpdates(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 		return fmt.Errorf("timeout: file still exists after %d attempts", attempts)
+	}
+
+	waitForDirGone := func(c *ClientHelper, sender, relDir string, timeout time.Duration) error {
+		path := filepath.Join(c.dataDir, "datasites", sender, relDir)
+		deadline := time.Now().Add(timeout)
+		lastLog := time.Now()
+		attempts := 0
+		for time.Now().Before(deadline) {
+			attempts++
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				t.Logf("[OK] %s: dir %s from %s was removed after %d attempts",
+					c.email, relDir, sender, attempts)
+				return nil
+			}
+			if time.Since(lastLog) > 5*time.Second {
+				if entries, err := os.ReadDir(path); err == nil {
+					names := make([]string, 0, len(entries))
+					for _, entry := range entries {
+						names = append(names, entry.Name())
+					}
+					t.Logf("[WAIT] %s: waiting for dir %s from %s to be removed (entries=%v)",
+						c.email, relDir, sender, names)
+				} else {
+					t.Logf("[WAIT] %s: waiting for dir %s from %s to be removed (read err=%v)",
+						c.email, relDir, sender, err)
+				}
+				lastLog = time.Now()
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return fmt.Errorf("timeout: dir still exists after %d attempts", attempts)
 	}
 
 	writeACL := func(c *ClientHelper, relPath, content string) (string, error) {
@@ -184,6 +220,14 @@ func TestACLPropagationUpdates(t *testing.T) {
 					dumpClientLog(peer, 50)
 					t.Fatalf("FAIL: %s should NOT have %s from %s (access revoked) but: %v",
 						peer.email, relPath, owner.email, err)
+				}
+				if strings.HasSuffix(relPath, "syft.pub.yaml") {
+					relDir := filepath.Dir(relPath)
+					if err := waitForDirGone(peer, owner.email, relDir, timeout); err != nil {
+						dumpClientLog(peer, 50)
+						t.Fatalf("FAIL: %s should not keep empty dir %s from %s but: %v",
+							peer.email, relDir, owner.email, err)
+					}
 				}
 			}
 		}

@@ -10,6 +10,7 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 const DEFAULT_IGNORE_LINES: &[&str] = &[
     // syft
     "syftignore",
+    "**/syft.sub.yaml",
     "**/*syftrejected*", // legacy marker
     "**/*syftconflict*", // legacy marker
     "**/*.conflict.*",

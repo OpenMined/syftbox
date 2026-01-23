@@ -22,6 +22,11 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 
 	syncRelPath := SyncPath(createMsg.Path)
 
+	if !se.shouldSyncPath(createMsg.Path) {
+		slog.Info("sync", "type", SyncPriority, "op", OpSkipped, "reason", "subscription", "path", createMsg.Path)
+		return
+	}
+
 	// If content is empty, this is a push notification (not embedded content)
 	// Trigger an immediate sync to download the file
 	if len(createMsg.Content) == 0 {

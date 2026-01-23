@@ -46,6 +46,8 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	})
 
 	syncH := handlers.NewSyncHandler(datasiteMgr)
+	subH := handlers.NewSubscriptionHandler(datasiteMgr)
+	pubH := handlers.NewPublicationHandler(datasiteMgr)
 	uploadH := handlers.NewUploadHandler(datasiteMgr)
 	appH := handlers.NewAppHandler(datasiteMgr)
 	initH := handlers.NewInitHandler(datasiteMgr, routeConfig.ControlPlaneURL)
@@ -104,8 +106,17 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 			v1Sync.GET("/status", syncH.Status)
 			v1Sync.GET("/status/file", syncH.StatusByPath)
 			v1Sync.GET("/events", syncH.Events)
+			v1Sync.GET("/queue", syncH.Queue)
 			v1Sync.POST("/now", syncH.TriggerSync)
 		}
+
+		v1Subscriptions := v1.Group("/subscriptions")
+		{
+			v1Subscriptions.GET("/", subH.Get)
+			v1Subscriptions.PUT("/", subH.Update)
+		}
+		v1.GET("/discovery/files", subH.Discovery)
+		v1.GET("/publications", pubH.List)
 
 		// Upload management endpoints
 		v1Uploads := v1.Group("/uploads")

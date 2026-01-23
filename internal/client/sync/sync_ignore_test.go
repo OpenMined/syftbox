@@ -27,6 +27,10 @@ func TestSyncIgnoreList_DefaultAndCustomRules(t *testing.T) {
 	require.NoError(t, os.WriteFile(absRequest, []byte("x"), 0o644))
 	assert.False(t, ignore.ShouldIgnore(absRequest), ".request files should not be ignored by default")
 
+	absSub := filepath.Join(baseDir, "alice@example.com", "syft.sub.yaml")
+	require.NoError(t, os.WriteFile(absSub, []byte("x"), 0o644))
+	assert.True(t, ignore.ShouldIgnore(absSub), "syft.sub.yaml should be ignored by default")
+
 	// Custom syftignore appended after defaults.
 	custom := []byte(`
 # comment
@@ -50,4 +54,3 @@ func TestSyncIgnoreList_AbsoluteOutsideBaseDir_NotIgnored(t *testing.T) {
 	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
 	assert.False(t, ignore.ShouldIgnore(outside), "files outside baseDir should not be ignored")
 }
-

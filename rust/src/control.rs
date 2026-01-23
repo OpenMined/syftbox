@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, sync::Mutex};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc, sync::Mutex};
 
 use axum::{
     extract::{Path, Query, State},
@@ -13,8 +13,10 @@ use futures_util::stream::unfold;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Notify};
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 use crate::telemetry::HttpStats;
+use crate::{http::ApiClient, subscriptions};
 
 #[derive(Clone, Debug)]
 pub struct ControlPlane {
@@ -45,6 +47,9 @@ struct ControlState {
     sync_events: broadcast::Sender<SyncFileStatus>,
     sync_now: Notify,
     http_stats: Arc<HttpStats>,
+    data_dir: PathBuf,
+    owner_email: String,
+    api: Option<ApiClient>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -113,6 +118,48 @@ struct UploadListResponse {
     uploads: Vec<UploadEntry>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct SubscriptionsResponse {
+    path: String,
+    config: subscriptions::Subscriptions,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SubscriptionsUpdateRequest {
+    config: subscriptions::Subscriptions,
+}
+
+#[derive(Serialize)]
+struct DiscoveryFile {
+    path: String,
+    etag: String,
+    size: i64,
+    #[serde(rename = "lastModified")]
+    last_modified: DateTime<Utc>,
+    action: String,
+}
+
+#[derive(Serialize)]
+struct DiscoveryResponse {
+    files: Vec<DiscoveryFile>,
+}
+
+#[derive(Serialize)]
+struct SyncQueueResponse {
+    files: Vec<SyncFileStatus>,
+}
+
+#[derive(Serialize)]
+struct PublicationEntry {
+    path: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct PublicationsResponse {
+    files: Vec<PublicationEntry>,
+}
+
 impl ControlPlane {
     /// Start the control plane HTTP server.
     ///
@@ -127,6 +174,9 @@ impl ControlPlane {
         token: Option<String>,
         http_stats: Arc<HttpStats>,
         shutdown: Option<Arc<Notify>>,
+        data_dir: PathBuf,
+        owner_email: String,
+        api: Option<ApiClient>,
     ) -> anyhow::Result<ControlPlaneStartResult> {
         let token = token.unwrap_or_else(|| Uuid::new_v4().as_simple().to_string());
 
@@ -169,7 +219,17 @@ impl ControlPlane {
                             ("attempt", &attempt.to_string()),
                         ],
                     );
-                    return Self::finish_start(listener, bound, token, http_stats, shutdown).await;
+                    return Self::finish_start(
+                        listener,
+                        bound,
+                        token,
+                        http_stats,
+                        shutdown,
+                        data_dir.clone(),
+                        owner_email.clone(),
+                        api.clone(),
+                    )
+                    .await;
                 }
                 Err(e) => {
                     last_error = Some(e);
@@ -209,7 +269,17 @@ impl ControlPlane {
                         ("actual_addr", &bound.to_string()),
                     ],
                 );
-                Self::finish_start(listener, bound, token, http_stats, shutdown).await
+                Self::finish_start(
+                    listener,
+                    bound,
+                    token,
+                    http_stats,
+                    shutdown,
+                    data_dir,
+                    owner_email,
+                    api,
+                )
+                .await
             }
             Err(fallback_err) => {
                 crate::logging::error(format!(
@@ -231,6 +301,9 @@ impl ControlPlane {
         token: String,
         http_stats: Arc<HttpStats>,
         shutdown: Option<Arc<Notify>>,
+        data_dir: PathBuf,
+        owner_email: String,
+        api: Option<ApiClient>,
     ) -> anyhow::Result<ControlPlaneStartResult> {
         let state = Arc::new(ControlState {
             token,
@@ -239,6 +312,9 @@ impl ControlPlane {
             sync_events: broadcast::channel(1024).0,
             sync_now: Notify::new(),
             http_stats,
+            data_dir,
+            owner_email,
+            api,
         });
 
         // Create authenticated routes (require Bearer token)
@@ -246,12 +322,16 @@ impl ControlPlane {
             .route("/v1/sync/status", get(sync_status))
             .route("/v1/sync/status/file", get(sync_status_file))
             .route("/v1/sync/events", get(sync_events))
+            .route("/v1/sync/queue", get(sync_queue))
             .route("/v1/sync/now", post(sync_now))
             .route("/v1/uploads/", get(list_uploads))
             .route("/v1/uploads/:id", get(get_upload).delete(delete_upload))
             .route("/v1/uploads/:id/pause", post(pause_upload))
             .route("/v1/uploads/:id/resume", post(resume_upload))
             .route("/v1/uploads/:id/restart", post(restart_upload))
+            .route("/v1/subscriptions", get(subscriptions_get).put(subscriptions_put))
+            .route("/v1/discovery/files", get(discovery_files))
+            .route("/v1/publications", get(publications))
             .with_state(state.clone())
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
@@ -304,12 +384,23 @@ impl ControlPlane {
         token: Option<String>,
         http_stats: Arc<HttpStats>,
         shutdown: Option<Arc<Notify>>,
+        data_dir: PathBuf,
+        owner_email: String,
+        api: Option<ApiClient>,
     ) -> anyhow::Result<ControlPlaneStartResult> {
         // We need a runtime to run the async code. Since we're already in a tokio context
         // (called from daemon), we can use block_in_place to avoid nested runtime issues.
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
-                .block_on(Self::start_async(addr, token, http_stats, shutdown))
+                .block_on(Self::start_async(
+                    addr,
+                    token,
+                    http_stats,
+                    shutdown,
+                    data_dir,
+                    owner_email,
+                    api,
+                ))
         })
     }
 
@@ -632,6 +723,137 @@ async fn sync_now(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
         StatusCode::OK,
         Json(serde_json::json!({ "status": "sync triggered" })),
     )
+}
+
+async fn sync_queue(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let sync = state.sync_status.lock().unwrap();
+    let mut files: Vec<SyncFileStatus> = sync
+        .values()
+        .filter(|s| s.state == "pending" || s.state == "syncing")
+        .cloned()
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Json(SyncQueueResponse { files })
+}
+
+async fn subscriptions_get(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let path = subscriptions::config_path(&state.data_dir);
+    let cfg = subscriptions::load(&path).unwrap_or_else(|err| {
+        crate::logging::error(format!(
+            "subscriptions load error path={} err={:?}",
+            path.display(),
+            err
+        ));
+        subscriptions::default_config()
+    });
+    Json(SubscriptionsResponse {
+        path: path.display().to_string(),
+        config: cfg,
+    })
+}
+
+async fn subscriptions_put(
+    State(state): State<Arc<ControlState>>,
+    Json(req): Json<SubscriptionsUpdateRequest>,
+) -> axum::response::Response {
+    let path = subscriptions::config_path(&state.data_dir);
+    if let Err(err) = subscriptions::save(&path, &req.config) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.to_string() })),
+        )
+            .into_response();
+    }
+    state.sync_now.notify_one();
+    Json(SubscriptionsResponse {
+        path: path.display().to_string(),
+        config: req.config,
+    })
+    .into_response()
+}
+
+async fn discovery_files(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let Some(api) = state.api.clone() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+
+    let path = subscriptions::config_path(&state.data_dir);
+    let cfg = subscriptions::load(&path).unwrap_or_else(|err| {
+        crate::logging::error(format!(
+            "subscriptions load error path={} err={:?}",
+            path.display(),
+            err
+        ));
+        subscriptions::default_config()
+    });
+
+    let view = match api.datasite_view().await {
+        Ok(v) => v,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": err.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut files = Vec::new();
+    for file in view.files {
+        if file.key.ends_with("/syft.pub.yaml") || file.key == "syft.pub.yaml" {
+            continue;
+        }
+        if subscriptions::is_sub_file(&file.key) {
+            continue;
+        }
+        let action = subscriptions::action_for_path(&cfg, &state.owner_email, &file.key);
+        if action == subscriptions::Action::Allow {
+            continue;
+        }
+        files.push(DiscoveryFile {
+            path: file.key,
+            etag: file.etag,
+            size: file.size,
+            last_modified: file.last_modified,
+            action: format!("{:?}", action).to_lowercase(),
+        });
+    }
+
+    Json(DiscoveryResponse { files }).into_response()
+}
+
+async fn publications(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    let root = state
+        .data_dir
+        .join("datasites")
+        .join(&state.owner_email);
+    let base = state.data_dir.join("datasites");
+    let mut files = Vec::new();
+
+    if root.exists() {
+        for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy();
+            if name != "syft.pub.yaml" {
+                continue;
+            }
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(&base)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let content = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            files.push(PublicationEntry { path: rel, content });
+        }
+    }
+
+    Json(PublicationsResponse { files }).into_response()
 }
 
 async fn list_uploads(State(state): State<Arc<ControlState>>) -> impl IntoResponse {

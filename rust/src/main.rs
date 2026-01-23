@@ -245,7 +245,15 @@ async fn run_daemon(cfg: Config, http_addr: String, http_token: String) -> Resul
         http_stats.clone(),
     )?;
 
-    let control_result = ControlPlane::start(&http_addr, Some(http_token), http_stats, None)?;
+    let control_result = ControlPlane::start(
+        &http_addr,
+        Some(http_token),
+        http_stats,
+        None,
+        cfg.data_dir.clone(),
+        cfg.email.clone(),
+        Some(api.clone()),
+    )?;
     let control = control_result.control_plane;
 
     // TODO: wire websocket events; keep None until implemented.

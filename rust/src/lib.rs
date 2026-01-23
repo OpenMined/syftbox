@@ -10,6 +10,7 @@ pub mod http;
 pub mod logging;
 pub mod login;
 mod sync;
+pub mod subscriptions;
 pub mod telemetry;
 pub mod uploader;
 pub mod workspace;

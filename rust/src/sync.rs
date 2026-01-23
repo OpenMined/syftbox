@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::Read,
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -17,6 +17,7 @@ use walkdir::WalkDir;
 use crate::acl_staging::ACLStagingManager;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
+use crate::subscriptions;
 use crate::http::{ApiClient, BlobInfo, HttpStatusError, PresignedParams};
 use crate::uploader::upload_blob_smart;
 
@@ -380,7 +381,16 @@ pub async fn sync_once_with_control(
 
     let datasites_root = data_dir.join("datasites");
     let local = local_scanner.scan(&datasites_root, filters)?;
-    let remote = scan_remote(api, filters).await?;
+    let subs_path = subscriptions::config_path(data_dir);
+    let subs = subscriptions::load(&subs_path).unwrap_or_else(|err| {
+        crate::logging::error(format!(
+            "subscriptions load error path={} err={:?}",
+            subs_path.display(),
+            err
+        ));
+        subscriptions::default_config()
+    });
+    let remote = scan_remote(api, filters, &subs, owner_email).await?;
 
     journal.rebuild_if_empty(&local, &remote);
 
@@ -406,6 +416,30 @@ pub async fn sync_once_with_control(
         all_keys.len()
     ));
 
+    let mut local_mut = local.clone();
+    for key in local.keys() {
+        if subscriptions::is_sub_file(key) {
+            continue;
+        }
+        if key.ends_with("/syft.pub.yaml") || key == "syft.pub.yaml" {
+            continue;
+        }
+        let action = subscriptions::action_for_path(&subs, owner_email, key);
+        if action == subscriptions::Action::Block {
+            if let Some(local_meta) = local.get(key) {
+                if let Err(err) = remove_local_path(&local_meta.path) {
+                    crate::logging::error(format!("subscriptions prune error {}: {err:?}", key));
+                } else if let Some(parent) = local_meta.path.parent() {
+                    cleanup_empty_parent_dirs(parent, &datasites_root);
+                }
+            }
+            journal.delete(key);
+            local_mut.remove(key);
+        }
+    }
+
+    let local = local_mut;
+
     for key in all_keys {
         if !is_synced_key(&key) {
             continue;
@@ -414,6 +448,12 @@ pub async fn sync_once_with_control(
             continue;
         }
         if SyncFilters::is_marked_rel_path(&key) {
+            continue;
+        }
+        if subscriptions::is_sub_file(&key) {
+            continue;
+        }
+        if !should_sync_key(owner_email, &subs, &key) {
             continue;
         }
         let local_meta = local.get(&key);
@@ -750,6 +790,9 @@ pub async fn sync_once_with_control(
                     )),
                 }
             }
+        }
+        if let Some(parent) = abs.parent() {
+            cleanup_empty_parent_dirs(parent, &datasites_root);
         }
         journal.delete(&key);
     }
@@ -1147,6 +1190,100 @@ fn should_ignore_key(filters: &SyncFilters, key: &str) -> bool {
     filters.ignore.should_ignore_rel(Path::new(key), false) || SyncFilters::is_marked_rel_path(key)
 }
 
+fn should_sync_key(owner_email: &str, subs: &subscriptions::Subscriptions, key: &str) -> bool {
+    if key.ends_with("/syft.pub.yaml") || key == "syft.pub.yaml" {
+        return true;
+    }
+    let action = subscriptions::action_for_path(subs, owner_email, key);
+    action == subscriptions::Action::Allow
+}
+
+fn remove_local_path(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let meta = std::fs::metadata(path)?;
+    if meta.is_dir() {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn cleanup_empty_parent_dirs(start: &Path, root: &Path) {
+    let mut current = start.to_path_buf();
+    loop {
+        if current == root {
+            break;
+        }
+
+        let meta = match fs::metadata(&current) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == ErrorKind::NotFound => break,
+            Err(err) => {
+                crate::logging::error(format!(
+                    "sync cleanup parent metadata error path={} err={:?}",
+                    current.display(),
+                    err
+                ));
+                break;
+            }
+        };
+        if !meta.is_dir() {
+            break;
+        }
+
+        let read_dir = match fs::read_dir(&current) {
+            Ok(read_dir) => read_dir,
+            Err(err) => {
+                crate::logging::error(format!(
+                    "sync cleanup parent read_dir error path={} err={:?}",
+                    current.display(),
+                    err
+                ));
+                break;
+            }
+        };
+
+        let mut has_entries = false;
+        for entry in read_dir.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == ".DS_Store" || name == "Thumbs.db" {
+                let _ = fs::remove_file(entry.path());
+                continue;
+            }
+            has_entries = true;
+            break;
+        }
+
+        if has_entries {
+            break;
+        }
+
+        if let Err(err) = fs::remove_dir(&current) {
+            crate::logging::error(format!(
+                "sync cleanup parent remove_dir error path={} err={:?}",
+                current.display(),
+                err
+            ));
+            break;
+        }
+
+        crate::logging::info(format!(
+            "sync cleanup removed empty dir path={}",
+            current.display()
+        ));
+
+        if let Some(parent) = current.parent() {
+            current = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+}
+
 fn strip_datasites_prefix(datasites_root: &Path, path: &Path) -> Result<PathBuf> {
     if let Ok(rel) = path.strip_prefix(datasites_root) {
         return Ok(rel.to_path_buf());
@@ -1262,7 +1399,12 @@ impl LocalScanner {
     }
 }
 
-async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<String, BlobInfo>> {
+async fn scan_remote(
+    api: &ApiClient,
+    filters: &SyncFilters,
+    subs: &subscriptions::Subscriptions,
+    owner_email: &str,
+) -> Result<HashMap<String, BlobInfo>> {
     let mut out = HashMap::new();
     let view = api.datasite_view().await?;
 
@@ -1272,11 +1414,14 @@ async fn scan_remote(api: &ApiClient, filters: &SyncFilters) -> Result<HashMap<S
     let mut filtered_count = 0;
 
     for file in view.files {
-        if should_ignore_key(filters, &file.key) {
+        if should_ignore_key(filters, &file.key) || subscriptions::is_sub_file(&file.key) {
             ignored_count += 1;
             continue;
         }
-        if is_synced_key(&file.key) && !is_marked_key(&file.key) {
+        if is_synced_key(&file.key)
+            && !is_marked_key(&file.key)
+            && should_sync_key(owner_email, subs, &file.key)
+        {
             out.insert(file.key.clone(), file);
         } else {
             filtered_count += 1;

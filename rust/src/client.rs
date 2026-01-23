@@ -34,6 +34,7 @@ use crate::config::Config;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
 use crate::http::ApiClient;
+use crate::subscriptions;
 use crate::sync::{
     compute_local_etag, download_keys, ensure_parent_dirs, sync_once_with_control,
     write_file_resolving_conflicts,
@@ -700,6 +701,7 @@ async fn run_ws_listener(
                         &api,
                         &datasites_root,
                         &data_dir,
+                        &email,
                         &txt,
                         None,
                         &pending,
@@ -712,6 +714,7 @@ async fn run_ws_listener(
                         &api,
                         &datasites_root,
                         &data_dir,
+                        &email,
                         "",
                         Some(&bin),
                         &pending,
@@ -742,6 +745,7 @@ async fn handle_ws_message(
     api: &ApiClient,
     datasites_root: &Path,
     data_dir: &Path,
+    owner_email: &str,
     raw_text: &str,
     raw_bin: Option<&[u8]>,
     pending: &PendingAcks,
@@ -773,7 +777,8 @@ async fn handle_ws_message(
             }
         }
         Decoded::FileWrite(file) => {
-            handle_ws_file_write(api, datasites_root, data_dir, file, acl_staging).await
+            handle_ws_file_write(api, datasites_root, data_dir, owner_email, file, acl_staging)
+                .await
         }
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
         Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),
@@ -785,6 +790,7 @@ async fn handle_ws_file_write(
     api: &ApiClient,
     datasites_root: &Path,
     data_dir: &Path,
+    owner_email: &str,
     file: FileWrite,
     acl_staging: &std::sync::Arc<ACLStagingManager>,
 ) {
@@ -831,6 +837,30 @@ async fn handle_ws_file_write(
                     acl_staging.stage_acl(datasite, &acl_dir, content.clone(), file.etag.clone());
                 }
             }
+        }
+    }
+
+    if !is_acl_file && subscriptions::is_sub_file(&file.path) {
+        return;
+    }
+
+    if !is_acl_file {
+        let subs_path = subscriptions::config_path(data_dir);
+        let subs = subscriptions::load(&subs_path).unwrap_or_else(|err| {
+            crate::logging::error(format!(
+                "subscriptions load error path={} err={:?}",
+                subs_path.display(),
+                err
+            ));
+            subscriptions::default_config()
+        });
+        let action = subscriptions::action_for_path(&subs, owner_email, &file.path);
+        if action != subscriptions::Action::Allow {
+            crate::logging::info(format!(
+                "ws_file_write skipped by subscription action={:?} path={}",
+                action, file.path
+            ));
+            return;
         }
     }
 

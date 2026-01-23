@@ -89,6 +89,9 @@ pub async fn run_daemon_with_shutdown(
         Some(http_token),
         http_stats,
         Some(shutdown.clone()),
+        cfg.data_dir.clone(),
+        cfg.email.clone(),
+        Some(api.clone()),
     )?;
 
     let control = control_result.control_plane;

@@ -78,6 +78,13 @@ func waitForJournalEntry(journalPath, pathPattern, expectedEtag string, timeout 
 	return fmt.Errorf("timeout: no journal entry for %s", pathPattern)
 }
 
+func allowAliceBob(t *testing.T, h *DevstackTestHarness) {
+	t.Helper()
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+}
+
 // TestSimultaneousWrite tests the race condition where two clients write to
 // the same file at exactly the same time.
 func TestSimultaneousWrite(t *testing.T) {
@@ -95,6 +102,7 @@ func TestSimultaneousWrite(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	// Create initial file
@@ -209,6 +217,7 @@ func TestDivergentEdits(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	filename := "divergent.txt"
@@ -405,6 +414,7 @@ func TestThreeWayConflict(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	// Start charlie as third client
@@ -434,6 +444,9 @@ func TestThreeWayConflict(t *testing.T) {
 		dataDir:   charlieState.DataPath,
 		publicDir: filepath.Join(charlieState.DataPath, "datasites", charlieState.Email, "public"),
 		metrics:   &ClientMetrics{},
+	}
+	if err := charlie.SetSubscriptionsAllow(h.alice.email, h.bob.email); err != nil {
+		t.Fatalf("set charlie subscriptions: %v", err)
 	}
 
 	// Wait for charlie to initialize - Windows needs more time
@@ -615,6 +628,7 @@ func TestConflictDuringACLChange(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	filename := "acl-conflict.txt"
@@ -725,6 +739,7 @@ func TestNestedPathConflict(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	pathName := "item"
@@ -820,6 +835,7 @@ func TestJournalWriteTiming(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	filename := "journal-timing.txt"
@@ -940,6 +956,7 @@ func TestNonConflictUpdate(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	filename := "non-conflict.txt"
@@ -1037,6 +1054,14 @@ func TestRapidSequentialEdits(t *testing.T) {
 	}
 
 	h := NewDevstackHarness(t)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob ACLs: %v", err)
+	}
+	allowAliceBob(t, h)
+	time.Sleep(2 * time.Second)
 
 	t.Log("=== TEST: Rapid Sequential Edits ===")
 	t.Log("Setup: Alice rapidly edits v1→v2→v3→v4 before Bob's sync catches up")
@@ -1144,6 +1169,7 @@ func TestJournalLossRecovery(t *testing.T) {
 	if err := h.alice.CreateDefaultACLs(); err != nil {
 		t.Fatalf("create alice ACLs: %v", err)
 	}
+	allowAliceBob(t, h)
 	time.Sleep(2 * time.Second)
 
 	filename := "journal-loss.txt"
