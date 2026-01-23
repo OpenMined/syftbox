@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, Notify};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-use crate::telemetry::HttpStats;
+use crate::telemetry::{HttpStats, LatencyStats};
 use crate::{http::ApiClient, subscriptions};
 
 #[derive(Clone, Debug)]
@@ -47,6 +47,7 @@ struct ControlState {
     sync_events: broadcast::Sender<SyncFileStatus>,
     sync_now: Notify,
     http_stats: Arc<HttpStats>,
+    latency_stats: Arc<LatencyStats>,
     data_dir: PathBuf,
     owner_email: String,
     api: Option<ApiClient>,
@@ -244,6 +245,7 @@ impl ControlPlane {
         shutdown: Option<Arc<Notify>>,
         data_dir: PathBuf,
         owner_email: String,
+        server_url: String,
         api: Option<ApiClient>,
     ) -> anyhow::Result<ControlPlaneStartResult> {
         let token = token.unwrap_or_else(|| Uuid::new_v4().as_simple().to_string());
@@ -295,6 +297,7 @@ impl ControlPlane {
                         shutdown,
                         data_dir.clone(),
                         owner_email.clone(),
+                        server_url.clone(),
                         api.clone(),
                     )
                     .await;
@@ -345,6 +348,7 @@ impl ControlPlane {
                     shutdown,
                     data_dir,
                     owner_email,
+                    server_url,
                     api,
                 )
                 .await
@@ -372,8 +376,10 @@ impl ControlPlane {
         shutdown: Option<Arc<Notify>>,
         data_dir: PathBuf,
         owner_email: String,
+        server_url: String,
         api: Option<ApiClient>,
     ) -> anyhow::Result<ControlPlaneStartResult> {
+        let latency_stats = Arc::new(LatencyStats::new(server_url));
         let state = Arc::new(ControlState {
             token,
             uploads: Mutex::new(HashMap::new()),
@@ -381,6 +387,7 @@ impl ControlPlane {
             sync_events: broadcast::channel(1024).0,
             sync_now: Notify::new(),
             http_stats,
+            latency_stats,
             data_dir,
             owner_email,
             api,
@@ -390,7 +397,6 @@ impl ControlPlane {
         let authenticated_routes = Router::new()
             .route("/v1/sync/status", get(sync_status))
             .route("/v1/sync/status/file", get(sync_status_file))
-            .route("/v1/sync/events", get(sync_events))
             .route("/v1/sync/queue", get(sync_queue))
             .route("/v1/sync/conflicts", get(sync_conflicts))
             .route("/v1/sync/now", post(sync_now))
@@ -420,9 +426,12 @@ impl ControlPlane {
             ));
 
         // Health/status endpoint is public (no auth required)
-        // This allows health checks and probes without needing the token
+        // SSE events use query param auth (EventSource can't send headers)
+        // Latency stats are public for easy polling from UI
         let app = Router::new()
             .route("/v1/status", get(status))
+            .route("/v1/sync/events", get(sync_events_with_query_auth))
+            .route("/v1/stats/latency", get(server_latency))
             .with_state(state.clone())
             .merge(authenticated_routes);
 
@@ -467,6 +476,7 @@ impl ControlPlane {
         shutdown: Option<Arc<Notify>>,
         data_dir: PathBuf,
         owner_email: String,
+        server_url: String,
         api: Option<ApiClient>,
     ) -> anyhow::Result<ControlPlaneStartResult> {
         // We need a runtime to run the async code. Since we're already in a tokio context
@@ -479,6 +489,7 @@ impl ControlPlane {
                 shutdown,
                 data_dir,
                 owner_email,
+                server_url,
                 api,
             ))
         })
@@ -678,6 +689,10 @@ impl ControlPlane {
         let uploads = self.state.uploads.lock().unwrap();
         uploads.get(id).map(|u| u.state.clone()).unwrap_or_default()
     }
+
+    pub fn record_latency(&self, latency_ms: u64) {
+        self.state.latency_stats.record(latency_ms);
+    }
 }
 
 async fn auth_middleware(
@@ -738,6 +753,10 @@ async fn status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
     })
 }
 
+async fn server_latency(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
+    Json(state.latency_stats.snapshot())
+}
+
 async fn sync_status(State(state): State<Arc<ControlState>>) -> impl IntoResponse {
     let sync = state.sync_status.lock().unwrap();
     let mut files: Vec<SyncFileStatus> = sync.values().cloned().collect();
@@ -776,6 +795,22 @@ async fn sync_events(State(state): State<Arc<ControlState>>) -> impl IntoRespons
         }
     });
     Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+}
+
+#[derive(Deserialize)]
+struct SseTokenQuery {
+    token: Option<String>,
+}
+
+async fn sync_events_with_query_auth(
+    State(state): State<Arc<ControlState>>,
+    Query(q): Query<SseTokenQuery>,
+) -> axum::response::Response {
+    // Validate token from query param (EventSource can't send Authorization headers)
+    match q.token {
+        Some(t) if t == state.token => sync_events(State(state)).await.into_response(),
+        _ => (StatusCode::UNAUTHORIZED, "unauthorized").into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1374,6 +1409,9 @@ mod tests {
     #[tokio::test]
     async fn uploads_are_listed_and_sync_status_completed() {
         let stats = Arc::new(HttpStats::default());
+        let latency_stats = Arc::new(crate::telemetry::LatencyStats::new(
+            "https://test.example.com".to_string(),
+        ));
         let (tx, _) = broadcast::channel(16);
         let tmp_dir = make_temp_dir();
         let state = Arc::new(ControlState {
@@ -1383,6 +1421,7 @@ mod tests {
             sync_events: tx,
             sync_now: Notify::new(),
             http_stats: stats,
+            latency_stats,
             data_dir: tmp_dir.clone(),
             owner_email: "test@example.com".into(),
             api: None,

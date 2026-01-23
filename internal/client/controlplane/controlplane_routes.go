@@ -54,6 +54,7 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	statusH := handlers.NewStatusHandler(datasiteMgr)
 	workspaceH := handlers.NewWorkspaceHandler(datasiteMgr)
 	logsH := handlers.NewLogsHandler(datasiteMgr)
+	latencyH := handlers.NewLatencyHandler(datasiteMgr)
 
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
@@ -62,6 +63,9 @@ func SetupRoutes(datasiteMgr *datasitemgr.DatasiteManager, routeConfig *RouteCon
 	r.Use(middleware.Logger())
 
 	r.GET("/", IndexHandler)
+
+	// Public endpoint for latency stats (no auth required, like Rust implementation)
+	r.GET("/v1/stats/latency", latencyH.GetLatency)
 
 	//	@Security	APIToken
 	v1 := r.Group("/v1")

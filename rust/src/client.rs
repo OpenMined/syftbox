@@ -154,11 +154,12 @@ impl Client {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler, acl_staging) => {
+            res = run_sync_loop(api.clone(), data_dir, email, control.clone(), filters, sync_kick, sync_scheduler, acl_staging) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
             }
+            _ = run_ping_loop(api, control) => {}
         }
 
         Ok(())
@@ -217,11 +218,12 @@ impl Client {
                     crate::logging::error(format!("ws listener crashed: {err:?}"));
                 }
             }
-            res = run_sync_loop(api, data_dir, email, control, filters, sync_kick, sync_scheduler, acl_staging) => {
+            res = run_sync_loop(api.clone(), data_dir, email, control.clone(), filters, sync_kick, sync_scheduler, acl_staging) => {
                 if let Err(err) = res {
                     crate::logging::error(format!("sync loop crashed: {err:?}"));
                 }
             }
+            _ = run_ping_loop(api, control) => {}
         }
 
         Ok(())
@@ -340,6 +342,26 @@ async fn run_sync_loop(
                 }
             }
         }
+    }
+}
+
+const PING_INTERVAL: Duration = Duration::from_secs(5);
+
+async fn run_ping_loop(api: ApiClient, control: Option<ControlPlane>) {
+    loop {
+        if let Some(cp) = &control {
+            let start = Instant::now();
+            match api.healthz().await {
+                Ok(()) => {
+                    let latency_ms = start.elapsed().as_millis() as u64;
+                    cp.record_latency(latency_ms);
+                }
+                Err(err) => {
+                    crate::logging::info(format!("ping failed: {err}"));
+                }
+            }
+        }
+        sleep(PING_INTERVAL).await;
     }
 }
 

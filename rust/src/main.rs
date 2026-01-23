@@ -252,6 +252,7 @@ async fn run_daemon(cfg: Config, http_addr: String, http_token: String) -> Resul
         None,
         cfg.data_dir.clone(),
         cfg.email.clone(),
+        cfg.server_url.clone(),
         Some(api.clone()),
     )?;
     let control = control_result.control_plane;

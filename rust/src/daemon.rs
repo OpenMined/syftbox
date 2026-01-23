@@ -91,6 +91,7 @@ pub async fn run_daemon_with_shutdown(
         Some(shutdown.clone()),
         cfg.data_dir.clone(),
         cfg.email.clone(),
+        cfg.server_url.clone(),
         Some(api.clone()),
     )?;
 

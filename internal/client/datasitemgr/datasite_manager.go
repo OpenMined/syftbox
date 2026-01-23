@@ -26,12 +26,13 @@ type RuntimeConfig struct {
 }
 
 type DatasiteManager struct {
-	datasite    *datasite.Datasite
-	status      DatasiteStatus
-	runtimeCfg  *RuntimeConfig
-	datasiteErr error
-	configPath  string
-	mu          sync.RWMutex
+	datasite     *datasite.Datasite
+	status       DatasiteStatus
+	runtimeCfg   *RuntimeConfig
+	datasiteErr  error
+	configPath   string
+	latencyStats *LatencyStats
+	mu           sync.RWMutex
 }
 
 func New() *DatasiteManager {
@@ -187,4 +188,18 @@ func (d *DatasiteManager) configExists(path string) bool {
 
 func (d *DatasiteManager) defaultConfigExists() bool {
 	return utils.FileExists(config.DefaultConfigPath)
+}
+
+// SetLatencyStats sets the latency stats tracker
+func (d *DatasiteManager) SetLatencyStats(stats *LatencyStats) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.latencyStats = stats
+}
+
+// GetLatencyStats returns the latency stats tracker
+func (d *DatasiteManager) GetLatencyStats() *LatencyStats {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.latencyStats
 }
