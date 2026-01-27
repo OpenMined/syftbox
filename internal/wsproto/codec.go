@@ -202,6 +202,51 @@ func marshalMsgpack(msg *syftmsg.Message) ([]byte, error) {
 		default:
 			return nil, fmt.Errorf("invalid ACL manifest payload type: %T", msg.Data)
 		}
+	case syftmsg.MsgHotlinkOpen:
+		switch v := msg.Data.(type) {
+		case syftmsg.HotlinkOpen:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.HotlinkOpen:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid hotlink open payload type: %T", msg.Data)
+		}
+	case syftmsg.MsgHotlinkAccept:
+		switch v := msg.Data.(type) {
+		case syftmsg.HotlinkAccept:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.HotlinkAccept:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid hotlink accept payload type: %T", msg.Data)
+		}
+	case syftmsg.MsgHotlinkReject:
+		switch v := msg.Data.(type) {
+		case syftmsg.HotlinkReject:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.HotlinkReject:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid hotlink reject payload type: %T", msg.Data)
+		}
+	case syftmsg.MsgHotlinkData:
+		switch v := msg.Data.(type) {
+		case syftmsg.HotlinkData:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.HotlinkData:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid hotlink data payload type: %T", msg.Data)
+		}
+	case syftmsg.MsgHotlinkClose:
+		switch v := msg.Data.(type) {
+		case syftmsg.HotlinkClose:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.HotlinkClose:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid hotlink close payload type: %T", msg.Data)
+		}
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msg.Type)
 	}
@@ -277,6 +322,36 @@ func unmarshalMsgpack(payload []byte) (*syftmsg.Message, error) {
 			return nil, err
 		}
 		msg.Data = &manifest
+	case syftmsg.MsgHotlinkOpen:
+		var open syftmsg.HotlinkOpen
+		if err := msgpack.Unmarshal(w.Data, &open); err != nil {
+			return nil, err
+		}
+		msg.Data = open
+	case syftmsg.MsgHotlinkAccept:
+		var accept syftmsg.HotlinkAccept
+		if err := msgpack.Unmarshal(w.Data, &accept); err != nil {
+			return nil, err
+		}
+		msg.Data = accept
+	case syftmsg.MsgHotlinkReject:
+		var reject syftmsg.HotlinkReject
+		if err := msgpack.Unmarshal(w.Data, &reject); err != nil {
+			return nil, err
+		}
+		msg.Data = reject
+	case syftmsg.MsgHotlinkData:
+		var data syftmsg.HotlinkData
+		if err := msgpack.Unmarshal(w.Data, &data); err != nil {
+			return nil, err
+		}
+		msg.Data = data
+	case syftmsg.MsgHotlinkClose:
+		var close syftmsg.HotlinkClose
+		if err := msgpack.Unmarshal(w.Data, &close); err != nil {
+			return nil, err
+		}
+		msg.Data = close
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", w.Type)
 	}

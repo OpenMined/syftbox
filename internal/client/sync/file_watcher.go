@@ -39,6 +39,9 @@ type FileWatcher struct {
 	// Raw event filtering
 	ignoreCallback FilterCallback
 	callbackMu     sync.RWMutex
+	// Debounce override for specific paths
+	debounceResolver DebounceResolver
+	resolverMu       sync.RWMutex
 }
 
 func NewFileWatcher(watchDir string) *FileWatcher {
@@ -63,6 +66,16 @@ func (fw *FileWatcher) SetCleanupInterval(interval time.Duration) {
 // SetDebounceTimeout sets the debounce timeout for events
 func (fw *FileWatcher) SetDebounceTimeout(timeout time.Duration) {
 	fw.debounceTimeout = timeout
+}
+
+// DebounceResolver returns a custom debounce duration for a path (true to override).
+type DebounceResolver func(path string) (time.Duration, bool)
+
+// SetDebounceResolver sets a callback to override debounce duration per path.
+func (fw *FileWatcher) SetDebounceResolver(resolver DebounceResolver) {
+	fw.resolverMu.Lock()
+	defer fw.resolverMu.Unlock()
+	fw.debounceResolver = resolver
 }
 
 // FilterPaths sets a callback function to filter out raw events before debouncing
@@ -280,6 +293,15 @@ func (fw *FileWatcher) filterEvents(ctx context.Context) {
 func (fw *FileWatcher) debounceEvent(event notify.EventInfo) {
 	path := event.Path()
 
+	timeout := fw.debounceTimeout
+	fw.resolverMu.RLock()
+	if fw.debounceResolver != nil {
+		if override, ok := fw.debounceResolver(path); ok {
+			timeout = override
+		}
+	}
+	fw.resolverMu.RUnlock()
+
 	fw.debounceMu.Lock()
 	defer fw.debounceMu.Unlock()
 
@@ -292,8 +314,14 @@ func (fw *FileWatcher) debounceEvent(event notify.EventInfo) {
 	// Store/update the pending event for this path
 	fw.pendingEvents[path] = event
 
+	// If timeout <= 0, flush immediately to minimize latency.
+	if timeout <= 0 {
+		go fw.flushEvent(path)
+		return
+	}
+
 	// Create a new timer to flush this event after the debounce timeout
-	timer := time.AfterFunc(fw.debounceTimeout, func() {
+	timer := time.AfterFunc(timeout, func() {
 		fw.flushEvent(path)
 	})
 

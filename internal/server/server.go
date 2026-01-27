@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,6 +36,7 @@ type Server struct {
 	hub           *ws.WebsocketHub
 	svc           *Services
 	manifestStore *ws.ManifestStore
+	hotlinkStore  *hotlinkStore
 }
 
 // New creates a new server instance with the provided configuration
@@ -54,6 +57,7 @@ func New(config *Config) (*Server, error) {
 
 	hub := ws.NewHub()
 	manifestStore := ws.NewManifestStore()
+	hotlinkStore := newHotlinkStore()
 	httpHandler := SetupRoutes(config, services, hub)
 
 	return &Server{
@@ -62,6 +66,7 @@ func New(config *Config) (*Server, error) {
 		hub:           hub,
 		svc:           services,
 		manifestStore: manifestStore,
+		hotlinkStore:  hotlinkStore,
 		server: &http.Server{
 			Addr:    config.HTTP.Addr,
 			Handler: httpHandler,
@@ -207,6 +212,16 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 		s.handleFileWrite(msg)
 	case syftmsg.MsgACLManifest:
 		s.handleACLManifest(msg)
+	case syftmsg.MsgHotlinkOpen:
+		s.handleHotlinkOpen(msg)
+	case syftmsg.MsgHotlinkAccept:
+		s.handleHotlinkAccept(msg)
+	case syftmsg.MsgHotlinkReject:
+		s.handleHotlinkReject(msg)
+	case syftmsg.MsgHotlinkData:
+		s.handleHotlinkData(msg)
+	case syftmsg.MsgHotlinkClose:
+		s.handleHotlinkClose(msg)
 	default:
 		slog.Info("unhandled message", "msgType", msg.Message.Type)
 	}
@@ -219,6 +234,12 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	from := msg.ClientInfo.User
 
 	msgGroup := slog.Group("wsmsg", "id", msg.Message.Id, "type", msg.Message.Type, "connId", msg.ConnID, "from", from, "path", data.Path, "size", data.Length)
+
+	if latencyTraceEnabled() {
+		if ts, ok := payloadTimestampNs(data.Content); ok {
+			slog.Info("latency_trace server_received", msgGroup, "age_ms", (time.Now().UnixNano()-ts)/1_000_000)
+		}
+	}
 
 	// check if the SENDER has permission to write to the file
 	if err := s.svc.ACL.CanAccess(
@@ -238,6 +259,7 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	// For ACL files, upload synchronously to ensure they're loaded before broadcasting
 	// For other files, upload asynchronously for better performance
 	uploadFunc := func() error {
+		start := time.Now()
 		if _, err := s.svc.Blob.Backend().PutObject(context.Background(), &blob.PutObjectParams{
 			Key:  data.Path,
 			ETag: msg.Message.Id,
@@ -246,6 +268,9 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 		}); err != nil {
 			slog.Error("ws file write put object", "error", err)
 			return err
+		}
+		if latencyTraceEnabled() {
+			slog.Info("latency_trace server_uploaded", msgGroup, "upload_ms", time.Since(start).Milliseconds())
 		}
 		return nil
 	}
@@ -321,6 +346,19 @@ func (s *Server) handleFileWrite(msg *ws.ClientMessage) {
 	})
 }
 
+const latencyTraceEnv = "SYFTBOX_LATENCY_TRACE"
+
+func latencyTraceEnabled() bool {
+	return os.Getenv(latencyTraceEnv) == "1"
+}
+
+func payloadTimestampNs(payload []byte) (int64, bool) {
+	if len(payload) < 8 {
+		return 0, false
+	}
+	return int64(binary.LittleEndian.Uint64(payload[:8])), true
+}
+
 func (s *Server) handleACLManifest(msg *ws.ClientMessage) {
 	manifest, ok := msg.Message.Data.(*syftmsg.ACLManifest)
 	if !ok {
@@ -359,4 +397,138 @@ func (s *Server) handleACLManifest(msg *ws.ClientMessage) {
 
 		return false
 	})
+}
+
+func (s *Server) handleHotlinkOpen(msg *ws.ClientMessage) {
+	open, ok := msg.Message.Data.(syftmsg.HotlinkOpen)
+	if !ok {
+		slog.Error("hotlink open invalid payload", "msgId", msg.Message.Id)
+		return
+	}
+
+	from := msg.ClientInfo.User
+	msgGroup := slog.Group("hotlink", "id", msg.Message.Id, "session", open.SessionID, "from", from, "path", open.Path)
+
+	if err := s.svc.ACL.CanAccess(
+		acl.NewRequest(open.Path, &acl.User{ID: from}, acl.AccessWrite),
+	); err != nil {
+		slog.Warn("hotlink open permission denied", msgGroup, "error", err)
+		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(open.SessionID, "permission denied"))
+		return
+	}
+
+	s.hotlinkStore.Open(open.SessionID, open.Path, from, msg.ConnID)
+
+	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
+		to := info.User
+		if to == from {
+			return false
+		}
+		if err := s.svc.ACL.CanAccess(
+			acl.NewRequest(open.Path, &acl.User{ID: to}, acl.AccessRead),
+		); err != nil {
+			return false
+		}
+		return true
+	})
+}
+
+func (s *Server) handleHotlinkAccept(msg *ws.ClientMessage) {
+	accept, ok := msg.Message.Data.(syftmsg.HotlinkAccept)
+	if !ok {
+		slog.Error("hotlink accept invalid payload", "msgId", msg.Message.Id)
+		return
+	}
+
+	session, ok := s.hotlinkStore.Get(accept.SessionID)
+	if !ok {
+		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(accept.SessionID, "unknown session"))
+		return
+	}
+
+	if msg.ClientInfo.User == session.FromUser {
+		return
+	}
+
+	if err := s.svc.ACL.CanAccess(
+		acl.NewRequest(session.Path, &acl.User{ID: msg.ClientInfo.User}, acl.AccessRead),
+	); err != nil {
+		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(accept.SessionID, "permission denied"))
+		return
+	}
+
+	s.hotlinkStore.Accept(accept.SessionID, msg.ConnID, msg.ClientInfo.User)
+	s.hub.SendMessage(session.FromConn, msg.Message)
+}
+
+func (s *Server) handleHotlinkReject(msg *ws.ClientMessage) {
+	reject, ok := msg.Message.Data.(syftmsg.HotlinkReject)
+	if !ok {
+		slog.Error("hotlink reject invalid payload", "msgId", msg.Message.Id)
+		return
+	}
+
+	session, ok := s.hotlinkStore.Get(reject.SessionID)
+	if !ok {
+		return
+	}
+
+	if msg.ClientInfo.User == session.FromUser {
+		return
+	}
+
+	s.hub.SendMessage(session.FromConn, msg.Message)
+}
+
+func (s *Server) handleHotlinkData(msg *ws.ClientMessage) {
+	data, ok := msg.Message.Data.(syftmsg.HotlinkData)
+	if !ok {
+		slog.Error("hotlink data invalid payload", "msgId", msg.Message.Id)
+		return
+	}
+
+	session, ok := s.hotlinkStore.Get(data.SessionID)
+	if !ok {
+		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(data.SessionID, "unknown session"))
+		return
+	}
+
+	if msg.ClientInfo.User != session.FromUser {
+		slog.Warn("hotlink data rejected (not sender)", "session", data.SessionID, "from", msg.ClientInfo.User)
+		return
+	}
+
+	for connID, user := range session.Accepted {
+		if err := s.svc.ACL.CanAccess(
+			acl.NewRequest(session.Path, &acl.User{ID: user}, acl.AccessRead),
+		); err != nil {
+			continue
+		}
+		s.hub.SendMessage(connID, msg.Message)
+	}
+}
+
+func (s *Server) handleHotlinkClose(msg *ws.ClientMessage) {
+	closeMsg, ok := msg.Message.Data.(syftmsg.HotlinkClose)
+	if !ok {
+		slog.Error("hotlink close invalid payload", "msgId", msg.Message.Id)
+		return
+	}
+
+	session, ok := s.hotlinkStore.Get(closeMsg.SessionID)
+	if !ok {
+		return
+	}
+
+	if msg.ClientInfo.User == session.FromUser {
+		if session, ok := s.hotlinkStore.Close(closeMsg.SessionID); ok {
+			for connID := range session.Accepted {
+				s.hub.SendMessage(connID, msg.Message)
+			}
+		}
+		return
+	}
+
+	s.hotlinkStore.RemoveAccepted(closeMsg.SessionID, msg.ConnID)
+	s.hub.SendMessage(session.FromConn, msg.Message)
 }

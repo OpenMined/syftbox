@@ -810,6 +810,7 @@ async fn handle_ws_message(
             )
             .await
         }
+        Decoded::HotlinkData(_data) => {}
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
         Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),
         Decoded::Other { id, typ } => drop((id, typ)),
@@ -1275,7 +1276,15 @@ async fn watch_priority_files(
         }
     }
 
-    let debounce = Duration::from_millis(50);
+    let debounce = {
+        let mut ms = 50u64;
+        if let Ok(v) = std::env::var("SYFTBOX_PRIORITY_DEBOUNCE_MS") {
+            if let Ok(parsed) = v.trim().parse::<u64>() {
+                ms = parsed;
+            }
+        }
+        Duration::from_millis(ms)
+    };
     let mut pending: HashSet<PathBuf> = HashSet::new();
 
     let poll_interval = Duration::from_millis(250);

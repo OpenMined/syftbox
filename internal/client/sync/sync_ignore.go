@@ -42,6 +42,10 @@ var defaultIgnoreLines = []string{
 	"*.tmp",
 	"*.log",
 	"logs/",
+	"**/stream.fifo",
+	"**/stream.sock",
+	"**/stream.pipe",
+	"**/stream.accept",
 	// OS-specific
 	".DS_Store",
 	"Thumbds.db",

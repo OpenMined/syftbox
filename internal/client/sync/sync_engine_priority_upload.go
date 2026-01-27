@@ -48,6 +48,11 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 	// set sync status
 	se.syncStatus.SetSyncing(syncRelPath)
 
+	// If hotlink is enabled, wait briefly for the file to stabilize before reading.
+	if se.hotlink.Enabled() && isHotlinkEligible(relPath) {
+		waitForHotlinkStable(path)
+	}
+
 	// get the file content
 	timeNow := time.Now()
 	file, err := NewFileContent(path)
@@ -61,6 +66,16 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		}
 		return
 	}
+
+	if latencyTraceEnabled() {
+		if ts, ok := payloadTimestampNs(file.Content); ok {
+			slog.Info("latency_trace priority_upload_read", "path", relPath, "msgId", "", "age_ms", (time.Now().UnixNano()-ts)/1_000_000)
+		}
+		slog.Info("latency_trace priority_upload_file", "path", relPath, "mod_age_ms", timeNow.Sub(file.LastModified).Milliseconds(), "size", file.Size)
+	}
+
+	// Best-effort hotlink send (does not block standard upload path).
+	se.hotlink.SendBestEffort(relPath, file.ETag, file.Content)
 
 	// check if the file has changed (except for ACL files, which must always broadcast)
 	// ACL files bypass journal check because ACL state can cycle (owner→public→owner),
@@ -95,6 +110,12 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 		return
 	}
 
+	if latencyTraceEnabled() {
+		if ts, ok := payloadTimestampNs(file.Content); ok {
+			slog.Info("latency_trace priority_upload_ack", "path", relPath, "msgId", message.Id, "age_ms", (time.Now().UnixNano()-ts)/1_000_000)
+		}
+	}
+
 	slog.Debug("sync", "type", SyncPriority, "op", OpWriteRemote, "path", relPath, "ack", "received")
 
 	// update the journal
@@ -113,6 +134,36 @@ func (se *SyncEngine) handlePriorityUpload(path string) {
 	// If this was an ACL file, generate and send updated manifests
 	if aclspec.IsACLFile(relPath) {
 		go se.broadcastACLManifests(relPath)
+	}
+}
+
+func waitForHotlinkStable(path string) {
+	maxWait := 10 * time.Millisecond
+	if v := strings.TrimSpace(os.Getenv("SYFTBOX_HOTLINK_STABLE_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			maxWait = time.Duration(ms) * time.Millisecond
+		}
+	}
+	if maxWait <= 0 {
+		return
+	}
+
+	const interval = 2 * time.Millisecond
+	deadline := time.Now().Add(maxWait)
+	var lastSize int64 = -1
+	var lastMod time.Time
+
+	for time.Now().Before(deadline) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return
+		}
+		if info.Size() == lastSize && info.ModTime().Equal(lastMod) {
+			return
+		}
+		lastSize = info.Size()
+		lastMod = info.ModTime()
+		time.Sleep(interval)
 	}
 }
 

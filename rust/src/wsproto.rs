@@ -83,6 +83,44 @@ pub struct MsgpackFileWrite {
 }
 
 #[derive(Debug, Clone)]
+pub struct HotlinkData {
+    pub session_id: String,
+    pub seq: u64,
+    pub path: String,
+    pub etag: String,
+    pub payload: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonHotlinkData {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "pth")]
+    pub path: String,
+    #[serde(rename = "etg", default)]
+    pub etag: String,
+    #[serde(rename = "pay", default, deserialize_with = "deserialize_base64_opt")]
+    pub payload: Option<Vec<u8>>,
+}
+
+// Go msgpack encoding uses exported field names, not json tags.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MsgpackHotlinkData {
+    #[serde(rename = "SessionID")]
+    pub session_id: String,
+    #[serde(rename = "Seq")]
+    pub seq: u64,
+    #[serde(rename = "Path")]
+    pub path: String,
+    #[serde(rename = "ETag", default)]
+    pub etag: String,
+    #[serde(rename = "Payload", default)]
+    pub payload: Option<MpBytes>,
+}
+
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ACLEntry {
     pub path: String,
@@ -220,6 +258,7 @@ struct MsgpackHttpMsg {
 #[derive(Debug)]
 pub enum Decoded {
     FileWrite(FileWrite),
+    HotlinkData(HotlinkData),
     Http(HttpMsg),
     Ack(Ack),
     Nack(Nack),
@@ -407,6 +446,16 @@ fn decode_wire(wire: WireMessage) -> Result<Decoded> {
                     .collect(),
             }))
         }
+        12 => {
+            let hl: MsgpackHotlinkData = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::HotlinkData(HotlinkData {
+                session_id: hl.session_id,
+                seq: hl.seq,
+                path: hl.path,
+                etag: hl.etag,
+                payload: hl.payload.map(|b| b.0),
+            }))
+        }
         _ => Ok(Decoded::Other {
             id: wire.id,
             typ: wire.typ,
@@ -467,6 +516,16 @@ fn decode_json_msg(msg: Message) -> Result<Decoded> {
                         hash: e.hash,
                     })
                     .collect(),
+            }))
+        }
+        12 => {
+            let hl: JsonHotlinkData = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::HotlinkData(HotlinkData {
+                session_id: hl.session_id,
+                seq: hl.seq,
+                path: hl.path,
+                etag: hl.etag,
+                payload: hl.payload,
             }))
         }
         _ => Ok(Decoded::Other {
