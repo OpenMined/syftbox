@@ -17,6 +17,10 @@ const DEFAULT_IGNORE_LINES: &[&str] = &[
     "**/*.conflict",
     "**/*.rejected.*",
     "**/*.rejected",
+    "**/stream.sock",
+    "**/stream.pipe",
+    "**/stream.tcp",
+    "**/stream.accept",
     "*.syft.tmp.*", // temporary files (Go atomic writes)
     "**/.*.tmp-*",  // temporary files (Rust download temp)
     "**/*.tmp-*",   // temporary files (without leading dot)

@@ -79,3 +79,29 @@
    - Go: UNIX socket (linux/macOS) + named pipe (windows).
    - Rust: UNIX socket (linux/macOS) + named pipe (windows).
 4. Add E2E hotlink latency test case (new benchmark mode).
+
+## Current Status (Go)
+- Socket‑only hotlink IPC is wired and benchmarked.
+- TCP IPC mode is implemented behind:
+  - `SYFTBOX_HOTLINK_IPC=tcp`
+  - `SYFTBOX_HOTLINK_TCP_ADDR=host:port` (default `127.0.0.1:0`)
+- Benchmark selects socket‑only by default (`SYFTBOX_HOTLINK_SOCKET_ONLY=1` set in test).
+
+## Implementation Notes / Open Design Thinking
+- Windows + Linux container IPC:
+  - Linux containers cannot open `\\.\pipe\...`; named pipes are Windows‑only objects.
+  - For container producers, prefer **TCP IPC** to a host listener (e.g., `host.docker.internal:PORT`).
+  - Keep named pipes for native Windows apps; add TCP as an optional mode.
+- IPC modes to support:
+  - `stream.sock` for unix.
+  - `stream.pipe` for Windows native.
+  - `stream.tcp` marker/config when TCP IPC is enabled (container use).
+- Socket‑only hotlink:
+  - Allow apps to write framed hotlink messages directly to IPC without touching `.request` files.
+  - Client reads IPC frames → sends HotlinkData over WS → receiver writes to IPC.
+  - Optional fallback: replay `.request` files into IPC on hotlink failure.
+- Benchmarking:
+  - Add env toggles to select IPC mode:
+    - `SYFTBOX_HOTLINK_SOCKET_ONLY=1` (local IPC).
+    - `SYFTBOX_HOTLINK_IPC=tcp` + `SYFTBOX_HOTLINK_TCP_ADDR=...` (container path).
+  - Benchmark should send frames directly to IPC when socket‑only is enabled, and use file path when disabled.

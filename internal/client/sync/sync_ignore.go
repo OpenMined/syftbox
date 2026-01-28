@@ -22,9 +22,9 @@ var defaultIgnoreLines = []string{
 	"**/*.conflict",
 	"**/*.rejected.*",
 	"**/*.rejected",
-	"*.syft.tmp.*",  // temporary files (Go atomic writes)
-	"**/.*.tmp-*",   // temporary files (Rust download temp)
-	"**/*.tmp-*",    // temporary files (without leading dot)
+	"*.syft.tmp.*", // temporary files (Go atomic writes)
+	"**/.*.tmp-*",  // temporary files (Rust download temp)
+	"**/*.tmp-*",   // temporary files (without leading dot)
 	".syftkeep",
 	".data/",
 	// python
@@ -45,6 +45,7 @@ var defaultIgnoreLines = []string{
 	"**/stream.fifo",
 	"**/stream.sock",
 	"**/stream.pipe",
+	"**/stream.tcp",
 	"**/stream.accept",
 	// OS-specific
 	".DS_Store",

@@ -13,9 +13,10 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
-const hotlinkIPCName = "stream.pipe"
-
 func ensureHotlinkIPC(path string) error {
+	if hotlinkIPCMode() == hotlinkIPCModeTCP {
+		return ensureHotlinkIPCTCP(path)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -25,6 +26,9 @@ func ensureHotlinkIPC(path string) error {
 }
 
 func listenHotlinkIPC(path string) (net.Listener, error) {
+	if hotlinkIPCMode() == hotlinkIPCModeTCP {
+		return listenHotlinkIPCTCP(path)
+	}
 	if err := ensureHotlinkIPC(path); err != nil {
 		return nil, err
 	}

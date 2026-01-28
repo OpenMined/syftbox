@@ -3,6 +3,7 @@ package sync
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/binary"
 	"fmt"
@@ -121,7 +122,7 @@ func (h *HotlinkManager) scanLocalReaders(ctx context.Context) {
 
 func (h *HotlinkManager) discoverLocalReaders() {
 	root := filepath.Join(h.workspace.UserDir, "app_data")
-	pattern := filepath.Join(root, "*", "rpc", "*", hotlinkIPCName)
+	pattern := filepath.Join(root, "*", "rpc", "*", hotlinkIPCMarkerName())
 	paths, err := filepath.Glob(pattern)
 	if err != nil || len(paths) == 0 {
 		return
@@ -167,7 +168,7 @@ func (h *HotlinkManager) HandleOpen(msg *syftmsg.Message) {
 		id:         open.SessionID,
 		path:       open.Path,
 		dirAbs:     dirAbs,
-		ipcPath:    filepath.Join(dirAbs, hotlinkIPCName),
+		ipcPath:    filepath.Join(dirAbs, hotlinkIPCMarkerName()),
 		acceptPath: filepath.Join(dirAbs, hotlinkAcceptName),
 		done:       make(chan struct{}),
 	}
@@ -281,6 +282,11 @@ func (h *HotlinkManager) HandleData(msg *syftmsg.Message) {
 		slog.Warn("hotlink ipc write failed", "session", session.id, "error", err)
 	} else {
 		slog.Debug("hotlink ipc wrote", "session", session.id, "bytes", len(frame))
+		if latencyTraceEnabled() {
+			if ts, ok := payloadTimestampNs(data.Payload); ok {
+				slog.Info("latency_trace hotlink_ipc_written", "path", framePath, "age_ms", (time.Now().UnixNano()-ts)/1_000_000, "size", len(data.Payload))
+			}
+		}
 	}
 }
 

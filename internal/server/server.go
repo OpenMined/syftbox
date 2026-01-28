@@ -487,6 +487,13 @@ func (s *Server) handleHotlinkData(msg *ws.ClientMessage) {
 		return
 	}
 
+	if latencyTraceEnabled() {
+		if ts, ok := payloadTimestampNs(data.Payload); ok {
+			path := strings.TrimSpace(data.Path)
+			slog.Info("latency_trace hotlink_server_received", "path", path, "age_ms", (time.Now().UnixNano()-ts)/1_000_000, "size", len(data.Payload))
+		}
+	}
+
 	session, ok := s.hotlinkStore.Get(data.SessionID)
 	if !ok {
 		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(data.SessionID, "unknown session"))

@@ -83,12 +83,58 @@ pub struct MsgpackFileWrite {
 }
 
 #[derive(Debug, Clone)]
+pub struct HotlinkOpen {
+    pub session_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HotlinkAccept {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct HotlinkReject {
+    pub session_id: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct HotlinkData {
     pub session_id: String,
     pub seq: u64,
     pub path: String,
     pub etag: String,
     pub payload: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HotlinkClose {
+    pub session_id: String,
+    #[allow(dead_code)]
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonHotlinkOpen {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "pth")]
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonHotlinkAccept {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonHotlinkReject {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "rsn", default)]
+    pub reason: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,19 +151,57 @@ struct JsonHotlinkData {
     pub payload: Option<Vec<u8>>,
 }
 
-// Go msgpack encoding uses exported field names, not json tags.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct MsgpackHotlinkData {
-    #[serde(rename = "SessionID")]
+#[derive(Debug, Deserialize)]
+struct JsonHotlinkClose {
+    #[serde(rename = "sid")]
     pub session_id: String,
-    #[serde(rename = "Seq")]
-    pub seq: u64,
-    #[serde(rename = "Path")]
+    #[serde(rename = "rsn", default)]
+    pub reason: String,
+}
+
+// Hotlink msgpack uses msgpack tags ("sid", "pth", etc) from Go.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsgpackHotlinkOpen {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "pth")]
     pub path: String,
-    #[serde(rename = "ETag", default)]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsgpackHotlinkAccept {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsgpackHotlinkReject {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "rsn", default)]
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsgpackHotlinkData {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "pth")]
+    pub path: String,
+    #[serde(rename = "etg", default)]
     pub etag: String,
-    #[serde(rename = "Payload", default)]
+    #[serde(rename = "pay", default)]
     pub payload: Option<MpBytes>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MsgpackHotlinkClose {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "rsn", default)]
+    pub reason: String,
 }
 
 #[derive(Debug, Clone)]
@@ -258,7 +342,11 @@ struct MsgpackHttpMsg {
 #[derive(Debug)]
 pub enum Decoded {
     FileWrite(FileWrite),
+    HotlinkOpen(HotlinkOpen),
+    HotlinkAccept(HotlinkAccept),
+    HotlinkReject(HotlinkReject),
     HotlinkData(HotlinkData),
+    HotlinkClose(HotlinkClose),
     Http(HttpMsg),
     Ack(Ack),
     Nack(Nack),
@@ -446,6 +534,26 @@ fn decode_wire(wire: WireMessage) -> Result<Decoded> {
                     .collect(),
             }))
         }
+        9 => {
+            let open: MsgpackHotlinkOpen = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::HotlinkOpen(HotlinkOpen {
+                session_id: open.session_id,
+                path: open.path,
+            }))
+        }
+        10 => {
+            let accept: MsgpackHotlinkAccept = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::HotlinkAccept(HotlinkAccept {
+                session_id: accept.session_id,
+            }))
+        }
+        11 => {
+            let reject: MsgpackHotlinkReject = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::HotlinkReject(HotlinkReject {
+                session_id: reject.session_id,
+                reason: reject.reason,
+            }))
+        }
         12 => {
             let hl: MsgpackHotlinkData = rmp_serde::from_slice(&wire.dat.0)?;
             Ok(Decoded::HotlinkData(HotlinkData {
@@ -454,6 +562,13 @@ fn decode_wire(wire: WireMessage) -> Result<Decoded> {
                 path: hl.path,
                 etag: hl.etag,
                 payload: hl.payload.map(|b| b.0),
+            }))
+        }
+        13 => {
+            let close: MsgpackHotlinkClose = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::HotlinkClose(HotlinkClose {
+                session_id: close.session_id,
+                reason: close.reason,
             }))
         }
         _ => Ok(Decoded::Other {
@@ -518,6 +633,26 @@ fn decode_json_msg(msg: Message) -> Result<Decoded> {
                     .collect(),
             }))
         }
+        9 => {
+            let open: JsonHotlinkOpen = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::HotlinkOpen(HotlinkOpen {
+                session_id: open.session_id,
+                path: open.path,
+            }))
+        }
+        10 => {
+            let accept: JsonHotlinkAccept = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::HotlinkAccept(HotlinkAccept {
+                session_id: accept.session_id,
+            }))
+        }
+        11 => {
+            let reject: JsonHotlinkReject = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::HotlinkReject(HotlinkReject {
+                session_id: reject.session_id,
+                reason: reject.reason,
+            }))
+        }
         12 => {
             let hl: JsonHotlinkData = serde_json::from_value(msg.dat)?;
             Ok(Decoded::HotlinkData(HotlinkData {
@@ -526,6 +661,13 @@ fn decode_json_msg(msg: Message) -> Result<Decoded> {
                 path: hl.path,
                 etag: hl.etag,
                 payload: hl.payload,
+            }))
+        }
+        13 => {
+            let close: JsonHotlinkClose = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::HotlinkClose(HotlinkClose {
+                session_id: close.session_id,
+                reason: close.reason,
             }))
         }
         _ => Ok(Decoded::Other {
