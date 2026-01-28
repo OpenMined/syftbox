@@ -13,6 +13,10 @@
 - **End‑to‑end latency baseline** (priority RPC files via devstack):
   - Go integration test: `cmd/devstack/hotlink_latency_test.go`
   - Run via `./benchmark.sh --bench=e2e-latency --lang=go|rust`
+- **Hotlink protocol E2E test** (IPC → WS → IPC round-trip):
+  - Integration test: `cmd/devstack/hotlink_protocol_test.go`
+  - Run via `./benchmark.sh --bench=hotlink-protocol --lang=go|rust`
+  - Tests 1KB, 10KB, 100KB payloads with latency metrics
 
 ## Phased Delivery
 
@@ -73,19 +77,76 @@
 - Decide whether to implement OTEL tracing now or after Phase 1.
 
 ## Next Steps
-1. Confirm OTEL tracing scope and env gating.
-2. Implement Hotlink message types and client/server routing (Phase 1).
-3. Add IPC + fallback replay implementation in Go and Rust clients:
-   - Go: UNIX socket (linux/macOS) + named pipe (windows).
-   - Rust: UNIX socket (linux/macOS) + named pipe (windows).
-4. Add E2E hotlink latency test case (new benchmark mode).
+1. ✅ ~~Implement Hotlink message types and client/server routing (Phase 1).~~
+2. ✅ ~~Add IPC implementation in Go and Rust clients (UNIX socket).~~
+3. ✅ ~~Add E2E hotlink latency test case (hotlink-protocol benchmark).~~
+4. Optimize Rust client latency to match Go performance.
+5. Add Windows named pipe support (`stream.pipe`).
+6. Add TCP IPC mode for container compatibility.
+7. Implement file fallback replay (write `.request` files on hotlink failure).
+8. Optional: Add OTEL tracing spans for detailed latency analysis.
 
-## Current Status (Go)
+## Current Status
+
+### Go Client
 - Socket‑only hotlink IPC is wired and benchmarked.
 - TCP IPC mode is implemented behind:
   - `SYFTBOX_HOTLINK_IPC=tcp`
   - `SYFTBOX_HOTLINK_TCP_ADDR=host:port` (default `127.0.0.1:0`)
 - Benchmark selects socket‑only by default (`SYFTBOX_HOTLINK_SOCKET_ONLY=1` set in test).
+
+### Rust Client
+- Socket-only hotlink IPC is now fully implemented and passing E2E tests.
+- Implementation in `rust/src/hotlink_manager.rs` and `rust/src/hotlink.rs`.
+
+### Benchmark Results (hotlink-protocol test)
+| Metric | Go | Rust |
+|--------|-----|------|
+| P50 | ~330µs | ~970µs |
+| P90 | ~870µs | ~4.8ms |
+| P95 | ~880µs | ~5.5ms |
+| P99 | ~1.1ms | ~5.8ms |
+
+Go currently has ~3-5x lower latency per-message. Rust overhead is due to async runtime and lock patterns.
+
+### Running Benchmarks
+```bash
+# Go client
+./benchmark.sh --bench=hotlink-protocol --lang=go
+
+# Rust client
+./benchmark.sh --bench=hotlink-protocol --lang=rust
+```
+
+## Rust Implementation Notes
+
+### Key Fixes (2025-01-28)
+Three bugs were fixed to get the Rust hotlink implementation working:
+
+1. **Listener recreation race condition** (`run_local_reader`)
+   - **Problem:** The original code recreated the Unix socket listener on every loop iteration after accept timeout, which could remove the socket file while a client was connecting.
+   - **Fix:** Create the listener once at startup and reuse it for all connections.
+
+2. **Eager IPC listener creation** (`handle_open`)
+   - **Problem:** The receiver IPC listener was only created lazily during `handle_data`, which was too late for clients that connect immediately after the hotlink session opens.
+   - **Fix:** Added `ensure_ipc_listener()` method called during `handle_open` to create the listener early (matches Go's `EnsureListener()` pattern).
+
+3. **RwLock deadlock** (`send_hotlink`)
+   - **Problem:** The pattern `if let Some(id) = self.map.read().await.get(&key) { ... } else { self.map.write().await... }` holds the read guard across both branches in Rust, causing deadlock when acquiring the write lock.
+   - **Fix:** Explicitly scope the read guard to drop it before the else branch:
+   ```rust
+   let existing = {
+       let guard = self.map.read().await;
+       guard.get(&key).cloned()
+   };
+   if let Some(id) = existing { ... } else { ... }
+   ```
+
+### Performance Optimization Opportunities
+- Replace spawned tasks with channel-based message passing
+- Reduce lock contention in `outbound` and `outbound_by_path` maps
+- Consider using `parking_lot` mutexes for sync sections
+- Profile async runtime overhead
 
 ## Implementation Notes / Open Design Thinking
 - Windows + Linux container IPC:
