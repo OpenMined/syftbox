@@ -15,9 +15,7 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
         mode: [ go, rust ]
-        group: [ acl ]
-        # TEMP: only running acl to debug grace window fix, restore when passing:
-        # group: [ core, acl, state1, state2, transfer1, transfer2, chaos ]
+        group: [ core, acl, state1, state2, transfer1, transfer2, chaos ]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
@@ -51,48 +49,47 @@ jobs:
       run: just sbdev-test-group ${{ matrix.group }} mode=${{ matrix.mode }}
       shell: bash
 
-  # TEMP: stress tests commented out to save CI credits while debugging acl grace window
-  # stress-tests:
-  #   name: ${{ matrix.mode }} stress (${{ matrix.os }})
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       os: [ ubuntu-latest, macos-latest, windows-latest ]
-  #       mode: [ go, rust ]
-  #   runs-on: ${{ matrix.os }}
-  #   timeout-minutes: 30
-  #
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #
-  #   - name: Set up Go
-  #     uses: actions/setup-go@v5
-  #     with:
-  #       go-version: '1.24.3'
-  #       cache: ${{ matrix.os != 'windows' }}
-  #
-  #   - name: Download Go dependencies
-  #     if: matrix.os == 'windows'
-  #     run: go mod download
-  #
-  #   - name: Set up Rust
-  #     if: matrix.mode == 'rust'
-  #     uses: dtolnay/rust-toolchain@stable
-  #
-  #   - name: Rust cache
-  #     if: matrix.mode == 'rust'
-  #     uses: Swatinem/rust-cache@v2
-  #     with:
-  #       workspaces: rust
-  #
-  #   - name: Install just
-  #     uses: extractions/setup-just@v2
-  #
-  #   - name: Run stress tests (${{ matrix.mode }} client) with retry
-  #     uses: nick-fields/retry@v3
-  #     with:
-  #       timeout_minutes: 15
-  #       max_attempts: 3
-  #       retry_wait_seconds: 10
-  #       command: just sbdev-test-group stress mode=${{ matrix.mode }}
-  #       shell: bash
+  stress-tests:
+    name: ${{ matrix.mode }} stress (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        mode: [ go, rust ]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.3'
+        cache: ${{ matrix.os != 'windows' }}
+
+    - name: Download Go dependencies
+      if: matrix.os == 'windows'
+      run: go mod download
+
+    - name: Set up Rust
+      if: matrix.mode == 'rust'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Rust cache
+      if: matrix.mode == 'rust'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: rust
+
+    - name: Install just
+      uses: extractions/setup-just@v2
+
+    - name: Run stress tests (${{ matrix.mode }} client) with retry
+      uses: nick-fields/retry@v3
+      with:
+        timeout_minutes: 15
+        max_attempts: 3
+        retry_wait_seconds: 10
+        command: just sbdev-test-group stress mode=${{ matrix.mode }}
+        shell: bash
