@@ -125,6 +125,12 @@ type HotlinkManager struct {
 	tcpMu      sync.Mutex
 	tcpProxies map[string]struct{}
 	tcpWriters map[string]net.Conn
+	tcpReorder map[string]*tcpReorderBuf
+}
+
+type tcpReorderBuf struct {
+	nextSeq uint64
+	pending map[uint64][]byte
 }
 
 func NewHotlinkManager(ws *workspace.Workspace, sdk *syftsdk.SyftSDK) *HotlinkManager {
@@ -144,6 +150,7 @@ func NewHotlinkManager(ws *workspace.Workspace, sdk *syftsdk.SyftSDK) *HotlinkMa
 		localReaders:   make(map[string]*hotlinkLocalReader),
 		tcpProxies:     make(map[string]struct{}),
 		tcpWriters:     make(map[string]net.Conn),
+		tcpReorder:     make(map[string]*tcpReorderBuf),
 	}
 	if manager.enabled {
 		slog.Info("hotlink config",
@@ -431,12 +438,34 @@ func (h *HotlinkManager) handleHotlinkPayload(session *hotlinkSession, framePath
 		return
 	}
 	if isTCPProxyPath(framePath) {
-		if writer := h.getTCPWriterWithRetry(framePath); writer != nil {
-			if _, err := writer.Write(payload); err != nil {
-				slog.Warn("hotlink tcp write failed", "path", framePath, "error", err)
-			}
-		} else {
+		tcpWriter := h.getTCPWriterWithRetry(framePath)
+		if tcpWriter == nil {
 			slog.Error("hotlink tcp write skipped: no writer after retries", "path", framePath)
+			return
+		}
+		h.tcpMu.Lock()
+		buf := h.tcpReorder[framePath]
+		if buf == nil {
+			buf = &tcpReorderBuf{nextSeq: 1, pending: make(map[uint64][]byte)}
+			h.tcpReorder[framePath] = buf
+		}
+		buf.pending[seq] = payload
+		var toWrite [][]byte
+		for {
+			data, ok := buf.pending[buf.nextSeq]
+			if !ok {
+				break
+			}
+			delete(buf.pending, buf.nextSeq)
+			buf.nextSeq++
+			toWrite = append(toWrite, data)
+		}
+		h.tcpMu.Unlock()
+		for _, data := range toWrite {
+			if _, err := tcpWriter.Write(data); err != nil {
+				slog.Warn("hotlink tcp write failed", "path", framePath, "error", err)
+				break
+			}
 		}
 		return
 	}
@@ -1101,7 +1130,9 @@ func (h *HotlinkManager) runTCPProxy(relMarker string, info *tcpMarkerInfo, chan
 				if n == 0 || readErr != nil {
 					break
 				}
-				if err := h.sendHotlink(channelKey, "", buf[:n]); err != nil {
+				payload := make([]byte, n)
+				copy(payload, buf[:n])
+				if err := h.sendHotlink(channelKey, "", payload); err != nil {
 					break
 				}
 			}

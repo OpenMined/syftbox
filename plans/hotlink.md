@@ -262,6 +262,18 @@ if let Some(x) = existing { ... } else { map.write().await... }
 **Cause:** `OutputCapture` in bridge.cc calls `fork()`, which is unsafe in multi-threaded Rust tokio runtime.
 **Fix:** Disabled `OutputCapture` in bridge.cc.
 
+### 9. Sync Conflict for Progress Files
+**Symptom:** `state.json` renamed to `state.conflict.json`, breaking flow coordination between parties.
+**Cause:** Multiple parties write to `_progress/state.json` concurrently. The sync engine detects a conflict and renames the file.
+**Fix:** Added "local wins" semantics for `_progress/` directories in `rust/src/sync.rs`. When a conflict is detected on a progress path, the local version is uploaded instead of creating a conflict file.
+**Rule:** Flow progress files should always use local-wins conflict resolution since each party owns its own progress.
+
+### 10. Workspace Lock Stale Processes
+**Symptom:** `workspace locked by another process` errors on test startup.
+**Cause:** Previous test run left stale `syftbox`, `bv syftboxd`, or `devstack` processes holding workspace locks.
+**Fix:** Kill all related processes and remove `sandbox/` directory and `*.lock` files before re-running.
+**Rule:** Always clean up processes before running scenarios: `pkill -f syftbox; pkill -f devstack; pkill -f sequre`
+
 ---
 
 ## Files Changed (Branch: `madhava/hotlink`)
