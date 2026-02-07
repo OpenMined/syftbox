@@ -247,6 +247,15 @@ func marshalMsgpack(msg *syftmsg.Message) ([]byte, error) {
 		default:
 			return nil, fmt.Errorf("invalid hotlink close payload type: %T", msg.Data)
 		}
+	case syftmsg.MsgHotlinkSignal:
+		switch v := msg.Data.(type) {
+		case syftmsg.HotlinkSignal:
+			dat, err = msgpack.Marshal(&v)
+		case *syftmsg.HotlinkSignal:
+			dat, err = msgpack.Marshal(v)
+		default:
+			return nil, fmt.Errorf("invalid hotlink signal payload type: %T", msg.Data)
+		}
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", msg.Type)
 	}
@@ -352,6 +361,12 @@ func unmarshalMsgpack(payload []byte) (*syftmsg.Message, error) {
 			return nil, err
 		}
 		msg.Data = close
+	case syftmsg.MsgHotlinkSignal:
+		var signal syftmsg.HotlinkSignal
+		if err := msgpack.Unmarshal(w.Data, &signal); err != nil {
+			return nil, err
+		}
+		msg.Data = signal
 	default:
 		return nil, fmt.Errorf("unknown message type: %d", w.Type)
 	}

@@ -27,6 +27,14 @@ type HotlinkClose struct {
 	Reason    string `json:"rsn,omitempty" msgpack:"rsn,omitempty"`
 }
 
+type HotlinkSignal struct {
+	SessionID string   `json:"sid" msgpack:"sid"`
+	Kind      string   `json:"knd" msgpack:"knd"`
+	Addrs     []string `json:"adr,omitempty" msgpack:"adr,omitempty"`
+	Token     string   `json:"tok,omitempty" msgpack:"tok,omitempty"`
+	Error     string   `json:"err,omitempty" msgpack:"err,omitempty"`
+}
+
 func NewHotlinkOpen(sessionID, path string) *Message {
 	return &Message{
 		Id:   generateID(),
@@ -80,6 +88,20 @@ func NewHotlinkClose(sessionID, reason string) *Message {
 		Data: &HotlinkClose{
 			SessionID: sessionID,
 			Reason:    reason,
+		},
+	}
+}
+
+func NewHotlinkSignal(sessionID, kind string, addrs []string, token string, err string) *Message {
+	return &Message{
+		Id:   generateID(),
+		Type: MsgHotlinkSignal,
+		Data: &HotlinkSignal{
+			SessionID: sessionID,
+			Kind:      kind,
+			Addrs:     addrs,
+			Token:     token,
+			Error:     err,
 		},
 	}
 }

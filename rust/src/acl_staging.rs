@@ -14,7 +14,7 @@ use crate::wsproto::ACLManifest;
 ///
 /// The proper fix is server-side (send empty manifests to users who lose access),
 /// but this longer grace period provides client-side resilience.
-const ACL_GRACE_PERIOD: Duration = Duration::from_secs(30);
+const ACL_GRACE_PERIOD: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone)]
 pub struct StagedACL {

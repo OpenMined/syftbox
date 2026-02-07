@@ -222,6 +222,8 @@ func (s *Server) onMessage(msg *ws.ClientMessage) {
 		s.handleHotlinkData(msg)
 	case syftmsg.MsgHotlinkClose:
 		s.handleHotlinkClose(msg)
+	case syftmsg.MsgHotlinkSignal:
+		s.handleHotlinkSignal(msg)
 	default:
 		slog.Info("unhandled message", "msgType", msg.Message.Type)
 	}
@@ -537,5 +539,36 @@ func (s *Server) handleHotlinkClose(msg *ws.ClientMessage) {
 	}
 
 	s.hotlinkStore.RemoveAccepted(closeMsg.SessionID, msg.ConnID)
+	s.hub.SendMessage(session.FromConn, msg.Message)
+}
+
+func (s *Server) handleHotlinkSignal(msg *ws.ClientMessage) {
+	signal, ok := msg.Message.Data.(syftmsg.HotlinkSignal)
+	if !ok {
+		slog.Error("hotlink signal invalid payload", "msgId", msg.Message.Id)
+		return
+	}
+
+	session, ok := s.hotlinkStore.Get(signal.SessionID)
+	if !ok {
+		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkSignal(signal.SessionID, "quic_error", nil, "", "unknown session"))
+		return
+	}
+
+	isSender := msg.ClientInfo.User == session.FromUser
+	if !isSender {
+		if _, ok := session.Accepted[msg.ConnID]; !ok {
+			slog.Warn("hotlink signal rejected (not participant)", "session", signal.SessionID, "from", msg.ClientInfo.User)
+			return
+		}
+	}
+
+	if isSender {
+		for connID := range session.Accepted {
+			s.hub.SendMessage(connID, msg.Message)
+		}
+		return
+	}
+
 	s.hub.SendMessage(session.FromConn, msg.Message)
 }

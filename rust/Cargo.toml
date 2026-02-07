@@ -34,3 +34,6 @@ tower = { version = "0.5", features = ["util", "make"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 ignore = "0.4"
 rmp-serde = "1"
+quinn = "0.11"
+rcgen = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }

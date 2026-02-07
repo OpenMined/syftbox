@@ -19,6 +19,7 @@ const (
 	MsgHotlinkReject
 	MsgHotlinkData
 	MsgHotlinkClose
+	MsgHotlinkSignal
 )
 
 func (t MessageType) String() string {
@@ -51,6 +52,8 @@ func (t MessageType) String() string {
 		return "HOTLINK_DATA"
 	case MsgHotlinkClose:
 		return "HOTLINK_CLOSE"
+	case MsgHotlinkSignal:
+		return "HOTLINK_SIGNAL"
 	default:
 		return fmt.Sprintf("???(%d)", t)
 	}

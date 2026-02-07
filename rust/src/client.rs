@@ -682,6 +682,7 @@ async fn run_ws_listener(
             HotlinkManager::new(datasites_root.clone(), ws_handle.clone(), shutdown.clone());
         if hotlink_mgr.enabled() {
             hotlink_mgr.start_local_discovery(email.clone());
+            hotlink_mgr.start_tcp_proxy_discovery(email.clone());
         }
 
         let watch_root = datasites_root.clone();
@@ -854,6 +855,9 @@ async fn handle_ws_message(
         }
         Decoded::HotlinkClose(close) => {
             hotlink_mgr.handle_close(close.session_id).await;
+        }
+        Decoded::HotlinkSignal(signal) => {
+            hotlink_mgr.handle_signal(signal).await;
         }
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
         Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),

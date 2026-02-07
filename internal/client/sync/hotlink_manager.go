@@ -5,17 +5,27 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	quic "github.com/quic-go/quic-go"
 
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftmsg"
@@ -24,15 +34,26 @@ import (
 )
 
 const (
-	hotlinkEnabledEnv     = "SYFTBOX_HOTLINK"
-	hotlinkSocketOnlyEnv  = "SYFTBOX_HOTLINK_SOCKET_ONLY"
-	hotlinkAcceptName     = "stream.accept"
-	hotlinkAcceptDelay    = 200 * time.Millisecond
-	hotlinkAcceptTimeout  = 1500 * time.Millisecond
-	hotlinkFrameMagic     = "HLNK"
-	hotlinkFrameVersion   = 1
-	hotlinkDedupeMax      = 1024
-	hotlinkConnectTimeout = 5 * time.Second
+	hotlinkEnabledEnv        = "SYFTBOX_HOTLINK"
+	hotlinkSocketOnlyEnv     = "SYFTBOX_HOTLINK_SOCKET_ONLY"
+	hotlinkTCPProxyEnv       = "SYFTBOX_HOTLINK_TCP_PROXY"
+	hotlinkTCPProxyAddr      = "SYFTBOX_HOTLINK_TCP_PROXY_ADDR"
+	hotlinkStunServerEnv     = "SYFTBOX_HOTLINK_STUN_SERVER"
+	hotlinkQuicEnv           = "SYFTBOX_HOTLINK_QUIC"
+	hotlinkQuicOnlyEnv       = "SYFTBOX_HOTLINK_QUIC_ONLY"
+	hotlinkAcceptName        = "stream.accept"
+	hotlinkAcceptDelay       = 200 * time.Millisecond
+	hotlinkAcceptTimeout     = 1500 * time.Millisecond
+	hotlinkQuicDialTimeout   = 1500 * time.Millisecond
+	hotlinkQuicAcceptTimeout = 2500 * time.Millisecond
+	hotlinkFrameMagic        = "HLNK"
+	hotlinkFrameVersion      = 1
+	hotlinkDedupeMax         = 1024
+	hotlinkConnectTimeout    = 5 * time.Second
+	hotlinkStunTimeout       = 500 * time.Millisecond
+	hotlinkTCPMarkerName     = "stream.tcp"
+	hotlinkTCPSuffix         = "stream.tcp.request"
+	hotlinkQuicALPN          = "syftbox-hotlink"
 )
 
 type hotlinkSession struct {
@@ -42,23 +63,49 @@ type hotlinkSession struct {
 	ipcPath    string
 	acceptPath string
 	done       chan struct{}
+	quic       *hotlinkQuicSession
 }
 
 type hotlinkOutbound struct {
-	id       string
-	pathKey  string
-	accept   chan struct{}
-	reject   chan string
-	seq      uint64
-	accepted bool
-	mu       sync.Mutex
+	id               string
+	pathKey          string
+	accept           chan struct{}
+	reject           chan string
+	seq              uint64
+	accepted         bool
+	wsFallbackLogged bool
+	mu               sync.Mutex
+	quic             *hotlinkQuicOutbound
+}
+
+type hotlinkQuicSession struct {
+	listener  *quic.Listener
+	conn      *quic.Conn
+	stream    *quic.Stream
+	addr      string
+	ready     chan struct{}
+	readyOnce sync.Once
+	err       error
+	mu        sync.Mutex
+}
+
+type hotlinkQuicOutbound struct {
+	conn      *quic.Conn
+	stream    *quic.Stream
+	ready     chan struct{}
+	readyOnce sync.Once
+	err       error
+	mu        sync.Mutex
 }
 
 type HotlinkManager struct {
-	workspace  *workspace.Workspace
-	sdk        *syftsdk.SyftSDK
-	enabled    bool
-	socketOnly bool
+	workspace   *workspace.Workspace
+	sdk         *syftsdk.SyftSDK
+	enabled     bool
+	socketOnly  bool
+	tcpProxy    bool
+	quicEnabled bool
+	quicOnly    bool
 
 	mu       sync.RWMutex
 	sessions map[string]*hotlinkSession
@@ -74,21 +121,39 @@ type HotlinkManager struct {
 
 	localMu      sync.Mutex
 	localReaders map[string]*hotlinkLocalReader
+
+	tcpMu      sync.Mutex
+	tcpProxies map[string]struct{}
+	tcpWriters map[string]net.Conn
 }
 
 func NewHotlinkManager(ws *workspace.Workspace, sdk *syftsdk.SyftSDK) *HotlinkManager {
-	return &HotlinkManager{
+	manager := &HotlinkManager{
 		workspace:      ws,
 		sdk:            sdk,
 		enabled:        os.Getenv(hotlinkEnabledEnv) == "1",
 		socketOnly:     os.Getenv(hotlinkSocketOnlyEnv) == "1",
+		tcpProxy:       os.Getenv(hotlinkTCPProxyEnv) == "1",
+		quicEnabled:    strings.TrimSpace(os.Getenv(hotlinkQuicEnv)) != "0",
+		quicOnly:       os.Getenv(hotlinkQuicOnlyEnv) == "1",
 		sessions:       make(map[string]*hotlinkSession),
 		outbound:       make(map[string]*hotlinkOutbound),
 		outboundByPath: make(map[string]*hotlinkOutbound),
 		dedupe:         newHotlinkDedupe(hotlinkDedupeMax),
 		ipcWriters:     make(map[string]*hotlinkIPC),
 		localReaders:   make(map[string]*hotlinkLocalReader),
+		tcpProxies:     make(map[string]struct{}),
+		tcpWriters:     make(map[string]net.Conn),
 	}
+	if manager.enabled {
+		slog.Info("hotlink config",
+			"socket_only", manager.socketOnly,
+			"tcp_proxy", manager.tcpProxy,
+			"quic_enabled", manager.quicEnabled,
+			"quic_only", manager.quicOnly,
+		)
+	}
+	return manager
 }
 
 func (h *HotlinkManager) Enabled() bool {
@@ -99,11 +164,22 @@ func (h *HotlinkManager) SocketOnly() bool {
 	return h.socketOnly
 }
 
+func (h *HotlinkManager) TCPProxyEnabled() bool {
+	return h.tcpProxy
+}
+
 func (h *HotlinkManager) StartLocalReaders(ctx context.Context) {
 	if !h.enabled || !h.socketOnly {
 		return
 	}
 	go h.scanLocalReaders(ctx)
+}
+
+func (h *HotlinkManager) StartTCPProxyDiscovery(ctx context.Context) {
+	if !h.enabled || !h.tcpProxy {
+		return
+	}
+	go h.scanTCPProxies(ctx)
 }
 
 func (h *HotlinkManager) scanLocalReaders(ctx context.Context) {
@@ -121,26 +197,83 @@ func (h *HotlinkManager) scanLocalReaders(ctx context.Context) {
 }
 
 func (h *HotlinkManager) discoverLocalReaders() {
-	root := filepath.Join(h.workspace.UserDir, "app_data")
-	pattern := filepath.Join(root, "*", "rpc", "*", hotlinkIPCMarkerName())
-	paths, err := filepath.Glob(pattern)
-	if err != nil || len(paths) == 0 {
-		return
+	patterns := []string{
+		filepath.Join(h.workspace.UserDir, "app_data", "*", "rpc", "*", hotlinkIPCMarkerName()),
+		filepath.Join(h.workspace.UserDir, "shared", "flows", "*", "*", "_mpc", "*", hotlinkIPCMarkerName()),
 	}
-	for _, markerPath := range paths {
-		h.localMu.Lock()
-		if _, exists := h.localReaders[markerPath]; exists {
-			h.localMu.Unlock()
+	for _, pattern := range patterns {
+		paths, err := filepath.Glob(pattern)
+		if err != nil || len(paths) == 0 {
 			continue
 		}
-		reader := &hotlinkLocalReader{
-			markerPath: markerPath,
-			manager:    h,
+		for _, markerPath := range paths {
+			h.localMu.Lock()
+			if _, exists := h.localReaders[markerPath]; exists {
+				h.localMu.Unlock()
+				continue
+			}
+			reader := &hotlinkLocalReader{
+				markerPath: markerPath,
+				manager:    h,
+			}
+			h.localReaders[markerPath] = reader
+			h.localMu.Unlock()
+			go reader.run()
 		}
-		h.localReaders[markerPath] = reader
-		h.localMu.Unlock()
-		go reader.run()
 	}
+}
+
+func (h *HotlinkManager) scanTCPProxies(ctx context.Context) {
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			h.discoverTCPProxies()
+		}
+	}
+}
+
+func (h *HotlinkManager) discoverTCPProxies() {
+	_ = filepath.WalkDir(h.workspace.DatasitesDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if d.Name() != hotlinkTCPMarkerName {
+			return nil
+		}
+		rel, relErr := h.workspace.DatasiteRelPath(path)
+		if relErr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !strings.Contains(rel, "/_mpc/") {
+			return nil
+		}
+		info, infoErr := readTCPMarkerInfo(path, rel, h.workspace.Owner)
+		if infoErr != nil {
+			return nil
+		}
+		channelKey := canonicalTCPKey(rel, info)
+		if channelKey == "" {
+			return nil
+		}
+		h.tcpMu.Lock()
+		if _, exists := h.tcpProxies[channelKey]; exists {
+			h.tcpMu.Unlock()
+			return nil
+		}
+		h.tcpProxies[channelKey] = struct{}{}
+		h.tcpMu.Unlock()
+		go h.runTCPProxy(rel, info, channelKey)
+		return nil
+	})
 }
 
 func (h *HotlinkManager) HandleOpen(msg *syftmsg.Message) {
@@ -189,10 +322,19 @@ func (h *HotlinkManager) HandleOpen(msg *syftmsg.Message) {
 	h.sessions[session.id] = session
 	h.mu.Unlock()
 
+	if isTCPProxyPath(open.Path) {
+		if err := h.sdk.Events.Send(syftmsg.NewHotlinkAccept(session.id)); err != nil {
+			slog.Warn("hotlink accept send failed", "session", session.id, "error", err)
+		}
+		h.maybeStartQuicOffer(session)
+		return
+	}
+
 	if utils.FileExists(session.acceptPath) {
 		if err := h.sdk.Events.Send(syftmsg.NewHotlinkAccept(session.id)); err != nil {
 			slog.Warn("hotlink accept send failed", "session", session.id, "error", err)
 		}
+		h.maybeStartQuicOffer(session)
 		return
 	}
 	go h.waitForAccept(session)
@@ -244,6 +386,10 @@ func (h *HotlinkManager) HandleData(msg *syftmsg.Message) {
 	if !h.enabled {
 		return
 	}
+	if h.quicOnly {
+		slog.Info("hotlink ws data ignored (quic-only)")
+		return
+	}
 	data, ok := hotlinkDataFromMsg(msg)
 	if !ok {
 		slog.Error("hotlink data invalid payload", "msgId", msg.Id)
@@ -257,10 +403,6 @@ func (h *HotlinkManager) HandleData(msg *syftmsg.Message) {
 		return
 	}
 
-	writer := h.getIPCWriter(session.ipcPath)
-	if writer == nil {
-		return
-	}
 	if len(data.Payload) == 0 {
 		return
 	}
@@ -269,22 +411,43 @@ func (h *HotlinkManager) HandleData(msg *syftmsg.Message) {
 	if etag == "" {
 		etag = fmt.Sprintf("%x", md5.Sum(data.Payload))
 	}
-	if h.dedupe.Seen(session.path, etag) {
-		return
-	}
 
 	framePath := session.path
 	if strings.TrimSpace(data.Path) != "" {
 		framePath = data.Path
 	}
-	frame := encodeHotlinkFrame(framePath, etag, data.Seq, data.Payload)
+	h.handleHotlinkPayload(session, framePath, etag, data.Seq, data.Payload)
+}
+
+func (h *HotlinkManager) handleHotlinkPayload(session *hotlinkSession, framePath string, etag string, seq uint64, payload []byte) {
+	if session == nil || len(payload) == 0 {
+		return
+	}
+	writer := h.getIPCWriter(session.ipcPath)
+	if writer == nil {
+		return
+	}
+	if h.dedupe.Seen(session.path, etag) {
+		return
+	}
+	if isTCPProxyPath(framePath) {
+		if writer := h.getTCPWriterWithRetry(framePath); writer != nil {
+			if _, err := writer.Write(payload); err != nil {
+				slog.Warn("hotlink tcp write failed", "path", framePath, "error", err)
+			}
+		} else {
+			slog.Error("hotlink tcp write skipped: no writer after retries", "path", framePath)
+		}
+		return
+	}
+	frame := encodeHotlinkFrame(framePath, etag, seq, payload)
 	if err := writer.Write(frame); err != nil {
 		slog.Warn("hotlink ipc write failed", "session", session.id, "error", err)
 	} else {
 		slog.Debug("hotlink ipc wrote", "session", session.id, "bytes", len(frame))
 		if latencyTraceEnabled() {
-			if ts, ok := payloadTimestampNs(data.Payload); ok {
-				slog.Info("latency_trace hotlink_ipc_written", "path", framePath, "age_ms", (time.Now().UnixNano()-ts)/1_000_000, "size", len(data.Payload))
+			if ts, ok := payloadTimestampNs(payload); ok {
+				slog.Info("latency_trace hotlink_ipc_written", "path", framePath, "age_ms", (time.Now().UnixNano()-ts)/1_000_000, "size", len(payload))
 			}
 		}
 	}
@@ -314,6 +477,34 @@ func (h *HotlinkManager) HandleClose(msg *syftmsg.Message) {
 	}
 }
 
+func (h *HotlinkManager) HandleSignal(msg *syftmsg.Message) {
+	if !h.enabled || !h.quicEnabled {
+		return
+	}
+	signal, ok := hotlinkSignalFromMsg(msg)
+	if !ok {
+		slog.Error("hotlink signal invalid payload", "msgId", msg.Id)
+		return
+	}
+
+	switch signal.Kind {
+	case "quic_offer":
+		h.outMu.RLock()
+		out := h.outbound[signal.SessionID]
+		h.outMu.RUnlock()
+		if out == nil {
+			return
+		}
+		go h.handleQuicOffer(out, signal)
+	case "quic_answer":
+		h.handleQuicAnswer(signal)
+	case "quic_error":
+		slog.Warn("hotlink quic error", "session", signal.SessionID, "error", signal.Error)
+	default:
+		slog.Debug("hotlink signal ignored", "session", signal.SessionID, "kind", signal.Kind)
+	}
+}
+
 func (h *HotlinkManager) waitForAccept(session *hotlinkSession) {
 	ticker := time.NewTicker(hotlinkAcceptDelay)
 	defer ticker.Stop()
@@ -329,6 +520,7 @@ func (h *HotlinkManager) waitForAccept(session *hotlinkSession) {
 			if err := h.sdk.Events.Send(syftmsg.NewHotlinkAccept(session.id)); err != nil {
 				slog.Warn("hotlink accept send failed", "session", session.id, "error", err)
 			}
+			h.maybeStartQuicOffer(session)
 			return
 		}
 	}
@@ -387,6 +579,238 @@ func (h *HotlinkManager) replayFallback(session *hotlinkSession) {
 		if err := writer.Write(frame); err != nil {
 			return
 		}
+	}
+}
+
+func (h *HotlinkManager) maybeStartQuicOffer(session *hotlinkSession) {
+	if session == nil || !h.quicEnabled {
+		return
+	}
+	if session.quic != nil {
+		return
+	}
+
+	tlsConf, err := newQuicServerTLSConfig()
+	if err != nil {
+		slog.Warn("hotlink quic tls setup failed", "session", session.id, "error", err)
+		return
+	}
+
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		slog.Warn("hotlink quic udp bind failed", "session", session.id, "error", err)
+		return
+	}
+
+	transport := &quic.Transport{Conn: udpConn}
+	listener, err := transport.Listen(tlsConf, nil)
+	if err != nil {
+		slog.Warn("hotlink quic listen failed", "session", session.id, "error", err)
+		_ = udpConn.Close()
+		return
+	}
+
+	addr := udpConn.LocalAddr().String()
+	stunAddr, stunErr := discoverStunAddr(udpConn)
+	if stunErr != nil {
+		slog.Debug("hotlink quic stun discovery failed", "session", session.id, "error", stunErr)
+	}
+
+	q := &hotlinkQuicSession{
+		listener: listener,
+		addr:     addr,
+		ready:    make(chan struct{}),
+	}
+	session.quic = q
+
+	offerAddrs := quicOfferAddrs(addr, stunAddr)
+	if err := h.sdk.Events.Send(syftmsg.NewHotlinkSignal(session.id, "quic_offer", offerAddrs, "", "")); err != nil {
+		slog.Warn("hotlink quic offer send failed", "session", session.id, "error", err)
+	}
+
+	go h.acceptQuic(session)
+}
+
+func (h *HotlinkManager) acceptQuic(session *hotlinkSession) {
+	if session == nil || session.quic == nil {
+		return
+	}
+	q := session.quic
+	ctx, cancel := context.WithTimeout(context.Background(), hotlinkQuicAcceptTimeout)
+	defer cancel()
+
+	conn, err := q.listener.Accept(ctx)
+	if err != nil {
+		q.mu.Lock()
+		q.err = err
+		q.mu.Unlock()
+		q.readyOnce.Do(func() { close(q.ready) })
+		slog.Info("hotlink quic accept timeout, ws fallback", "session", session.id, "error", err)
+		return
+	}
+
+	stream, err := conn.AcceptStream(ctx)
+	if err != nil {
+		q.mu.Lock()
+		q.err = err
+		q.mu.Unlock()
+		q.readyOnce.Do(func() { close(q.ready) })
+		slog.Info("hotlink quic accept stream failed, ws fallback", "session", session.id, "error", err)
+		return
+	}
+
+	reader := bufio.NewReader(stream)
+	if err := readQuicHandshake(reader, session.id); err != nil {
+		q.mu.Lock()
+		q.err = err
+		q.mu.Unlock()
+		q.readyOnce.Do(func() { close(q.ready) })
+		_ = stream.Close()
+		slog.Warn("hotlink quic handshake failed", "session", session.id, "error", err)
+		return
+	}
+
+	q.mu.Lock()
+	q.conn = conn
+	q.stream = stream
+	q.mu.Unlock()
+	q.readyOnce.Do(func() { close(q.ready) })
+	slog.Info("hotlink quic connected", "session", session.id, "addr", conn.RemoteAddr().String())
+
+	h.runQuicReader(session, reader)
+}
+
+func (h *HotlinkManager) handleQuicOffer(out *hotlinkOutbound, signal syftmsg.HotlinkSignal) {
+	if out == nil || out.quic == nil {
+		return
+	}
+	if len(signal.Addrs) == 0 {
+		out.quic.mu.Lock()
+		out.quic.err = fmt.Errorf("quic offer missing addresses")
+		out.quic.mu.Unlock()
+		out.quic.readyOnce.Do(func() { close(out.quic.ready) })
+		_ = h.sdk.Events.Send(syftmsg.NewHotlinkSignal(out.id, "quic_answer", nil, "", "offer missing addresses"))
+		return
+	}
+
+	tlsConf := newQuicClientTLSConfig()
+	var lastErr error
+	for _, addr := range signal.Addrs {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), hotlinkQuicDialTimeout)
+		conn, err := quic.DialAddr(ctx, addr, tlsConf, nil)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		ctx, cancel = context.WithTimeout(context.Background(), hotlinkQuicDialTimeout)
+		stream, err := conn.OpenStreamSync(ctx)
+		cancel()
+		if err != nil {
+			lastErr = err
+			_ = conn.CloseWithError(0, "stream error")
+			continue
+		}
+		if err := writeQuicHandshake(stream, out.id); err != nil {
+			lastErr = err
+			_ = stream.Close()
+			_ = conn.CloseWithError(0, "handshake error")
+			continue
+		}
+		out.quic.mu.Lock()
+		out.quic.conn = conn
+		out.quic.stream = stream
+		out.quic.err = nil
+		out.quic.mu.Unlock()
+		out.quic.readyOnce.Do(func() { close(out.quic.ready) })
+		_ = h.sdk.Events.Send(syftmsg.NewHotlinkSignal(out.id, "quic_answer", []string{addr}, "ok", ""))
+		slog.Info("hotlink quic dialed", "session", out.id, "addr", addr)
+		return
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("quic dial failed")
+	}
+	out.quic.mu.Lock()
+	out.quic.err = lastErr
+	out.quic.mu.Unlock()
+	out.quic.readyOnce.Do(func() { close(out.quic.ready) })
+	_ = h.sdk.Events.Send(syftmsg.NewHotlinkSignal(out.id, "quic_answer", nil, "", lastErr.Error()))
+	slog.Info("hotlink quic dial failed, ws fallback", "session", out.id, "error", lastErr)
+}
+
+func (h *HotlinkManager) handleQuicAnswer(signal syftmsg.HotlinkSignal) {
+	h.mu.RLock()
+	session := h.sessions[signal.SessionID]
+	h.mu.RUnlock()
+	if session == nil || session.quic == nil {
+		return
+	}
+	if signal.Error != "" {
+		slog.Info("hotlink quic answer error, ws fallback", "session", signal.SessionID, "error", signal.Error)
+		if h.quicOnly {
+			_ = h.sdk.Events.Send(syftmsg.NewHotlinkClose(signal.SessionID, "quic-only"))
+		}
+		return
+	}
+	slog.Info("hotlink quic answer ok", "session", signal.SessionID, "addr", strings.Join(signal.Addrs, ","))
+}
+
+func (h *HotlinkManager) trySendQuic(out *hotlinkOutbound, relPath string, etag string, seq uint64, payload []byte, wait bool) (bool, error) {
+	if out == nil || out.quic == nil {
+		return false, nil
+	}
+	if wait {
+		select {
+		case <-out.quic.ready:
+		case <-time.After(hotlinkQuicAcceptTimeout):
+			return false, fmt.Errorf("quic wait timeout")
+		}
+	} else {
+		select {
+		case <-out.quic.ready:
+		default:
+			return false, nil
+		}
+	}
+
+	out.quic.mu.Lock()
+	stream := out.quic.stream
+	err := out.quic.err
+	out.quic.mu.Unlock()
+	if err != nil {
+		return false, err
+	}
+	if stream == nil {
+		return false, fmt.Errorf("quic stream unavailable")
+	}
+	frame := encodeHotlinkFrame(relPath, etag, seq, payload)
+	if _, err := stream.Write(frame); err != nil {
+		out.quic.mu.Lock()
+		out.quic.err = err
+		out.quic.mu.Unlock()
+		return false, err
+	}
+	return true, nil
+}
+
+func (h *HotlinkManager) runQuicReader(session *hotlinkSession, reader *bufio.Reader) {
+	for {
+		frame, err := decodeHotlinkFrame(reader)
+		if err != nil {
+			if err != io.EOF {
+				slog.Warn("hotlink quic read failed", "session", session.id, "error", err)
+			}
+			return
+		}
+		if frame == nil {
+			continue
+		}
+		h.handleHotlinkPayload(session, frame.path, frame.etag, frame.seq, frame.payload)
 	}
 }
 
@@ -533,6 +957,17 @@ func hotlinkCloseFromMsg(msg *syftmsg.Message) (syftmsg.HotlinkClose, bool) {
 	}
 }
 
+func hotlinkSignalFromMsg(msg *syftmsg.Message) (syftmsg.HotlinkSignal, bool) {
+	switch v := msg.Data.(type) {
+	case syftmsg.HotlinkSignal:
+		return v, true
+	case *syftmsg.HotlinkSignal:
+		return *v, true
+	default:
+		return syftmsg.HotlinkSignal{}, false
+	}
+}
+
 func (h *HotlinkManager) SendBestEffort(relPath string, etag string, payload []byte) {
 	if !h.enabled {
 		return
@@ -546,31 +981,55 @@ func (h *HotlinkManager) SendBestEffort(relPath string, etag string, payload []b
 	if strings.TrimSpace(etag) == "" {
 		etag = fmt.Sprintf("%x", md5.Sum(payload))
 	}
-	go h.sendHotlink(relPath, etag, payload)
+	go func() {
+		if err := h.sendHotlink(relPath, etag, payload); err != nil {
+			slog.Warn("hotlink send failed", "path", relPath, "error", err)
+		}
+	}()
 }
 
-func (h *HotlinkManager) sendHotlink(relPath string, etag string, payload []byte) {
+func (h *HotlinkManager) sendHotlink(relPath string, etag string, payload []byte) error {
 	pathKey := filepath.Dir(relPath)
 	out := h.getOrOpenOutbound(pathKey, relPath)
 	if out == nil {
-		return
+		return fmt.Errorf("hotlink outbound unavailable")
 	}
 
 	if !h.waitAccepted(out, hotlinkAcceptTimeout) {
 		_ = h.sdk.Events.Send(syftmsg.NewHotlinkClose(out.id, "fallback"))
 		h.removeOutbound(out.id)
-		return
+		return fmt.Errorf("hotlink accept timeout")
 	}
 
 	out.mu.Lock()
 	out.seq++
 	seq := out.seq
 	out.mu.Unlock()
+
+	if h.quicEnabled && out.quic != nil {
+		wait := h.quicOnly
+		if ok, err := h.trySendQuic(out, relPath, etag, seq, payload, wait); ok {
+			return nil
+		} else if err != nil && h.quicOnly {
+			return err
+		}
+		if h.quicOnly {
+			return fmt.Errorf("hotlink quic unavailable")
+		}
+		out.mu.Lock()
+		if !out.wsFallbackLogged {
+			out.wsFallbackLogged = true
+			slog.Info("hotlink quic not ready, using ws fallback", "session", out.id, "path", relPath)
+		}
+		out.mu.Unlock()
+	}
+
 	if err := h.sdk.Events.Send(syftmsg.NewHotlinkData(out.id, seq, relPath, etag, payload)); err != nil {
 		_ = h.sdk.Events.Send(syftmsg.NewHotlinkClose(out.id, "fallback"))
 		h.removeOutbound(out.id)
-		return
+		return err
 	}
+	return nil
 }
 
 func (h *HotlinkManager) getOrOpenOutbound(pathKey, relPath string) *hotlinkOutbound {
@@ -583,6 +1042,182 @@ func (h *HotlinkManager) getOrOpenOutbound(pathKey, relPath string) *hotlinkOutb
 	return h.openOutbound(pathKey, relPath)
 }
 
+func (h *HotlinkManager) getTCPWriter(path string) net.Conn {
+	h.tcpMu.Lock()
+	defer h.tcpMu.Unlock()
+	return h.tcpWriters[path]
+}
+
+func (h *HotlinkManager) getTCPWriterWithRetry(path string) net.Conn {
+	if w := h.getTCPWriter(path); w != nil {
+		return w
+	}
+	slog.Debug("hotlink tcp writer not ready, waiting", "path", path)
+	for i := 0; i < 60; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if w := h.getTCPWriter(path); w != nil {
+			slog.Debug("hotlink tcp writer ready after wait", "path", path)
+			return w
+		}
+	}
+	return nil
+}
+
+func (h *HotlinkManager) setTCPWriter(path string, conn net.Conn) {
+	h.tcpMu.Lock()
+	h.tcpWriters[path] = conn
+	h.tcpMu.Unlock()
+}
+
+func (h *HotlinkManager) clearTCPWriter(path string) {
+	h.tcpMu.Lock()
+	delete(h.tcpWriters, path)
+	h.tcpMu.Unlock()
+}
+
+func (h *HotlinkManager) runTCPProxy(relMarker string, info *tcpMarkerInfo, channelKey string) {
+	localKey := localTCPKey(relMarker)
+	bindIP := tcpProxyBindIP()
+	addr := fmt.Sprintf("%s:%d", bindIP, info.Port)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Warn("hotlink tcp proxy bind failed", "addr", addr, "error", err)
+		return
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		h.setTCPWriter(channelKey, conn)
+		if localKey != "" {
+			h.setTCPWriter(localKey, conn)
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			buf := make([]byte, 64*1024)
+			for {
+				n, readErr := c.Read(buf)
+				if n == 0 || readErr != nil {
+					break
+				}
+				if err := h.sendHotlink(channelKey, "", buf[:n]); err != nil {
+					break
+				}
+			}
+			h.clearTCPWriter(channelKey)
+			if localKey != "" {
+				h.clearTCPWriter(localKey)
+			}
+		}(conn)
+	}
+}
+
+type tcpMarkerInfo struct {
+	From    string         `json:"from"`
+	To      string         `json:"to"`
+	Port    int            `json:"port"`
+	Ports   map[string]int `json:"ports"`
+	FromPID int
+	ToPID   int
+}
+
+func readTCPMarkerInfo(markerAbs string, relMarker string, localEmail string) (*tcpMarkerInfo, error) {
+	content, err := os.ReadFile(markerAbs)
+	if err != nil {
+		return nil, err
+	}
+	var info tcpMarkerInfo
+	if err := json.Unmarshal(content, &info); err != nil {
+		return nil, err
+	}
+	fromPID, toPID, ok := parseChannelPIDs(relMarker)
+	if !ok {
+		return nil, fmt.Errorf("invalid channel name: %s", relMarker)
+	}
+	info.FromPID = fromPID
+	info.ToPID = toPID
+	if localEmail != "" && info.Ports != nil {
+		if port, ok := info.Ports[localEmail]; ok {
+			info.Port = port
+		}
+	}
+	if info.Port == 0 {
+		return nil, fmt.Errorf("missing port")
+	}
+	if strings.TrimSpace(info.From) == "" || strings.TrimSpace(info.To) == "" {
+		return nil, fmt.Errorf("missing from/to")
+	}
+	return &info, nil
+}
+
+func parseChannelPIDs(relMarker string) (int, int, bool) {
+	parts := strings.Split(filepath.ToSlash(relMarker), "/")
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	channel := parts[len(parts)-2]
+	split := strings.Split(channel, "_to_")
+	if len(split) != 2 {
+		return 0, 0, false
+	}
+	from, err1 := strconv.Atoi(split[0])
+	to, err2 := strconv.Atoi(split[1])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return from, to, true
+}
+
+func canonicalTCPKey(relMarker string, info *tcpMarkerInfo) string {
+	parts := strings.Split(filepath.ToSlash(relMarker), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	if parts[len(parts)-1] != hotlinkTCPMarkerName {
+		return ""
+	}
+	minPID := info.FromPID
+	maxPID := info.ToPID
+	minEmail := info.From
+	if info.ToPID < info.FromPID {
+		minPID = info.ToPID
+		maxPID = info.FromPID
+		minEmail = info.To
+	}
+	parts[0] = minEmail
+	parts[len(parts)-2] = fmt.Sprintf("%d_to_%d", minPID, maxPID)
+	parts[len(parts)-1] = hotlinkTCPSuffix
+	return strings.Join(parts, "/")
+}
+
+func localTCPKey(relMarker string) string {
+	parts := strings.Split(filepath.ToSlash(relMarker), "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	if parts[len(parts)-1] != hotlinkTCPMarkerName {
+		return ""
+	}
+	parts[len(parts)-1] = hotlinkTCPSuffix
+	return strings.Join(parts, "/")
+}
+
+func isTCPProxyPath(path string) bool {
+	return strings.HasSuffix(path, hotlinkTCPSuffix)
+}
+
+func tcpProxyBindIP() string {
+	addr := strings.TrimSpace(os.Getenv(hotlinkTCPProxyAddr))
+	if addr == "" {
+		return "127.0.0.1"
+	}
+	if strings.Contains(addr, ":") {
+		return strings.Split(addr, ":")[0]
+	}
+	return addr
+}
+
 func (h *HotlinkManager) openOutbound(pathKey, relPath string) *hotlinkOutbound {
 	sessionID := utils.TokenHex(8)
 	out := &hotlinkOutbound{
@@ -590,6 +1225,9 @@ func (h *HotlinkManager) openOutbound(pathKey, relPath string) *hotlinkOutbound 
 		pathKey: pathKey,
 		accept:  make(chan struct{}),
 		reject:  make(chan string, 1),
+	}
+	if h.quicEnabled {
+		out.quic = &hotlinkQuicOutbound{ready: make(chan struct{})}
 	}
 
 	h.outMu.Lock()
@@ -785,4 +1423,266 @@ func acceptHotlinkConn(listener net.Listener, timeout time.Duration) (net.Conn, 
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("timeout waiting for hotlink ipc connection")
 	}
+}
+
+func quicOfferAddrs(addr string, stunAddr string) []string {
+	addrs := []string{}
+	if host, port, err := net.SplitHostPort(addr); err == nil {
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			addrs = append(addrs, fmt.Sprintf("127.0.0.1:%s", port))
+			bindIP := tcpProxyBindIP()
+			if bindIP != "" && bindIP != "127.0.0.1" {
+				addrs = append(addrs, fmt.Sprintf("%s:%s", bindIP, port))
+			}
+		} else {
+			addrs = append(addrs, addr)
+		}
+	}
+	if stunAddr != "" {
+		addrs = appendUniqueAddr(addrs, stunAddr)
+	}
+	if len(addrs) == 0 {
+		addrs = append(addrs, addr)
+	}
+	return addrs
+}
+
+func appendUniqueAddr(addrs []string, addr string) []string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return addrs
+	}
+	for _, existing := range addrs {
+		if strings.EqualFold(strings.TrimSpace(existing), addr) {
+			return addrs
+		}
+	}
+	return append(addrs, addr)
+}
+
+func discoverStunAddr(conn *net.UDPConn) (string, error) {
+	if conn == nil {
+		return "", fmt.Errorf("udp connection not available")
+	}
+
+	server := strings.TrimSpace(os.Getenv(hotlinkStunServerEnv))
+	if server == "" {
+		server = "stun.l.google.com:19302"
+	}
+	if server == "0" || strings.EqualFold(server, "off") || strings.EqualFold(server, "disabled") {
+		return "", nil
+	}
+
+	serverAddr, err := net.ResolveUDPAddr("udp", server)
+	if err != nil {
+		return "", err
+	}
+
+	var txID [12]byte
+	if _, err := rand.Read(txID[:]); err != nil {
+		return "", err
+	}
+
+	req := make([]byte, 20)
+	binary.BigEndian.PutUint16(req[0:2], 0x0001) // Binding request
+	binary.BigEndian.PutUint16(req[2:4], 0x0000) // No attributes
+	binary.BigEndian.PutUint32(req[4:8], 0x2112A442)
+	copy(req[8:], txID[:])
+
+	_ = conn.SetWriteDeadline(time.Now().Add(hotlinkStunTimeout))
+	if _, err := conn.WriteToUDP(req, serverAddr); err != nil {
+		_ = conn.SetDeadline(time.Time{})
+		return "", err
+	}
+
+	resp := make([]byte, 1024)
+	_ = conn.SetReadDeadline(time.Now().Add(hotlinkStunTimeout))
+	n, _, err := conn.ReadFromUDP(resp)
+	_ = conn.SetDeadline(time.Time{})
+	if err != nil {
+		return "", err
+	}
+
+	addr, err := parseStunMappedAddr(resp[:n], txID)
+	if err != nil {
+		return "", err
+	}
+	if addr == nil {
+		return "", fmt.Errorf("no mapped address in stun response")
+	}
+	return addr.String(), nil
+}
+
+func parseStunMappedAddr(msg []byte, txID [12]byte) (*net.UDPAddr, error) {
+	if len(msg) < 20 {
+		return nil, fmt.Errorf("stun response too short")
+	}
+	if binary.BigEndian.Uint16(msg[0:2]) != 0x0101 {
+		return nil, fmt.Errorf("unexpected stun response type")
+	}
+	if binary.BigEndian.Uint32(msg[4:8]) != 0x2112A442 {
+		return nil, fmt.Errorf("invalid stun magic cookie")
+	}
+	if !bytes.Equal(msg[8:20], txID[:]) {
+		return nil, fmt.Errorf("stun transaction mismatch")
+	}
+
+	msgLen := int(binary.BigEndian.Uint16(msg[2:4]))
+	limit := 20 + msgLen
+	if limit > len(msg) {
+		limit = len(msg)
+	}
+	offset := 20
+	for offset+4 <= limit {
+		typ := binary.BigEndian.Uint16(msg[offset : offset+2])
+		l := int(binary.BigEndian.Uint16(msg[offset+2 : offset+4]))
+		offset += 4
+		if offset+l > limit {
+			break
+		}
+		value := msg[offset : offset+l]
+		switch typ {
+		case 0x0020: // XOR-MAPPED-ADDRESS
+			if addr, err := parseStunAddressValue(value, txID, true); err == nil {
+				return addr, nil
+			}
+		case 0x0001: // MAPPED-ADDRESS
+			if addr, err := parseStunAddressValue(value, txID, false); err == nil {
+				return addr, nil
+			}
+		}
+		offset += l
+		if rem := offset % 4; rem != 0 {
+			offset += 4 - rem
+		}
+	}
+	return nil, fmt.Errorf("no mapped address attributes")
+}
+
+func parseStunAddressValue(value []byte, txID [12]byte, xor bool) (*net.UDPAddr, error) {
+	if len(value) < 8 {
+		return nil, fmt.Errorf("stun address attribute too short")
+	}
+	family := value[1]
+	port := binary.BigEndian.Uint16(value[2:4])
+
+	switch family {
+	case 0x01: // IPv4
+		ip := make(net.IP, net.IPv4len)
+		copy(ip, value[4:8])
+		if xor {
+			port ^= uint16(0x2112A442 >> 16)
+			ip[0] ^= 0x21
+			ip[1] ^= 0x12
+			ip[2] ^= 0xA4
+			ip[3] ^= 0x42
+		}
+		return &net.UDPAddr{IP: ip, Port: int(port)}, nil
+	case 0x02: // IPv6
+		if len(value) < 20 {
+			return nil, fmt.Errorf("stun ipv6 attribute too short")
+		}
+		ip := make(net.IP, net.IPv6len)
+		copy(ip, value[4:20])
+		if xor {
+			port ^= uint16(0x2112A442 >> 16)
+			mask := make([]byte, 16)
+			copy(mask[0:4], []byte{0x21, 0x12, 0xA4, 0x42})
+			copy(mask[4:16], txID[:])
+			for i := 0; i < 16; i++ {
+				ip[i] ^= mask[i]
+			}
+		}
+		return &net.UDPAddr{IP: ip, Port: int(port)}, nil
+	default:
+		return nil, fmt.Errorf("unsupported stun family %d", family)
+	}
+}
+
+func newQuicServerTLSConfig() (*tls.Config, error) {
+	cert, err := generateSelfSignedCert()
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{hotlinkQuicALPN},
+	}, nil
+}
+
+func newQuicClientTLSConfig() *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify: true,
+		NextProtos:         []string{hotlinkQuicALPN},
+	}
+}
+
+func generateSelfSignedCert() (tls.Certificate, error) {
+	serial, err := rand.Int(rand.Reader, big.NewInt(1<<62))
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	template := x509.Certificate{
+		SerialNumber: serial,
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	certPEM := &bytes.Buffer{}
+	keyPEM := &bytes.Buffer{}
+	if err := pem.Encode(certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return tls.Certificate{}, err
+	}
+	if err := pem.Encode(keyPEM, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}); err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEM.Bytes(), keyPEM.Bytes())
+}
+
+func writeQuicHandshake(stream *quic.Stream, sessionID string) error {
+	if len(sessionID) > 0xffff {
+		return fmt.Errorf("session id too long")
+	}
+	buf := bytes.NewBuffer(nil)
+	buf.WriteString("HLQ1")
+	if err := binary.Write(buf, binary.BigEndian, uint16(len(sessionID))); err != nil {
+		return err
+	}
+	buf.WriteString(sessionID)
+	_, err := stream.Write(buf.Bytes())
+	return err
+}
+
+func readQuicHandshake(r *bufio.Reader, sessionID string) error {
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(r, magic); err != nil {
+		return err
+	}
+	if string(magic) != "HLQ1" {
+		return fmt.Errorf("invalid quic handshake magic")
+	}
+	var l uint16
+	if err := binary.Read(r, binary.BigEndian, &l); err != nil {
+		return err
+	}
+	if l == 0 {
+		return fmt.Errorf("invalid quic handshake length")
+	}
+	buf := make([]byte, l)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return err
+	}
+	if string(buf) != sessionID {
+		return fmt.Errorf("quic handshake session mismatch")
+	}
+	return nil
 }

@@ -115,6 +115,15 @@ pub struct HotlinkClose {
     pub reason: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct HotlinkSignal {
+    pub session_id: String,
+    pub kind: String,
+    pub addrs: Vec<String>,
+    pub token: String,
+    pub error: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct JsonHotlinkOpen {
     #[serde(rename = "sid")]
@@ -157,6 +166,20 @@ struct JsonHotlinkClose {
     pub session_id: String,
     #[serde(rename = "rsn", default)]
     pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonHotlinkSignal {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "knd")]
+    pub kind: String,
+    #[serde(rename = "adr", default)]
+    pub addrs: Vec<String>,
+    #[serde(rename = "tok", default)]
+    pub token: String,
+    #[serde(rename = "err", default)]
+    pub error: String,
 }
 
 // Hotlink msgpack uses msgpack tags ("sid", "pth", etc) from Go.
@@ -202,6 +225,20 @@ pub struct MsgpackHotlinkClose {
     pub session_id: String,
     #[serde(rename = "rsn", default)]
     pub reason: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct MsgpackHotlinkSignal {
+    #[serde(rename = "sid")]
+    pub session_id: String,
+    #[serde(rename = "knd")]
+    pub kind: String,
+    #[serde(rename = "adr", default)]
+    pub addrs: Vec<String>,
+    #[serde(rename = "tok", default)]
+    pub token: String,
+    #[serde(rename = "err", default)]
+    pub error: String,
 }
 
 #[derive(Debug, Clone)]
@@ -347,6 +384,7 @@ pub enum Decoded {
     HotlinkReject(HotlinkReject),
     HotlinkData(HotlinkData),
     HotlinkClose(HotlinkClose),
+    HotlinkSignal(HotlinkSignal),
     Http(HttpMsg),
     Ack(Ack),
     Nack(Nack),
@@ -571,6 +609,16 @@ fn decode_wire(wire: WireMessage) -> Result<Decoded> {
                 reason: close.reason,
             }))
         }
+        14 => {
+            let signal: MsgpackHotlinkSignal = rmp_serde::from_slice(&wire.dat.0)?;
+            Ok(Decoded::HotlinkSignal(HotlinkSignal {
+                session_id: signal.session_id,
+                kind: signal.kind,
+                addrs: signal.addrs,
+                token: signal.token,
+                error: signal.error,
+            }))
+        }
         _ => Ok(Decoded::Other {
             id: wire.id,
             typ: wire.typ,
@@ -668,6 +716,16 @@ fn decode_json_msg(msg: Message) -> Result<Decoded> {
             Ok(Decoded::HotlinkClose(HotlinkClose {
                 session_id: close.session_id,
                 reason: close.reason,
+            }))
+        }
+        14 => {
+            let signal: JsonHotlinkSignal = serde_json::from_value(msg.dat)?;
+            Ok(Decoded::HotlinkSignal(HotlinkSignal {
+                session_id: signal.session_id,
+                kind: signal.kind,
+                addrs: signal.addrs,
+                token: signal.token,
+                error: signal.error,
             }))
         }
         _ => Ok(Decoded::Other {

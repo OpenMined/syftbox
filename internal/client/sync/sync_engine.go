@@ -146,6 +146,7 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 	}
 
 	se.hotlink.StartLocalReaders(ctx)
+	se.hotlink.StartTCPProxyDiscovery(ctx)
 
 	// connect to websocket
 	slog.Info("listening for websocket events")
@@ -842,6 +843,8 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				go se.hotlink.HandleData(msg)
 			case syftmsg.MsgHotlinkClose:
 				go se.hotlink.HandleClose(msg)
+			case syftmsg.MsgHotlinkSignal:
+				go se.hotlink.HandleSignal(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}

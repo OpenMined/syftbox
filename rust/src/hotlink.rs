@@ -257,7 +257,7 @@ pub fn encode_hotlink_frame(frame: &HotlinkFrame) -> Vec<u8> {
     out
 }
 
-async fn read_hotlink_frame<R>(reader: &mut R) -> Result<HotlinkFrame>
+pub async fn read_hotlink_frame<R>(reader: &mut R) -> Result<HotlinkFrame>
 where
     R: tokio::io::AsyncRead + Unpin,
 {

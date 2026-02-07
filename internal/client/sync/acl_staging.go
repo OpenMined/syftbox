@@ -75,7 +75,7 @@ func NewACLStagingManager(onReady func(datasite string, acls []*StagedACL), opts
 		onReady: onReady,
 		recent:  make(map[string]time.Time),
 		ttl:     30 * time.Second,
-		grace:   10 * time.Second,
+		grace:   10 * time.Minute,
 		now:     time.Now,
 	}
 	for _, opt := range opts {

@@ -119,6 +119,12 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = close
+	case MsgHotlinkSignal:
+		var signal HotlinkSignal
+		if err := json.Unmarshal(temp.Data, &signal); err != nil {
+			return err
+		}
+		m.Data = signal
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}
