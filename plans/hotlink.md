@@ -2,116 +2,162 @@
 
 ## Goals
 - Provide the **lowest-latency** data path between peers for time-critical MPC/HE workloads.
-- Keep existing file-based durability as an optional fallback (do not slow the primary path).
-- Keep the **application interface stable** (e.g., always read from a FIFO), even if hotlink drops.
-- Support both Go and Rust clients; enable devstack E2E latency benchmarking.
-- Enable a **low-latency TCP tunnel** mode for Syqure-style socket streams.
+- Keep existing file-based durability as an optional fallback.
+- Keep the **application interface stable** (UNIX socket / TCP port), even if hotlink drops.
+- Support both Go and Rust SyftBox clients.
+- Enable a **TCP tunnel** mode for Syqure-style socket streams (proxied over hotlink).
+
+---
 
 ## Architecture
 
-### How Hotlink Works (End-to-End)
+### How It Works (TCP Proxy Mode, End-to-End)
 
 ```
-Sequre (CP1)                    SyftBox Client (Rust)              SyftBox Server (Go)            SyftBox Client (Rust)              Sequre (CP2)
-    |                                |                                  |                                |                              |
-    |-- TCP connect localhost:10001 ->|                                  |                                |                              |
-    |                                |-- HotlinkOpen(path=_mpc/1_to_2) -->|                                |                              |
-    |                                |                                  |-- HotlinkOpen (ACL check) ------>|                              |
-    |                                |                                  |                                |-- bind TCP listener          |
-    |                                |                                  |<-- HotlinkAccept(sid) ----------|                              |
-    |                                |<-- HotlinkAccept(sid) ------------|                                |                              |
-    |                                |                                  |                                |                              |
-    |                                |== QUIC offer/answer (via HotlinkSignal through server) ==========>|                              |
-    |                                |<=========================== QUIC connection established ==========>|                              |
-    |                                |                                  |                                |                              |
-    |-- TCP send(data) ------------->|                                  |                                |                              |
-    |                                |-- HotlinkData(seq=1) via QUIC =================================>|                              |
-    |                                |                                  |                                |-- reorder buf -> TCP write ->|
-    |                                |                                  |                                |                              |-- TCP recv(data)
+Sequre CP1                  SyftBox Rust Client A         SyftBox Go Server          SyftBox Rust Client B         Sequre CP2
+  |                              |                              |                              |                        |
+  |  1. TCP connect :10001 ----->|                              |                              |                        |
+  |                              |  2. HotlinkOpen(path) ------>|                              |                        |
+  |                              |                              |  3. ACL check + broadcast --->|                        |
+  |                              |                              |                              |  4. bind TCP :10003     |
+  |                              |                              |<--- 5. HotlinkAccept(sid) ---|                        |
+  |                              |<--- 6. HotlinkAccept(sid) --|                              |                        |
+  |                              |                              |                              |                        |
+  |                              |===== 7. QUIC offer/answer (HotlinkSignal via server) =====>|                        |
+  |                              |<================ 8. QUIC connection established ==========>|                        |
+  |                              |                              |                              |                        |
+  |  9. TCP send(data) -------->|                              |                              |                        |
+  |                              | 10. HotlinkData(seq=N) via QUIC =========================>|                        |
+  |                              |                              |                              | 11. reorder → TCP ---->|
+  |                              |                              |                              |                        | 12. recv(data)
 ```
 
-**Transport priority:** QUIC preferred → WS fallback (unless `QUIC_ONLY=1`)
+If QUIC fails or is disabled, steps 7-8 are skipped and step 10 goes via WebSocket through the server.
 
-### Protocol Messages (syftmsg types)
+### Protocol Messages
 
-| Type | ID | Purpose |
-|------|----|---------|
-| `MsgHotlinkOpen` | 9 | Sender opens session for a path |
-| `MsgHotlinkAccept` | 10 | Receiver accepts session |
-| `MsgHotlinkReject` | 11 | Receiver rejects session |
-| `MsgHotlinkData` | 12 | Payload frame with session_id + seq |
-| `MsgHotlinkClose` | 13 | Close session |
-| `MsgHotlinkSignal` | 14 | QUIC signaling (offer/answer/candidates) |
+| Type | ID | Fields | Purpose |
+|------|----|--------|---------|
+| `HotlinkOpen` | 9 | `sid`, `pth` | Sender opens session for a path |
+| `HotlinkAccept` | 10 | `sid` | Receiver accepts (ACL passed) |
+| `HotlinkReject` | 11 | `sid`, `rsn` | Receiver rejects |
+| `HotlinkData` | 12 | `sid`, `seq`, `pth`, `etg`, `pay` | Payload frame with sequence number |
+| `HotlinkClose` | 13 | `sid`, `rsn` | Close session |
+| `HotlinkSignal` | 14 | `sid`, `knd`, `adr`, `tok`, `err` | QUIC signaling (offer/answer) |
 
-### Session Semantics
-- **Path-scoped:** session bound to a directory like `_mpc/0_to_1`
-- **IPC modes:**
-  - `stream.sock` - UNIX domain socket (Linux/macOS)
-  - `stream.tcp.request` - TCP proxy marker (for Syqure TCP proxy mode)
-  - `stream.pipe` - Windows named pipe (not yet implemented)
-- **TCP proxy mode:** Sequre connects to local TCP ports; SyftBox proxies the bytes over hotlink
-- **No file fallback in TCP mode** (correctness > durability)
+All messages are msgpack-encoded over WebSocket. QUIC data uses a binary frame format (see IPC Framing below).
+
+### TCP Proxy Discovery
+
+1. SyftBox client polls for `stream.tcp` marker files under datasites (Rust: 250ms, Go: 250ms)
+2. Marker JSON: `{"from": "alice@...", "to": "bob@...", "port": 10001, "ports": {"alice@...": 10001, "bob@...": 10003}}`
+3. Client computes canonical channel key from path PIDs (e.g., `alice@.../path/1_to_2/stream.tcp.request`)
+4. Binds a TCP listener on `127.0.0.1:{port}` and stores the write half in `tcp_writers` map
+5. When Sequre connects, client reads TCP data → sends as `HotlinkData` frames
+
+### QUIC Negotiation
+
+**Receiver (offer side):**
+1. On `HotlinkAccept`, calls `maybe_start_quic_offer()`
+2. Generates self-signed TLS cert, binds UDP on random port, starts QUIC listener (ALPN: `syftbox-hotlink`)
+3. Optionally runs STUN binding request to discover public IP:port
+4. Sends `HotlinkSignal(kind="quic_offer", addrs=[local, stun])` via server
+5. Waits 2500ms for incoming QUIC connection
+6. On connect: reads handshake (`HLQ1` + session_id), stores stream, sets ready flag
+7. Spawns `quic_read_loop()` to receive frames on the QUIC stream
+
+**Sender (answer side):**
+1. Receives offer, tries each address with 1500ms dial timeout
+2. On connect: writes `HLQ1{len}{session_id}` handshake
+3. Sends `HotlinkSignal(kind="quic_answer", token="ok")` or `error` on failure
+4. If all addresses fail and `QUIC_ONLY=0`, falls back to WS
+
+### IPC Framing (QUIC + UNIX Socket)
+
+```
+[4B magic "HLNK"] [1B version=1] [2B path_len] [2B etag_len] [4B payload_len] [8B seq]
+[path bytes] [etag bytes] [payload bytes]
+```
+
+### Reorder Buffer (Rust Client Only)
+
+The Go server uses `runtime.NumCPU()` concurrent workers reading from a shared channel. Messages within a session can be relayed out of order. The Rust client buffers incoming frames per channel:
+
+```rust
+struct TcpReorderBuf {
+    next_seq: u64,
+    pending: BTreeMap<u64, Vec<u8>>,
+}
+```
+
+On each frame: insert into BTreeMap by seq → flush all consecutive frames starting from `next_seq`.
+
+**The Go client does NOT have this buffer yet.** It writes directly to TCP and will corrupt the stream if messages arrive out of order.
+
+### Telemetry (Rust Client Only)
+
+Written to `{datasite}/.syftbox/hotlink_telemetry.json` every 1000ms:
+- tx/rx packets and bytes
+- QUIC vs WS packet split
+- Send/write latency (avg, max)
+- QUIC offer/answer/fallback counters
 
 ### Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SYFTBOX_HOTLINK` | `0` | Enable hotlink |
-| `SYFTBOX_HOTLINK_SOCKET_ONLY` | `0` | Use UNIX socket IPC only (no TCP proxy) |
+| `SYFTBOX_HOTLINK_SOCKET_ONLY` | `0` | UNIX socket IPC only (no TCP proxy) |
 | `SYFTBOX_HOTLINK_TCP_PROXY` | `0` | Enable TCP proxy for Syqure channels |
+| `SYFTBOX_HOTLINK_TCP_PROXY_ADDR` | `127.0.0.1:0` | TCP proxy bind address |
 | `SYFTBOX_HOTLINK_QUIC` | `1` | Enable QUIC transport |
-| `SYFTBOX_HOTLINK_QUIC_ONLY` | `0` | Disable WS fallback (fail if QUIC unavailable) |
-| `SYFTBOX_HOTLINK_STUN_SERVER` | (none) | STUN server for NAT traversal |
+| `SYFTBOX_HOTLINK_QUIC_ONLY` | `0` | Disable WS fallback |
+| `SYFTBOX_HOTLINK_STUN_SERVER` | `stun.l.google.com:19302` | STUN server for NAT discovery |
+| `SYFTBOX_HOTLINK_DEBUG` | `0` | Verbose logging |
+| `SYFTBOX_HOTLINK_IPC` | (platform) | Force IPC mode: `tcp`, `unix`, `pipe` |
+
+---
 
 ## What's Done
 
 ### Phase 1: Hotlink over WebSocket + Local IPC ✅
-- Protocol messages implemented (Open/Accept/Reject/Data/Close)
-- Server routing with ACL-based accept/reject
+- All protocol messages implemented (Open/Accept/Reject/Data/Close/Signal)
+- Server routing with ACL-based accept/reject and broadcast filtering
 - UNIX socket IPC in both Go and Rust clients
 - E2E hotlink-protocol benchmark test
 
 ### Phase 1.5: TCP Tunnel over Hotlink ✅
-- TCP proxy discovery via `stream.tcp.request` marker files
+- TCP proxy discovery via `stream.tcp` marker files
 - Per-channel TCP listener binding and port mapping
-- `getTCPWriterWithRetry` for writer readiness (handles race where data arrives before TCP connection)
-- `TcpReorderBuf` in Rust client to handle out-of-order server relay (BTreeMap-based)
+- Writer readiness retry (up to 30s) for race where data arrives before Sequre connects
+- TCP proxy paths never fall through to UNIX socket IPC
+- Reorder buffer in Rust client (BTreeMap-based, handles server worker concurrency)
 - Hard fail on send error (close TCP socket, no silent corruption)
-- **Rust client:** Fully working and tested
-- **Go client:** TCP proxy implemented but missing reorder buffer
+- **Rust:** Fully working and tested
+- **Go:** TCP proxy implemented, missing reorder buffer
 
-### Phase 2: QUIC Peer-to-Peer Transport ✅ (localhost/LAN)
-- QUIC transport via `quinn` (Rust) and `quic-go` (Go)
-- WS signaling for QUIC offer/answer via `MsgHotlinkSignal` (relayed by server)
-- Self-signed TLS certs generated per session (`rcgen` in Rust)
-- Mixed transport: some peers on QUIC, others on WS fallback
+### Phase 2: QUIC P2P Transport ✅ (localhost/LAN only)
+- QUIC via `quinn` (Rust) and `quic-go` (Go)
+- WS signaling for offer/answer via `MsgHotlinkSignal` relayed by server
+- Self-signed TLS certs per session
+- Mixed transport (some peers QUIC, others WS)
 - QUIC-only mode for testing
-- Telemetry: tx/rx packets, bytes, quic/ws split, latency metrics
-- Initial STUN candidate discovery code in both Go and Rust
+- Initial STUN candidate discovery in both clients
+- Telemetry in Rust client (tx/rx, quic/ws split, latency)
 
-### Server Changes ✅
-- `handleHotlinkSignal` relay for QUIC signaling (new in this branch)
-- All hotlink message types routed (Open, Accept, Reject, Data, Close, Signal)
-- Concurrent worker goroutines relay messages (causes out-of-order delivery, handled by client reorder buffer)
-
-### Critical Bugs Fixed ✅
-1. **`notify_waiters()` race** (Rust): Changed to `notify_one()` - notifications were lost because accept arrived before `notified()` was polled
-2. **TCP reorder buffer** (Rust): Server concurrent workers reorder HotlinkData; BTreeMap buffers and flushes in sequence order
-3. **TCP writer readiness** (Rust): `getTCPWriterWithRetry` retries instead of dropping early frames
-4. **IPC fallthrough** (Rust): TCP proxy paths no longer fall through to UNIX socket IPC
-5. **Listener recreation race** (Rust): Create UNIX socket listener once at startup, not per-loop
-6. **Eager IPC listener** (Rust): `ensure_ipc_listener()` during `handle_open` (not lazy in `handle_data`)
-7. **RwLock deadlock** (Rust): Scope read guard to drop before write lock acquisition
-8. **Codon JIT SIGSEGV** (Sequre): Split hotlink IPC into separate `hotlink_transport.codon` module
+### Server ✅
+- `handleHotlinkSignal` relay for QUIC negotiation
+- All 6 hotlink message types routed
+- Session store with per-connection accepted tracking
 
 ### Test Results (2026-02-07)
 - **Scenario:** `syqure-distributed.yaml` with `BV_DEVSTACK_CLIENT_MODE=rust`
-- **Result:** All 3 Sequre parties completed, MPC result `[3,3,4]` (correct)
+- **Result:** All 3 Sequre parties completed, MPC result `[3,3,4]` correct
 - **Duration:** Aggregator ~40s, clients ~45s
-- **Transport:** QUIC preferred with WS fallback (q17198/ws26, q17101/ws51)
+- **Transport:** QUIC preferred (q17198/ws26, q17101/ws51)
 - **Reproducible:** Passed on consecutive runs
 
-### Benchmark Results (hotlink-protocol test, IPC round-trip)
+### Benchmark Results (hotlink-protocol, IPC round-trip)
 | Metric | Go | Rust |
 |--------|-----|------|
 | P50 | ~330us | ~970us |
@@ -119,67 +165,130 @@ Sequre (CP1)                    SyftBox Client (Rust)              SyftBox Serve
 | P95 | ~880us | ~5.5ms |
 | P99 | ~1.1ms | ~5.8ms |
 
-## What's Left To Do
+---
+
+## What's Left
 
 ### Required for Production
 
-1. **Server deployment** - Deploy server with `MsgHotlinkSignal` (type 14) support. Without this, QUIC negotiation fails silently and clients fall back to WS-only.
+1. **Deploy server** with `MsgHotlinkSignal` (type 14). Without it, QUIC negotiation fails silently → WS-only fallback.
 
-2. **Go client reorder buffer** - Port `TcpReorderBuf` from Rust to Go for `BV_DEVSTACK_CLIENT_MODE=go` parity. The Go client will hit the same out-of-order TCP corruption without this.
+2. **Go client reorder buffer** — Port `TcpReorderBuf` from Rust. Go client will corrupt TCP streams without it when server workers relay out of order.
 
-3. **Integration test in syftbox repo** - Add a hotlink-specific test alongside existing sbdev integration tests. Should test at minimum:
-   - Hotlink session open/accept/close lifecycle
+3. **Integration test in syftbox repo** — Add hotlink-specific test alongside sbdev tests:
+   - Session lifecycle (open/accept/close)
    - TCP proxy data flow with reorder verification
    - QUIC upgrade and WS fallback
 
-4. **Aggregator telemetry** - Aggregator connections still show "pending" in telemetry despite scenario passing. Investigate whether this is a reporting bug or actual issue.
+4. **Aggregator telemetry** — Connections show "pending" despite scenario passing. Investigate if reporting bug or real issue.
 
 ### Required for Internet / NAT
 
-5. **STUN real-network testing** - STUN candidate discovery code exists but is untested on real networks. Test on actual NAT to measure success rate.
+5. **STUN real-network testing** — Code exists, untested over actual NAT.
 
-6. **ICE candidate negotiation** - Currently no candidate pair testing or priority ordering. If STUN alone doesn't work for most NATs, implement basic ICE.
+6. **ICE candidate negotiation** — No candidate pair testing or priority ordering yet.
 
-7. **TURN relay fallback** - For symmetric NAT where hole-punching fails. May not be needed depending on STUN success rate.
+7. **TURN relay fallback** — For symmetric NAT. May not be needed if STUN success rate is high.
 
-8. **UDP hole-punching** - No explicit NAT binding refresh or hole-punch logic yet.
+8. **UDP hole-punching** — No NAT binding refresh logic yet.
 
 ### Nice to Have
 
-9. **Rust client latency optimization** - Go has ~3-5x lower per-message latency. Opportunities: channel-based message passing, `parking_lot` mutexes, reduce async runtime overhead.
+9. **Rust latency optimization** — Go is ~3-5x faster per-message. Opportunities: channel-based message passing, `parking_lot` mutexes, reduce tokio overhead.
 
-10. **Windows named pipe support** (`stream.pipe`) - Not implemented in either client.
+10. **Windows named pipe** (`stream.pipe`) — Not implemented.
 
-11. **TCP IPC mode for containers** - `stream.tcp` marker for container compatibility where UNIX sockets don't work.
+11. **TCP IPC for containers** — Where UNIX sockets don't work.
 
-12. **File fallback replay** - Write `.request` files on hotlink failure, replay into IPC when hotlink recovers.
+12. **File fallback replay** — Write `.request` files on hotlink failure, replay into IPC.
 
-13. **OTEL tracing** - Per-stage latency spans for detailed observability.
+13. **OTEL tracing** — Per-stage latency spans.
 
-14. **Bundle rebuild** - Rebuild syqure bundle tarball with updated sequre stdlib so new installs don't need manual cache patching.
+14. **Syqure bundle rebuild** — Rebuild tarball with updated sequre stdlib.
 
-## Files Changed (This Branch)
+---
 
-| File | Lines | What |
+## Lessons Learned / Pitfalls
+
+These are bugs we hit during development. Keeping them here so we don't repeat them.
+
+### 1. Tokio `notify_waiters()` Does Not Buffer (Rust)
+**Symptom:** All hotlink connections stuck "pending" forever on localhost.
+**Cause:** `Notify::notify_waiters()` only wakes tasks that are *already* polling `notified()`. On localhost, `HotlinkAccept` round-trips so fast it arrives in the gap between dropping the read lock (after checking `accepted=false`) and entering `notified().await`. The notification is lost.
+**Fix:** Use `notify_one()` which buffers a single permit. The permit is consumed when `notified()` is later polled.
+**Rule:** Never use `notify_waiters()` for point-to-point wake-ups where the waiter may not be polling yet.
+
+### 2. Server Concurrent Workers Reorder Messages
+**Symptom:** Sequre segfault (signal 11) — TCP stream corruption from out-of-order writes.
+**Cause:** Go server uses `runtime.NumCPU()` goroutines reading from a shared channel. `HotlinkData` messages within the same session are processed by different workers and relayed in arbitrary order. TCP is a byte stream — writing chunks out of order corrupts it.
+**Fix:** Client-side reorder buffer (`BTreeMap<seq, data>`) that buffers and flushes in sequence order.
+**Rule:** Never assume message ordering through the server when concurrent workers exist. Always use sequence numbers and reorder on the receiving end.
+
+### 3. TCP Writer Not Ready When First Frame Arrives
+**Symptom:** `hotlink tcp write skipped: no writer for path=...` → deadlock (MPC peers wait forever).
+**Cause:** Sequre hasn't connected to the local TCP port yet when the first `HotlinkData` frame arrives from the remote peer.
+**Fix:** `getTCPWriterWithRetry` loops up to 30s (60 retries × 500ms) waiting for the writer to appear.
+**Rule:** The receiving TCP proxy must tolerate the writer not being ready immediately. Never drop frames silently — either buffer/retry or fail hard.
+
+### 4. TCP Proxy Paths Falling Through to IPC
+**Symptom:** After TCP write skip, code tried UNIX socket IPC for a TCP proxy path → `ipc accept timeout`.
+**Cause:** `handle_frame` didn't return early for TCP proxy paths when the writer was missing, falling through to the IPC socket code path.
+**Fix:** Explicit early return for `is_tcp_proxy_path()` frames — never attempt IPC socket fallback for TCP proxy sessions.
+**Rule:** TCP proxy and IPC socket are separate code paths. Never mix them.
+
+### 5. Codon JIT SIGSEGV from Pointer-Heavy Code (Sequre/Syqure)
+**Symptom:** `SIGSEGV` at "MHE generating relinearization key" — unrelated to hotlink data flow.
+**Cause:** Adding 233+ lines of pointer-heavy hotlink IPC code (raw `ptr[byte]`, `sockaddr_in`, C FFI) into `file_transport.codon` corrupts Codon's LLVM JIT codegen for MHE lattice operations. The JIT compiles all reachable functions at load time.
+**Fix:** Split into separate `hotlink_transport.codon` module with lazy conditional imports. In TCP proxy mode, `run_dynamic.rs` sets `SEQURE_TRANSPORT=tcp` so the hotlink IPC code is never compiled.
+**Rule:** Keep pointer-heavy FFI code in separate Codon modules. The JIT can corrupt codegen for unrelated functions when complex C-interop code is compiled in the same compilation unit.
+
+### 6. RwLock Deadlock Pattern (Rust)
+**Symptom:** Client hangs forever during `send_hotlink`.
+**Cause:** `if let Some(x) = map.read().await.get(&k) { ... } else { map.write().await... }` — the read guard isn't dropped before the write lock is requested.
+**Fix:** Scope the read guard explicitly:
+```rust
+let existing = { let g = map.read().await; g.get(&k).cloned() };
+if let Some(x) = existing { ... } else { map.write().await... }
+```
+**Rule:** Always explicitly scope `RwLock` read guards in Rust async code before attempting write acquisition.
+
+### 7. UNIX Socket Listener Recreation Race (Rust)
+**Symptom:** Intermittent connection failures on IPC socket.
+**Cause:** Listener was recreated every loop iteration after accept timeout, removing the socket file while a client was mid-connect.
+**Fix:** Create listener once at startup, reuse for all connections.
+
+### 8. OutputCapture fork() SIGABRT (Syqure)
+**Symptom:** `SIGABRT` when Syqure runner captures output.
+**Cause:** `OutputCapture` in bridge.cc calls `fork()`, which is unsafe in multi-threaded Rust tokio runtime.
+**Fix:** Disabled `OutputCapture` in bridge.cc.
+
+---
+
+## Files Changed (Branch: `madhava/hotlink`)
+
+| File | Delta | What |
 |------|-------|------|
 | `rust/src/hotlink_manager.rs` | +1680 | QUIC, TCP proxy, reorder buffer, telemetry, STUN, notify_one fix |
-| `internal/client/sync/hotlink_manager.go` | +1004 | QUIC, TCP proxy, telemetry, STUN (no reorder buffer) |
+| `internal/client/sync/hotlink_manager.go` | +1004 | QUIC, TCP proxy, STUN (no reorder buffer) |
 | `internal/server/server.go` | +33 | `handleHotlinkSignal` relay |
-| `internal/syftmsg/msg_hotlink.go` | +22 | `HotlinkSignal` struct + constructor |
+| `internal/syftmsg/msg_hotlink.go` | +22 | `HotlinkSignal` struct |
 | `internal/syftmsg/msg_type.go` | +3 | `MsgHotlinkSignal = 14` |
-| `internal/syftmsg/msg.go` | +6 | Unmarshal case for HotlinkSignal |
-| `internal/wsproto/codec.go` | +15 | Msgpack marshal/unmarshal for HotlinkSignal |
+| `internal/syftmsg/msg.go` | +6 | Unmarshal for HotlinkSignal |
+| `internal/wsproto/codec.go` | +15 | Msgpack for HotlinkSignal |
 | `rust/src/wsproto.rs` | +58 | HotlinkSignal encode/decode |
-| `rust/Cargo.toml` | +3 | quinn, rcgen, rustls deps |
+| `rust/Cargo.toml` | +3 | quinn, rcgen, rustls |
 | `rust/src/client.rs` | +4 | WS dispatch for HotlinkSignal |
 | `rust/src/hotlink.rs` | +1 | Minor |
 | `rust/src/sync.rs` | +18 | TCP proxy wiring |
-| `internal/client/sync/sync_engine.go` | +3 | Minor wiring |
-| `internal/client/sync/acl_staging.go` | +1 | Grace window |
+| `internal/client/sync/sync_engine.go` | +3 | Wiring |
+| `internal/client/sync/acl_staging.go` | +1 | ACL grace window |
 
 ## Running
 
 ```bash
+# Kill leftover processes
+pkill -f syftbox; pkill -f devstack; pkill -f sequre; sleep 2
+
 # Run distributed scenario (from biovault dir)
 cd biovault && go run ./cmd/devstack scenario run syqure-distributed.yaml
 
