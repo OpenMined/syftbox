@@ -1,20 +1,19 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::wsproto::ACLManifest;
 
-/// Grace period after ACL set is applied - protects ACL files from deletion
-/// during the window when remote state might not yet reflect the new ACLs.
-/// Extended to 30 seconds to handle cases where:
-///
-/// 1. User A revokes User B's access (takes ~10+ seconds for non-replication check)
-/// 2. User A grants User B access again
-/// 3. User B's grace window from baseline may have expired during step 1
-///
-/// The proper fix is server-side (send empty manifests to users who lose access),
-/// but this longer grace period provides client-side resilience.
-const ACL_GRACE_PERIOD: Duration = Duration::from_secs(10 * 60);
+const DEFAULT_ACL_GRACE_SECS: u64 = 10 * 60;
+
+static ACL_GRACE_PERIOD: LazyLock<Duration> = LazyLock::new(|| {
+    if let Ok(val) = std::env::var("SYFTBOX_ACL_STAGING_GRACE_MS") {
+        if let Ok(ms) = val.parse::<u64>() {
+            return Duration::from_millis(ms);
+        }
+    }
+    Duration::from_secs(DEFAULT_ACL_GRACE_SECS)
+});
 
 #[derive(Debug, Clone)]
 pub struct StagedACL {
@@ -232,10 +231,10 @@ impl ACLStagingManager {
             ));
             if let Some(applied_at) = recent.get(datasite) {
                 let elapsed = applied_at.elapsed();
-                if elapsed <= ACL_GRACE_PERIOD {
+                if elapsed <= *ACL_GRACE_PERIOD {
                     crate::logging::info(format!(
                         "acl staging grace window protecting path={} datasite={} elapsed={:?} remaining={:?}",
-                        rel_path, datasite, elapsed, ACL_GRACE_PERIOD - elapsed
+                        rel_path, datasite, elapsed, *ACL_GRACE_PERIOD - elapsed
                     ));
                     return true;
                 } else {
@@ -282,7 +281,7 @@ impl ACLStagingManager {
     pub fn prune_expired(&self) {
         let mut recent = self.recent.lock().expect("acl recent lock");
         recent.retain(|datasite, applied_at| {
-            let dominated = applied_at.elapsed() <= ACL_GRACE_PERIOD;
+            let dominated = applied_at.elapsed() <= *ACL_GRACE_PERIOD;
             if !dominated {
                 crate::logging::info(format!(
                     "acl staging grace window expired datasite={}",
