@@ -1012,10 +1012,10 @@ impl HotlinkManager {
             "hotlink quic accept waiting: session={}",
             session_id
         ));
-        let incoming = match timeout(HOTLINK_QUIC_ACCEPT_TIMEOUT, quic.endpoint.accept()).await {
-            Ok(opt) => opt,
-            Err(_) => None,
-        };
+        let incoming: Option<quinn::Incoming> =
+            timeout(HOTLINK_QUIC_ACCEPT_TIMEOUT, quic.endpoint.accept())
+                .await
+                .unwrap_or_default();
         let Some(incoming) = incoming else {
             quic_set_err_state(
                 &quic.state,

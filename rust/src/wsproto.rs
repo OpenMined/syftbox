@@ -120,6 +120,7 @@ pub struct HotlinkSignal {
     pub session_id: String,
     pub kind: String,
     pub addrs: Vec<String>,
+    #[allow(dead_code)]
     pub token: String,
     pub error: String,
 }
