@@ -1273,7 +1273,20 @@ fn cleanup_empty_parent_dirs(start: &Path, root: &Path) {
             break;
         }
 
-        if let Err(err) = fs::remove_dir(&current) {
+        let mut rm_err = None;
+        for _ in 0..3 {
+            match fs::remove_dir(&current) {
+                Ok(()) => {
+                    rm_err = None;
+                    break;
+                }
+                Err(err) => {
+                    rm_err = Some(err);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+        if let Some(err) = rm_err {
             crate::logging::error(format!(
                 "sync cleanup parent remove_dir error path={} err={:?}",
                 current.display(),
