@@ -97,4 +97,10 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 
 	// mark as completed
 	se.syncStatus.SetCompleted(syncRelPath)
+
+	if latencyTraceEnabled() {
+		if ts, ok := payloadTimestampNs(createMsg.Content); ok {
+			slog.Info("latency_trace priority_download_written", "path", createMsg.Path, "msgId", msg.Id, "age_ms", (time.Now().UnixNano()-ts)/1_000_000, "size", createMsg.Length)
+		}
+	}
 }

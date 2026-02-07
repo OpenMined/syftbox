@@ -3,9 +3,9 @@ name: Integration Tests
 on:
   workflow_dispatch:
   push:
-    branches: [ main, madhava/biovault ]
+    branches: [ main, madhava/biovault, madhava/hotlink ]
   pull_request:
-    branches: [ main, madhava/biovault ]
+    branches: [ main, madhava/biovault, madhava/hotlink ]
 
 jobs:
   integration-tests:

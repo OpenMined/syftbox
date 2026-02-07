@@ -33,6 +33,7 @@ use crate::acl_staging::{ACLStagingManager, StagedACL};
 use crate::config::Config;
 use crate::control::ControlPlane;
 use crate::filters::SyncFilters;
+use crate::hotlink_manager::HotlinkManager;
 use crate::http::ApiClient;
 use crate::subscriptions;
 use crate::sync::{
@@ -488,7 +489,7 @@ impl AdaptiveSyncScheduler {
 }
 
 #[derive(Clone)]
-struct WsHandle {
+pub(crate) struct WsHandle {
     encoding: Encoding,
     tx: mpsc::Sender<WsOutbound>,
     pending: PendingAcks,
@@ -500,6 +501,9 @@ struct WsOutbound {
 }
 
 impl WsHandle {
+    pub(crate) fn encoding(&self) -> Encoding {
+        self.encoding
+    }
     async fn send_filewrite_with_ack(
         &self,
         rel_path: String,
@@ -560,6 +564,18 @@ impl WsHandle {
             }
             Ok(Ok(res)) => res,
         }
+    }
+
+    pub(crate) async fn send_ws(&self, msg: Message) -> Result<()> {
+        self.tx
+            .send(WsOutbound {
+                message: msg,
+                ack_key: None,
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!(err))
+            .context("ws send queue closed")?;
+        Ok(())
     }
 }
 
@@ -662,6 +678,12 @@ async fn run_ws_listener(
             tx,
             pending: pending.clone(),
         };
+        let hotlink_mgr =
+            HotlinkManager::new(datasites_root.clone(), ws_handle.clone(), shutdown.clone());
+        if hotlink_mgr.enabled() {
+            hotlink_mgr.start_local_discovery(email.clone());
+            hotlink_mgr.start_tcp_proxy_discovery(email.clone());
+        }
 
         let watch_root = datasites_root.clone();
         let watcher_filters = filters.clone();
@@ -728,6 +750,7 @@ async fn run_ws_listener(
                         None,
                         &pending,
                         &acl_staging,
+                        &hotlink_mgr,
                     )
                     .await;
                 }
@@ -741,6 +764,7 @@ async fn run_ws_listener(
                         Some(&bin),
                         &pending,
                         &acl_staging,
+                        &hotlink_mgr,
                     )
                     .await;
                 }
@@ -773,6 +797,7 @@ async fn handle_ws_message(
     raw_bin: Option<&[u8]>,
     pending: &PendingAcks,
     acl_staging: &std::sync::Arc<ACLStagingManager>,
+    hotlink_mgr: &HotlinkManager,
 ) {
     let decoded = match raw_bin {
         Some(bin) => crate::wsproto::decode_binary(bin),
@@ -809,6 +834,30 @@ async fn handle_ws_message(
                 acl_staging,
             )
             .await
+        }
+        Decoded::HotlinkOpen(open) => {
+            hotlink_mgr.handle_open(open.session_id, open.path).await;
+        }
+        Decoded::HotlinkAccept(accept) => {
+            hotlink_mgr.handle_accept(accept.session_id).await;
+        }
+        Decoded::HotlinkReject(reject) => {
+            hotlink_mgr
+                .handle_reject(reject.session_id, reject.reason)
+                .await;
+        }
+        Decoded::HotlinkData(data) => {
+            if let Some(payload) = data.payload {
+                hotlink_mgr
+                    .handle_data(data.session_id, data.path, data.etag, data.seq, payload)
+                    .await;
+            }
+        }
+        Decoded::HotlinkClose(close) => {
+            hotlink_mgr.handle_close(close.session_id).await;
+        }
+        Decoded::HotlinkSignal(signal) => {
+            hotlink_mgr.handle_signal(signal).await;
         }
         Decoded::Http(http_msg) => handle_ws_http(api, datasites_root, http_msg).await,
         Decoded::ACLManifest(manifest) => handle_ws_acl_manifest(manifest, acl_staging),
@@ -1275,7 +1324,15 @@ async fn watch_priority_files(
         }
     }
 
-    let debounce = Duration::from_millis(50);
+    let debounce = {
+        let mut ms = 50u64;
+        if let Ok(v) = std::env::var("SYFTBOX_PRIORITY_DEBOUNCE_MS") {
+            if let Ok(parsed) = v.trim().parse::<u64>() {
+                ms = parsed;
+            }
+        }
+        Duration::from_millis(ms)
+    };
     let mut pending: HashSet<PathBuf> = HashSet::new();
 
     let poll_interval = Duration::from_millis(250);

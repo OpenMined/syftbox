@@ -72,6 +72,33 @@ type ClientHelper struct {
 	metrics   *ClientMetrics
 }
 
+func (c *ClientHelper) rpcReceivePath(senderEmail, appName, endpoint, filename string) string {
+	return filepath.Join(
+		c.dataDir,
+		"datasites",
+		senderEmail,
+		"app_data",
+		appName,
+		"rpc",
+		endpoint,
+		filename,
+	)
+}
+
+func (c *ClientHelper) readRPCPayload(path string) ([]byte, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if isSharingViolation(err) {
+			return nil, err
+		}
+		return nil, err
+	}
+	return content, nil
+}
+
 // ClientMetrics tracks per-client metrics
 type ClientMetrics struct {
 	mu            sync.Mutex

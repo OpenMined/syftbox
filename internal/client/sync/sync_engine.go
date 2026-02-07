@@ -8,13 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/openmined/syftbox/internal/client/subscriptions"
 	"github.com/dustin/go-humanize"
+	"github.com/openmined/syftbox/internal/client/subscriptions"
 	"github.com/openmined/syftbox/internal/client/workspace"
 	"github.com/openmined/syftbox/internal/syftmsg"
 	"github.com/openmined/syftbox/internal/syftsdk"
@@ -50,6 +51,7 @@ type SyncEngine struct {
 	adaptiveScheduler *AdaptiveSyncScheduler
 	aclStaging        *ACLStagingManager
 	subs              *SubscriptionManager
+	hotlink           *HotlinkManager
 	wg                sync.WaitGroup
 	muSync            sync.Mutex
 }
@@ -90,6 +92,7 @@ func NewSyncEngine(
 
 	se.aclStaging = NewACLStagingManager(se.onACLSetReady)
 	se.subs = NewSubscriptionManager(filepath.Join(workspace.MetadataDir, subscriptions.FileName))
+	se.hotlink = NewHotlinkManager(workspace, sdk)
 
 	return se, nil
 }
@@ -122,9 +125,28 @@ func (se *SyncEngine) Start(ctx context.Context) error {
 		// Non-priority files still count as local activity for sync scheduling.
 		return se.isIgnoredFile(path) || IsMarkedPath(path)
 	})
+	priorityMs := 50
+	if v := strings.TrimSpace(os.Getenv("SYFTBOX_PRIORITY_DEBOUNCE_MS")); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil && ms >= 0 {
+			priorityMs = ms
+		} else {
+			slog.Warn("invalid SYFTBOX_PRIORITY_DEBOUNCE_MS", "value", v)
+		}
+	}
+	priorityDebounce := time.Duration(priorityMs) * time.Millisecond
+	se.watcher.SetDebounceResolver(func(path string) (time.Duration, bool) {
+		if se.isPriorityFile(path) {
+			return priorityDebounce, true
+		}
+		return 0, false
+	})
+	slog.Info("priority debounce override", "ms", priorityMs)
 	if err := se.watcher.Start(ctx); err != nil {
 		return fmt.Errorf("file watcher: %w", err)
 	}
+
+	se.hotlink.StartLocalReaders(ctx)
+	se.hotlink.StartTCPProxyDiscovery(ctx)
 
 	// connect to websocket
 	slog.Info("listening for websocket events")
@@ -811,6 +833,18 @@ func (se *SyncEngine) handleSocketEvents(ctx context.Context) {
 				go se.processHttpMessage(msg)
 			case syftmsg.MsgACLManifest:
 				go se.handleACLManifest(msg)
+			case syftmsg.MsgHotlinkOpen:
+				go se.hotlink.HandleOpen(msg)
+			case syftmsg.MsgHotlinkAccept:
+				go se.hotlink.HandleAccept(msg)
+			case syftmsg.MsgHotlinkReject:
+				go se.hotlink.HandleReject(msg)
+			case syftmsg.MsgHotlinkData:
+				go se.hotlink.HandleData(msg)
+			case syftmsg.MsgHotlinkClose:
+				go se.hotlink.HandleClose(msg)
+			case syftmsg.MsgHotlinkSignal:
+				go se.hotlink.HandleSignal(msg)
 			default:
 				slog.Debug("websocket unhandled type", "type", msg.Type)
 			}
@@ -837,6 +871,10 @@ func (se *SyncEngine) handleWatcherEvents(ctx context.Context) {
 			if !se.isPriorityFile(path) {
 				slog.Debug("watcher detected non-priority file", "path", relPath, "event", event.Event())
 				continue
+			}
+
+			if latencyTraceEnabled() {
+				slog.Info("latency_trace watcher_detected", "path", relPath, "ts_ns", time.Now().UnixNano())
 			}
 
 			slog.Info("watcher detected priority file", "path", relPath, "event", event.Event())

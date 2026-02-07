@@ -89,6 +89,42 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = &manifest
+	case MsgHotlinkOpen:
+		var open HotlinkOpen
+		if err := json.Unmarshal(temp.Data, &open); err != nil {
+			return err
+		}
+		m.Data = open
+	case MsgHotlinkAccept:
+		var accept HotlinkAccept
+		if err := json.Unmarshal(temp.Data, &accept); err != nil {
+			return err
+		}
+		m.Data = accept
+	case MsgHotlinkReject:
+		var reject HotlinkReject
+		if err := json.Unmarshal(temp.Data, &reject); err != nil {
+			return err
+		}
+		m.Data = reject
+	case MsgHotlinkData:
+		var data HotlinkData
+		if err := json.Unmarshal(temp.Data, &data); err != nil {
+			return err
+		}
+		m.Data = data
+	case MsgHotlinkClose:
+		var close HotlinkClose
+		if err := json.Unmarshal(temp.Data, &close); err != nil {
+			return err
+		}
+		m.Data = close
+	case MsgHotlinkSignal:
+		var signal HotlinkSignal
+		if err := json.Unmarshal(temp.Data, &signal); err != nil {
+			return err
+		}
+		m.Data = signal
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}

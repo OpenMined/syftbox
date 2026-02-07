@@ -581,6 +581,17 @@ pub async fn sync_once_with_control(
                 }
             }
 
+            // Progress files in _progress/ directories use "local wins" semantics.
+            // These are written by local flows and should always upload without conflict.
+            if is_progress_path(&key) {
+                crate::logging::info(format!(
+                    "sync progress path local-wins: key={} uploading local version",
+                    key
+                ));
+                upload_keys.push(key);
+                continue;
+            }
+
             conflicts.push(key);
             continue;
         }
@@ -1262,7 +1273,20 @@ fn cleanup_empty_parent_dirs(start: &Path, root: &Path) {
             break;
         }
 
-        if let Err(err) = fs::remove_dir(&current) {
+        let mut rm_err = None;
+        for _ in 0..3 {
+            match fs::remove_dir(&current) {
+                Ok(()) => {
+                    rm_err = None;
+                    break;
+                }
+                Err(err) => {
+                    rm_err = Some(err);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+        if let Some(err) = rm_err {
             crate::logging::error(format!(
                 "sync cleanup parent remove_dir error path={} err={:?}",
                 current.display(),
@@ -1618,6 +1642,13 @@ fn is_marked_path(path: &Path, marker: &str) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|name| name.contains(marker))
+}
+
+/// Check if a path is a flow progress file (in _progress/ directory).
+/// Progress files use "local wins" semantics to avoid spurious conflicts
+/// during distributed flow execution.
+fn is_progress_path(key: &str) -> bool {
+    key.contains("/_progress/")
 }
 
 fn as_marked_path(path: &Path, marker: &str) -> PathBuf {

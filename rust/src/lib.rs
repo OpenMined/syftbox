@@ -6,6 +6,8 @@ pub mod config;
 pub mod control;
 mod events;
 pub mod filters;
+pub mod hotlink;
+mod hotlink_manager;
 pub mod http;
 pub mod logging;
 pub mod login;
