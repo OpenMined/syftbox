@@ -19,6 +19,8 @@ import (
 func TestACLPropagationUpdates(t *testing.T) {
 	t.Logf("=== TestACLPropagationUpdates starting on %s ===", runtime.GOOS)
 
+	t.Setenv("SYFTBOX_ACL_STAGING_GRACE_MS", "5000")
+
 	h := NewDevstackHarness(t)
 	t.Logf("Harness created: alice=%s, bob=%s", h.alice.email, h.bob.email)
 

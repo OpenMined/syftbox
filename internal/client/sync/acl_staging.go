@@ -2,6 +2,8 @@ package sync
 
 import (
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,12 +72,18 @@ func WithACLStagingNow(now func() time.Time) ACLStagingOption {
 }
 
 func NewACLStagingManager(onReady func(datasite string, acls []*StagedACL), opts ...ACLStagingOption) *ACLStagingManager {
+	grace := 10 * time.Minute
+	if v := os.Getenv("SYFTBOX_ACL_STAGING_GRACE_MS"); v != "" {
+		if ms, err := strconv.Atoi(v); err == nil {
+			grace = time.Duration(ms) * time.Millisecond
+		}
+	}
 	m := &ACLStagingManager{
 		pending: make(map[string]*PendingACLSet),
 		onReady: onReady,
 		recent:  make(map[string]time.Time),
 		ttl:     30 * time.Second,
-		grace:   10 * time.Minute,
+		grace:   grace,
 		now:     time.Now,
 	}
 	for _, opt := range opts {

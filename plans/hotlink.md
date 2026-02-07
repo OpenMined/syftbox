@@ -79,20 +79,13 @@ All messages are msgpack-encoded over WebSocket. QUIC data uses a binary frame f
 [path bytes] [etag bytes] [payload bytes]
 ```
 
-### Reorder Buffer (Rust Client Only)
+### Reorder Buffer (Both Clients)
 
-The Go server uses `runtime.NumCPU()` concurrent workers reading from a shared channel. Messages within a session can be relayed out of order. The Rust client buffers incoming frames per channel:
+The Go server uses `runtime.NumCPU()` concurrent workers reading from a shared channel. Messages within a session can be relayed out of order. Both clients buffer incoming frames per channel:
 
-```rust
-struct TcpReorderBuf {
-    next_seq: u64,
-    pending: BTreeMap<u64, Vec<u8>>,
-}
-```
+**Rust:** `BTreeMap<u64, Vec<u8>>` keyed by seq, flushes consecutive frames from `next_seq`.
 
-On each frame: insert into BTreeMap by seq → flush all consecutive frames starting from `next_seq`.
-
-**The Go client does NOT have this buffer yet.** It writes directly to TCP and will corrupt the stream if messages arrive out of order.
+**Go:** `map[uint64][]byte` with the same logic — collect under `tcpMu` lock, write outside lock to avoid holding the lock during TCP IO.
 
 ### Telemetry (Rust Client Only)
 
@@ -134,7 +127,7 @@ Written to `{datasite}/.syftbox/hotlink_telemetry.json` every 1000ms:
 - Reorder buffer in Rust client (BTreeMap-based, handles server worker concurrency)
 - Hard fail on send error (close TCP socket, no silent corruption)
 - **Rust:** Fully working and tested
-- **Go:** TCP proxy implemented, missing reorder buffer
+- **Go:** Fully working and tested (reorder buffer + buffer copy fix)
 
 ### Phase 2: QUIC P2P Transport ✅ (localhost/LAN only)
 - QUIC via `quinn` (Rust) and `quic-go` (Go)
@@ -173,12 +166,9 @@ Written to `{datasite}/.syftbox/hotlink_telemetry.json` every 1000ms:
 
 1. **Deploy server** with `MsgHotlinkSignal` (type 14). Without it, QUIC negotiation fails silently → WS-only fallback.
 
-2. **Go client reorder buffer** — Port `TcpReorderBuf` from Rust. Go client will corrupt TCP streams without it when server workers relay out of order.
+2. ~~**Go client reorder buffer**~~ ✅ Done — ported `tcpReorderBuf` to Go, plus buffer copy fix for async WS send.
 
-3. **Integration test in syftbox repo** — Add hotlink-specific test alongside sbdev tests:
-   - Session lifecycle (open/accept/close)
-   - TCP proxy data flow with reorder verification
-   - QUIC upgrade and WS fallback
+3. ~~**Integration test in syftbox repo**~~ ✅ Done — `cmd/devstack/hotlink_tcp_proxy_test.go` tests TCP proxy data flow with reorder verification for both Rust and Go clients. Both pass (20 chunks, 81920 bytes, correct order).
 
 4. **Aggregator telemetry** — Connections show "pending" despite scenario passing. Investigate if reporting bug or real issue.
 
@@ -268,7 +258,13 @@ if let Some(x) = existing { ... } else { map.write().await... }
 **Fix:** Added "local wins" semantics for `_progress/` directories in `rust/src/sync.rs`. When a conflict is detected on a progress path, the local version is uploaded instead of creating a conflict file.
 **Rule:** Flow progress files should always use local-wins conflict resolution since each party owns its own progress.
 
-### 10. Workspace Lock Stale Processes
+### 10. TCP Proxy Buffer Reuse Corruption (Go)
+**Symptom:** `chunk 0: expected index 0, got 2 (out of order)` — data arrives in reorder-buffer sequence order but payload content is wrong.
+**Cause:** `runTCPProxy` reuses a single 64KB `[]byte` buffer for all TCP reads. `Events.Send` is async — it queues the `*Message` (containing a slice reference to the buffer) into a channel. The goroutine loops back and calls `Read()` into the same buffer before the previous message is serialized over WebSocket, corrupting the payload.
+**Fix:** Copy the payload before passing to `sendHotlink`: `payload := make([]byte, n); copy(payload, buf[:n])`.
+**Rule:** Never pass a reusable buffer slice to an async send. Always copy if the buffer will be reused before the consumer reads it.
+
+### 11. Workspace Lock Stale Processes
 **Symptom:** `workspace locked by another process` errors on test startup.
 **Cause:** Previous test run left stale `syftbox`, `bv syftboxd`, or `devstack` processes holding workspace locks.
 **Fix:** Kill all related processes and remove `sandbox/` directory and `*.lock` files before re-running.
@@ -281,7 +277,8 @@ if let Some(x) = existing { ... } else { map.write().await... }
 | File | Delta | What |
 |------|-------|------|
 | `rust/src/hotlink_manager.rs` | +1680 | QUIC, TCP proxy, reorder buffer, telemetry, STUN, notify_one fix |
-| `internal/client/sync/hotlink_manager.go` | +1004 | QUIC, TCP proxy, STUN (no reorder buffer) |
+| `internal/client/sync/hotlink_manager.go` | +1050 | QUIC, TCP proxy, STUN, reorder buffer, buffer copy fix |
+| `cmd/devstack/hotlink_tcp_proxy_test.go` | +223 | E2E integration test for TCP proxy (Rust + Go) |
 | `internal/server/server.go` | +33 | `handleHotlinkSignal` relay |
 | `internal/syftmsg/msg_hotlink.go` | +22 | `HotlinkSignal` struct |
 | `internal/syftmsg/msg_type.go` | +3 | `MsgHotlinkSignal = 14` |
