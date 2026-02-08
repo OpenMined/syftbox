@@ -144,9 +144,17 @@ pub fn start_threaded(cfg: Config, opts: DaemonOptions) -> Result<ThreadedDaemon
     let join = thread::Builder::new()
         .name("syftbox-rs-daemon".to_string())
         .spawn(move || {
+            let worker_threads = std::env::var("SYFTBOX_EMBEDDED_WORKER_THREADS")
+                .ok()
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(4);
+            crate::logging::info(format!(
+                "embedded daemon tokio runtime: worker_threads={}",
+                worker_threads
+            ));
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
-                .worker_threads(2)
+                .worker_threads(worker_threads)
                 .build()
                 .context("build tokio runtime")?;
 
