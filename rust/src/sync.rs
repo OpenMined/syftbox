@@ -1861,12 +1861,15 @@ mod tests {
     }
 
     fn make_temp_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let mut root = std::env::temp_dir();
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        root.push(format!("syftbox-rs-sync-test-{nanos}"));
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        root.push(format!("syftbox-rs-sync-test-{nanos}-{id}"));
         fs::create_dir_all(&root).unwrap();
         root
     }
