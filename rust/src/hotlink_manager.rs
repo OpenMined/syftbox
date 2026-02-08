@@ -625,8 +625,7 @@ impl HotlinkManager {
                             "hotlink tcp proxy: bind retry {}: {err:?}",
                             addr
                         ));
-                        next_bind_log =
-                            tokio::time::Instant::now() + Duration::from_secs(2);
+                        next_bind_log = tokio::time::Instant::now() + Duration::from_secs(2);
                     }
                     tokio::time::sleep(HOTLINK_TCP_BIND_RETRY_DELAY).await;
                 }
