@@ -18,6 +18,7 @@ use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime
 use serde_json::json;
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,11 +31,13 @@ use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
-const HOTLINK_ACCEPT_TIMEOUT: Duration = Duration::from_millis(1500);
+const HOTLINK_ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOTLINK_ACCEPT_DELAY: Duration = Duration::from_millis(200);
 const HOTLINK_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOTLINK_IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOTLINK_IPC_RETRY_DELAY: Duration = Duration::from_millis(100);
+const HOTLINK_TCP_BIND_TIMEOUT: Duration = Duration::from_secs(30);
+const HOTLINK_TCP_BIND_RETRY_DELAY: Duration = Duration::from_millis(250);
 const HOTLINK_TCP_SUFFIX: &str = "stream.tcp.request";
 const HOTLINK_QUIC_DIAL_TIMEOUT: Duration = Duration::from_millis(1500);
 const HOTLINK_QUIC_ACCEPT_TIMEOUT: Duration = Duration::from_millis(2500);
@@ -55,6 +58,12 @@ struct TcpMarkerInfo {
     to_email: String,
     from_pid: usize,
     to_pid: usize,
+}
+
+fn debug_writer_keys(keys: impl Iterator<Item = String>) -> String {
+    let mut all: Vec<String> = keys.collect();
+    all.sort();
+    all.join(",")
 }
 
 #[derive(Clone)]
@@ -578,21 +587,48 @@ impl HotlinkManager {
         let addr = format!("{bind_ip}:{port}");
         if debug {
             crate::logging::info(format!(
-                "hotlink tcp proxy: marker={} from={}({}) to={}({}) port={} bind={}",
+                "hotlink tcp proxy: marker={} rel={} from={}({}) to={}({}) port={} bind={} canonical_key={} local_key={}",
                 marker_path.display(),
+                rel_marker.display(),
                 info.from_email,
                 info.from_pid,
                 info.to_email,
                 info.to_pid,
                 port,
-                addr
+                addr,
+                channel_key,
+                local_key.clone().unwrap_or_else(|| "<none>".to_string())
             ));
         }
-        let listener = match TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(err) => {
-                crate::logging::error(format!("hotlink tcp proxy: bind failed {}: {err:?}", addr));
+        let bind_deadline = tokio::time::Instant::now() + HOTLINK_TCP_BIND_TIMEOUT;
+        let mut next_bind_log = tokio::time::Instant::now();
+        let listener = loop {
+            if self.shutdown.notified().now_or_never().is_some() {
+                self.clear_tcp_proxy_state(&channel_key, local_key.as_deref())
+                    .await;
                 return;
+            }
+            match TcpListener::bind(&addr).await {
+                Ok(listener) => break listener,
+                Err(err) => {
+                    if tokio::time::Instant::now() >= bind_deadline {
+                        crate::logging::error(format!(
+                            "hotlink tcp proxy: bind timeout {} after {:?}: {err:?}",
+                            addr, HOTLINK_TCP_BIND_TIMEOUT
+                        ));
+                        self.clear_tcp_proxy_state(&channel_key, local_key.as_deref())
+                            .await;
+                        return;
+                    }
+                    if debug || tokio::time::Instant::now() >= next_bind_log {
+                        crate::logging::info(format!(
+                            "hotlink tcp proxy: bind retry {}: {err:?}",
+                            addr
+                        ));
+                        next_bind_log = tokio::time::Instant::now() + Duration::from_secs(2);
+                    }
+                    tokio::time::sleep(HOTLINK_TCP_BIND_RETRY_DELAY).await;
+                }
             }
         };
 
@@ -614,24 +650,43 @@ impl HotlinkManager {
             let (mut reader, writer) = stream.into_split();
 
             let writer_arc = Arc::new(TokioMutex::new(writer));
-            {
+            let mapped_as_active = {
                 let mut writers = self.tcp_writers.lock().await;
-                writers.insert(channel_key.clone(), writer_arc.clone());
-                if let Some(local_key) = &local_key {
-                    writers
-                        .entry(local_key.clone())
-                        .or_insert_with(|| writer_arc.clone());
+                // Do not clobber an existing active mapping for this channel.
+                // Desktop watchdog/health probes can briefly connect and close;
+                // replacing the writer here can blackhole in-flight remote frames.
+                // Keep this "first live writer wins" behavior unless a future
+                // design introduces explicit stream-role negotiation.
+                if writers.contains_key(&channel_key) {
+                    false
+                } else {
+                    writers.insert(channel_key.clone(), writer_arc.clone());
+                    if let Some(local_key) = &local_key {
+                        writers
+                            .entry(local_key.clone())
+                            .or_insert_with(|| writer_arc.clone());
+                    }
+                    true
                 }
-            }
+            };
             if debug {
+                let keys = {
+                    let writers = self.tcp_writers.lock().await;
+                    debug_writer_keys(writers.keys().cloned())
+                };
                 crate::logging::info(format!(
-                    "hotlink tcp proxy: writer mapped for {}",
-                    channel_key
+                    "hotlink tcp proxy: writer mapped canonical={} local={} active={} keys=[{}]",
+                    channel_key,
+                    local_key.clone().unwrap_or_else(|| "<none>".to_string()),
+                    mapped_as_active,
+                    keys
                 ));
             }
 
             let manager = self.clone();
             let channel = channel_key.clone();
+            let local_channel = local_key.clone();
+            let writer_for_cleanup = writer_arc.clone();
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 64 * 1024];
                 loop {
@@ -646,6 +701,7 @@ impl HotlinkManager {
                             n, channel
                         ));
                     }
+                    log_hotlink_tcp_dump("local->remote", &channel, None, &buf[..n]);
                     if let Err(err) = manager
                         .send_best_effort_ordered(
                             channel.clone(),
@@ -659,9 +715,59 @@ impl HotlinkManager {
                     }
                 }
                 if hotlink_debug_enabled() {
-                    crate::logging::info(format!("hotlink tcp proxy: closed channel={}", channel));
+                    let keys = {
+                        let writers = manager.tcp_writers.lock().await;
+                        debug_writer_keys(writers.keys().cloned())
+                    };
+                    crate::logging::info(format!(
+                        "hotlink tcp proxy: closed channel={} remaining_keys=[{}]",
+                        channel, keys
+                    ));
+                }
+                let mut writers = manager.tcp_writers.lock().await;
+                // Only clear entries that still point at this exact writer.
+                // Multiple accepts can exist transiently; removing by key alone
+                // can tear down the active mapping and recreate the desktop hang.
+                if writers
+                    .get(&channel)
+                    .map(|w| Arc::ptr_eq(w, &writer_for_cleanup))
+                    .unwrap_or(false)
+                {
+                    writers.remove(&channel);
+                }
+                if let Some(local_key) = &local_channel {
+                    if writers
+                        .get(local_key)
+                        .map(|w| Arc::ptr_eq(w, &writer_for_cleanup))
+                        .unwrap_or(false)
+                    {
+                        writers.remove(local_key);
+                    }
                 }
             });
+        }
+        self.clear_tcp_proxy_state(&channel_key, local_key.as_deref())
+            .await;
+    }
+
+    async fn clear_tcp_proxy_state(&self, channel_key: &str, local_key: Option<&str>) {
+        {
+            let mut proxies = self.tcp_proxies.lock().unwrap();
+            proxies.remove(channel_key);
+        }
+        {
+            let mut writers = self.tcp_writers.lock().await;
+            writers.remove(channel_key);
+            if let Some(local_key) = local_key {
+                writers.remove(local_key);
+            }
+        }
+        {
+            let mut reorder = self.tcp_reorder.lock().await;
+            reorder.remove(channel_key);
+            if let Some(local_key) = local_key {
+                reorder.remove(local_key);
+            }
         }
     }
 
@@ -854,6 +960,8 @@ impl HotlinkManager {
                 buf.pending.insert(frame.seq, frame.payload);
                 let mut guard = writer.lock().await;
                 while let Some(data) = buf.pending.remove(&buf.next_seq) {
+                    let seq = buf.next_seq;
+                    log_hotlink_tcp_dump("remote->local", &frame.path, Some(seq), &data);
                     if let Err(err) = guard.write_all(&data).await {
                         crate::logging::error(format!("hotlink tcp write failed: {err:?}"));
                         break;
@@ -867,6 +975,16 @@ impl HotlinkManager {
                 "hotlink tcp write skipped: no writer for path={} after retries",
                 frame.path
             ));
+            if hotlink_debug_enabled() {
+                let keys = {
+                    let writers = self.tcp_writers.lock().await;
+                    debug_writer_keys(writers.keys().cloned())
+                };
+                crate::logging::error(format!(
+                    "hotlink tcp write skipped detail: session={} frame_path={} known_writer_keys=[{}]",
+                    session.id, frame.path, keys
+                ));
+            }
         }
 
         if let Err(err) = self.write_ipc(&session.ipc_path, frame).await {
@@ -892,18 +1010,26 @@ impl HotlinkManager {
             return Some(w);
         }
         if hotlink_debug_enabled() {
+            let keys = {
+                let writers = self.tcp_writers.lock().await;
+                debug_writer_keys(writers.keys().cloned())
+            };
             crate::logging::info(format!(
-                "hotlink tcp writer not ready, waiting for path={}",
-                rel_path
+                "hotlink tcp writer not ready, waiting for path={} known_writer_keys=[{}]",
+                rel_path, keys
             ));
         }
         for _ in 0..60 {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             if let Some(w) = self.get_tcp_writer(rel_path).await {
                 if hotlink_debug_enabled() {
+                    let keys = {
+                        let writers = self.tcp_writers.lock().await;
+                        debug_writer_keys(writers.keys().cloned())
+                    };
                     crate::logging::info(format!(
-                        "hotlink tcp writer ready after wait path={}",
-                        rel_path
+                        "hotlink tcp writer ready after wait path={} known_writer_keys=[{}]",
+                        rel_path, keys
                     ));
                 }
                 return Some(w);
@@ -1834,6 +1960,66 @@ impl HotlinkManager {
 
 fn hotlink_debug_enabled() -> bool {
     std::env::var("SYFTBOX_HOTLINK_DEBUG").ok().as_deref() == Some("1")
+}
+
+fn hotlink_tcp_dump_enabled() -> bool {
+    env_flag_truthy("SYFTBOX_HOTLINK_TCP_DUMP")
+}
+
+fn hotlink_tcp_dump_full_enabled() -> bool {
+    env_flag_truthy("SYFTBOX_HOTLINK_TCP_DUMP_FULL")
+}
+
+fn hotlink_tcp_dump_preview_bytes() -> usize {
+    std::env::var("SYFTBOX_HOTLINK_TCP_DUMP_PREVIEW")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|n| n.clamp(1, 4096))
+        .unwrap_or(64)
+}
+
+fn env_flag_truthy(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+fn hex_encode(data: &[u8]) -> String {
+    let mut out = String::with_capacity(data.len() * 2);
+    for b in data {
+        let _ = write!(&mut out, "{:02x}", b);
+    }
+    out
+}
+
+fn log_hotlink_tcp_dump(direction: &str, channel: &str, seq: Option<u64>, payload: &[u8]) {
+    if !hotlink_tcp_dump_enabled() {
+        return;
+    }
+    let preview_len = if hotlink_tcp_dump_full_enabled() {
+        payload.len()
+    } else {
+        payload.len().min(hotlink_tcp_dump_preview_bytes())
+    };
+    let preview = &payload[..preview_len];
+    let truncated = preview_len < payload.len();
+    let seq_label = seq
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    crate::logging::info(format!(
+        "hotlink tcp dump: dir={} channel={} seq={} bytes={} sample_bytes={} truncated={} hex={}",
+        direction,
+        channel,
+        seq_label,
+        payload.len(),
+        preview.len(),
+        truncated,
+        hex_encode(preview)
+    ));
 }
 
 fn tcp_proxy_enabled() -> bool {
