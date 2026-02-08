@@ -182,6 +182,22 @@ destroy-docker-server:
     docker rmi syftbox-server syftbox-client 2>/dev/null || true
     echo "Docker environment cleaned up"
 
+# Run Docker NAT traversal test (WebRTC through simulated NAT)
+[group('dev-docker')]
+nat-test:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Docker NAT traversal test..."
+    bash docker/nat-test.sh
+
+# Run Docker NAT test without cleanup (for debugging)
+[group('dev-docker')]
+nat-test-debug:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Docker NAT traversal test (debug mode - no cleanup)..."
+    NAT_TEST_CLEANUP=0 bash docker/nat-test.sh
+
 [group('devstack')]
 sbdev-start *ARGS:
     GOCACHE=$(pwd)/.gocache go run ./cmd/devstack start {{ ARGS }}

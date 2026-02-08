@@ -34,6 +34,12 @@ Sequre CP1                  SyftBox Rust Client A         SyftBox Go Server     
 
 If QUIC fails or is disabled, steps 7-8 are skipped and step 10 goes via WebSocket through the server.
 
+**Phase 3 target:** Replace QUIC (steps 7-8) with WebRTC data channels for automatic NAT traversal:
+```
+  |  7. SDP offer/answer + ICE candidates (via HotlinkSignal over WS)     |
+  |  8. WebRTC data channel established (P2P through NAT, or TURN relay)  |
+```
+
 ### Protocol Messages
 
 | Type | ID | Fields | Purpose |
@@ -95,19 +101,17 @@ Written to `{datasite}/.syftbox/hotlink_telemetry.json` every 1000ms:
 - Send/write latency (avg, max)
 - QUIC offer/answer/fallback counters
 
-### Environment Variables
+### Environment Variables (Simplified)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SYFTBOX_HOTLINK` | `0` | Enable hotlink |
-| `SYFTBOX_HOTLINK_SOCKET_ONLY` | `0` | UNIX socket IPC only (no TCP proxy) |
-| `SYFTBOX_HOTLINK_TCP_PROXY` | `0` | Enable TCP proxy for Syqure channels |
-| `SYFTBOX_HOTLINK_TCP_PROXY_ADDR` | `127.0.0.1:0` | TCP proxy bind address |
-| `SYFTBOX_HOTLINK_QUIC` | `1` | Enable QUIC transport |
-| `SYFTBOX_HOTLINK_QUIC_ONLY` | `0` | Disable WS fallback |
-| `SYFTBOX_HOTLINK_STUN_SERVER` | `stun.l.google.com:19302` | STUN server for NAT discovery |
+| `SYFTBOX_HOTLINK` | `0` | Enable hotlink mode (WebRTC P2P + WS fallback + TCP proxy — all on) |
+| `SYFTBOX_HOTLINK_ICE_SERVERS` | `stun:stun.l.google.com:19302` | Custom ICE (STUN/TURN) servers, comma-separated |
 | `SYFTBOX_HOTLINK_DEBUG` | `0` | Verbose logging |
-| `SYFTBOX_HOTLINK_IPC` | (platform) | Force IPC mode: `tcp`, `unix`, `pipe` |
+
+**Removed (Rust):** `SOCKET_ONLY`, `TCP_PROXY`, `TCP_PROXY_ADDR`, `QUIC`, `QUIC_ONLY`, `P2P`, `P2P_ONLY`, `STUN_SERVER`, `IPC`. When hotlink is enabled, everything is on with sensible defaults. No knobs needed.
+
+**Go client** still reads old env vars for backwards compatibility until ported to WebRTC.
 
 ---
 
@@ -172,15 +176,133 @@ Written to `{datasite}/.syftbox/hotlink_telemetry.json` every 1000ms:
 
 4. **Aggregator telemetry** — Connections show "pending" despite scenario passing. Investigate if reporting bug or real issue.
 
-### Required for Internet / NAT
+### Phase 3: WebRTC NAT Traversal (In Progress)
 
-5. **STUN real-network testing** — Code exists, untested over actual NAT.
+Replace the custom QUIC+STUN negotiation with WebRTC data channels for automatic NAT traversal. The syftbox server already acts as a signaling server (both clients have open WS connections). WebRTC's ICE handles ~92-95% of NATs automatically; TURN relay covers the rest.
 
-6. **ICE candidate negotiation** — No candidate pair testing or priority ordering yet.
+**Libraries:**
+- Rust: `webrtc` crate v0.17 (webrtc-rs, tokio-based, pure Rust port of pion)
+- Go: `pion/webrtc` v4 (pure Go, no CGo) — later phase
 
-7. **TURN relay fallback** — For symmetric NAT. May not be needed if STUN success rate is high.
+**Connection upgrade strategy:**
+```
+1. Direct data channel (P2P, ~60% of NATs)       ← fastest
+2. STUN hole punch via ICE (additional ~30%)      ← still P2P
+3. TURN relay on server (symmetric NAT, ~5-8%)    ← server-relayed but lighter than WS
+4. WS relay (current fallback, always works)      ← heaviest overhead
+```
 
-8. **UDP hole-punching** — No NAT binding refresh logic yet.
+**Future upgrade path:** ICE-only path discovery (`webrtc-ice` subcrate) → hand raw UDP socket to `quinn` → run QUIC streams over NAT-punched path. Only if benchmarks show SCTP is a bottleneck.
+
+**Signaling flow (over existing WS):**
+```
+Alice                     Server                    Bob
+  |  HotlinkSignal         |                         |
+  |  (SDP offer) --------->|  forward SDP --------->|
+  |                         |                         |  create answer
+  |                         |<------- SDP answer ----|
+  |<------ SDP answer -----|                         |
+  |                         |                         |
+  |  ICE candidates ------->|  forward candidates -->|
+  |<------ candidates ------|<------ candidates -----|
+  |                         |                         |
+  |=========== data channel established ============>|
+  |  TCP proxy data flows over data channel          |
+```
+
+**Signal kinds (reuse HotlinkSignal type 14):**
+
+| kind | Purpose | `tok` field carries |
+|------|---------|-------------------|
+| `sdp_offer` | SDP offer | JSON `{type, sdp}` |
+| `sdp_answer` | SDP answer | JSON `{type, sdp}` |
+| `ice_candidate` | Trickle ICE | JSON RTCIceCandidateInit |
+| `webrtc_error` | Error | error in `err` field |
+
+No wsproto/server changes needed — existing fields (`sid`, `knd`, `tok`, `err`) carry everything. Server's `handleHotlinkSignal` is a pure relay that forwards any `kind` value.
+
+**Rust implementation (files to modify):**
+
+| File | Change |
+|------|--------|
+| `rust/Cargo.toml` | Remove quinn/rcgen/rustls, add webrtc v0.17 |
+| `rust/src/hotlink_manager.rs` | Replace ~700 lines of QUIC with ~310 lines of WebRTC |
+| `rust/src/hotlink.rs` | Add `parse_hotlink_frame_from_bytes()` for message-oriented parsing |
+
+**Function replacement map:**
+
+| Remove (QUIC) | Add (WebRTC) | Notes |
+|----------------|-------------|-------|
+| `maybe_start_quic_offer()` | `start_webrtc_offer()` | Create PeerConnection + DataChannel, SDP offer, ICE callbacks |
+| `accept_quic()` | (removed) | DataChannel `on_open` replaces this |
+| `handle_quic_offer()` | `handle_sdp_offer()` | Set remote desc, create answer |
+| `handle_quic_answer()` | `handle_sdp_answer()` | Set remote desc, flush pending ICE |
+| `try_send_quic()` | `try_send_webrtc()` | `data_channel.send(&Bytes::from(frame))` |
+| `quic_read_loop()` | (on_message callback) | WebRTC data channel is callback-based |
+| QUIC setup (~324 lines) | `create_webrtc_api()` (~30 lines) | WebRTC handles TLS/certs/STUN internally |
+| (new) | `handle_ice_candidate()` | Buffer or apply ICE candidates |
+
+**WebRTC session struct:**
+```rust
+struct WebRTCSession {
+    peer_connection: Arc<RTCPeerConnection>,
+    data_channel: Arc<RTCDataChannel>,
+    ready: Arc<Notify>,
+    ready_flag: Arc<AtomicBool>,
+    err: Arc<TokioMutex<Option<String>>>,
+    pending_candidates: Arc<TokioMutex<Vec<RTCIceCandidateInit>>>,
+}
+```
+
+**Data channel config:** ordered=true, no retransmit limit. Use `on_message` callback for receiving (each WebRTC message = one complete HLNK frame, message-oriented).
+
+**ICE candidate trickle:**
+- **Send:** `on_ice_candidate` callback → `HotlinkSignal(kind="ice_candidate", tok=json)`
+- **Receive:** `handle_ice_candidate()` → `peer_connection.add_ice_candidate()` or buffer if remote desc not yet set
+- **Flush:** After `set_remote_description()`, drain `pending_candidates`
+
+**WS fallback (same pattern as current QUIC):**
+```
+try_send_webrtc() → Ok(Some(())) → done
+                  → Ok(None)     → WS fallback
+                  → Err(_)       → WS fallback (unless p2p_only)
+```
+
+**Env variable simplification (Rust):**
+
+All granular env vars removed. `SYFTBOX_HOTLINK=1` enables everything:
+- WebRTC P2P (with ICE NAT traversal)
+- WS fallback (always available)
+- TCP proxy (for MPC channels)
+- IPC socket discovery
+
+Only optional overrides: `SYFTBOX_HOTLINK_ICE_SERVERS` (custom STUN/TURN) and `SYFTBOX_HOTLINK_DEBUG` (verbose logging).
+
+**Implementation steps:**
+
+5. **Cargo.toml** — Remove quinn/rcgen/rustls, add `webrtc = "0.17"`. Verify `cargo build`.
+
+6. **Frame parser** — Add `parse_hotlink_frame_from_bytes()` to `hotlink.rs`. WebRTC data channels are message-oriented (each message = one complete HLNK frame), so no magic-byte scanning needed.
+
+7. **WebRTC transport in Rust** — Replace all QUIC code in `hotlink_manager.rs`:
+   - `WebRTCSession` struct replaces `HotlinkQuicSession`/`HotlinkQuicOutbound`
+   - `create_webrtc_api()` replaces QUIC server/client config (~30 lines vs ~324)
+   - SDP offer/answer via `HotlinkSignal` (kind=`sdp_offer`/`sdp_answer`)
+   - Trickle ICE via `HotlinkSignal` (kind=`ice_candidate`)
+   - `on_message` callback replaces `quic_read_loop`
+   - Remove: `AcceptAnyCert`, STUN discovery, QUIC handshake, all `quinn` imports
+
+8. **Docker NAT simulation test** — Two isolated Docker networks (alice can't reach bob), server bridges both.
+   - `docker-compose.yml` with `net-alice`, `net-bob`, server on both
+   - Integration test that sends TCP proxy data and verifies delivery
+
+9. **TURN relay on server** — Run a TURN server alongside the syftbox server for symmetric NAT fallback.
+   - Use `pion/turn` (Go) — lightweight, embeddable TURN server
+   - Server provides TURN credentials to clients via `HotlinkSignal`
+
+10. **Go client WebRTC** — Port Rust implementation to Go using `pion/webrtc` v4.
+
+11. **Remove custom QUIC** — Once WebRTC data channels handle all transport in both clients, remove `quinn`/`quic-go` dependencies and custom STUN code.
 
 ### Nice to Have
 

@@ -1,0 +1,38 @@
+# Build stage - Rust client
+FROM rust:latest AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libssl-dev perl make cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/rust
+
+# Copy Rust source
+COPY rust/Cargo.toml rust/Cargo.lock ./
+COPY rust/src/ src/
+
+# Build release binary
+RUN cargo build --release
+
+# Final stage - must match builder base (Debian trixie) for GLIBC compat
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates bash iputils-ping netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root/
+
+# Copy the binary from builder
+COPY --from=builder /app/rust/target/release/syftbox-rs /usr/local/bin/syftbox
+
+# Create base directories
+RUN mkdir -p /root/.syftbox /data
+
+# Copy entrypoint script
+COPY docker/entrypoint-nat-test.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 7938
+
+ENTRYPOINT ["/entrypoint.sh"]
