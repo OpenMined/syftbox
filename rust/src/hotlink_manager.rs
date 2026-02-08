@@ -655,6 +655,8 @@ impl HotlinkManager {
                 // Do not clobber an existing active mapping for this channel.
                 // Desktop watchdog/health probes can briefly connect and close;
                 // replacing the writer here can blackhole in-flight remote frames.
+                // Keep this "first live writer wins" behavior unless a future
+                // design introduces explicit stream-role negotiation.
                 if writers.contains_key(&channel_key) {
                     false
                 } else {
@@ -723,6 +725,9 @@ impl HotlinkManager {
                     ));
                 }
                 let mut writers = manager.tcp_writers.lock().await;
+                // Only clear entries that still point at this exact writer.
+                // Multiple accepts can exist transiently; removing by key alone
+                // can tear down the active mapping and recreate the desktop hang.
                 if writers
                     .get(&channel)
                     .map(|w| Arc::ptr_eq(w, &writer_for_cleanup))
