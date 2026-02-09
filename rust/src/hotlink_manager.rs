@@ -2727,12 +2727,16 @@ fn owner_tcp_key(rel_marker: &Path, owner_email: &str) -> Option<String> {
 }
 
 /// Compute the hotlink path the PEER would use for their outbound traffic
-/// on this channel.  Both parties share the same channel directory name
-/// (e.g. `0_to_1`); only the email prefix differs.  The result is
-/// `{peer_email}/.../{channel_dir}/stream.tcp.request`.
-/// We register a TCP writer under this key so that incoming hotlink data
-/// from the peer (which carries their directional path) can be routed to
-/// the correct TCP socket.
+/// on the reverse direction of this channel.
+///
+/// In the 3-party case each direction has its own directory: party 1→2 uses
+/// `1_to_2/` while party 2→1 uses `2_to_1/`.  The peer sends on
+/// `{peer_email}/.../{to_pid}_to_{from_pid}/stream.tcp.request`, so we
+/// swap both the email prefix AND the PIDs in the channel directory.
+///
+/// For the 2-party case (both parties share `0_to_1`), `owner_to_key`
+/// already covers the same-dir match, so the reversed key here is harmless
+/// (it simply won't match any incoming data).
 fn peer_inbound_tcp_key(
     rel_marker: &Path,
     info: &TcpMarkerInfo,
@@ -2758,6 +2762,9 @@ fn peer_inbound_tcp_key(
         return None;
     }
     comps[0] = peer_email.to_string();
+    // Reverse the channel directory: 1_to_2 → 2_to_1
+    let channel_idx = comps.len().checked_sub(2)?;
+    comps[channel_idx] = format!("{}_to_{}", info.to_pid, info.from_pid);
     let last_idx = comps.len().checked_sub(1)?;
     comps[last_idx] = HOTLINK_TCP_SUFFIX.to_string();
     Some(comps.join("/"))
