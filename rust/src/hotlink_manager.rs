@@ -171,8 +171,17 @@ impl HotlinkManager {
         ws: crate::client::WsHandle,
         shutdown: Arc<Notify>,
     ) -> Self {
-        let enabled = std::env::var("SYFTBOX_HOTLINK").ok().as_deref() == Some("1");
-        let socket_only = std::env::var("SYFTBOX_HOTLINK_SOCKET_ONLY").ok().as_deref() == Some("1");
+        // Hotlink defaults to ON. Set SYFTBOX_HOTLINK=0 to disable.
+        let enabled = std::env::var("SYFTBOX_HOTLINK")
+            .ok()
+            .as_deref()
+            .map(|v| v != "0")
+            .unwrap_or(true);
+        let socket_only = std::env::var("SYFTBOX_HOTLINK_SOCKET_ONLY")
+            .ok()
+            .as_deref()
+            .map(|v| v != "0")
+            .unwrap_or(true);
         let quic_enabled = std::env::var("SYFTBOX_HOTLINK_QUIC")
             .ok()
             .as_deref()
@@ -2023,7 +2032,12 @@ fn log_hotlink_tcp_dump(direction: &str, channel: &str, seq: Option<u64>, payloa
 }
 
 fn tcp_proxy_enabled() -> bool {
-    std::env::var("SYFTBOX_HOTLINK_TCP_PROXY").ok().as_deref() == Some("1")
+    // TCP proxy defaults to ON. Set SYFTBOX_HOTLINK_TCP_PROXY=0 to disable.
+    std::env::var("SYFTBOX_HOTLINK_TCP_PROXY")
+        .ok()
+        .as_deref()
+        .map(|v| v != "0")
+        .unwrap_or(true)
 }
 
 fn tcp_proxy_bind_ip(owner_email: &str) -> String {
