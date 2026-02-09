@@ -182,6 +182,22 @@ destroy-docker-server:
     docker rmi syftbox-server syftbox-client 2>/dev/null || true
     echo "Docker environment cleaned up"
 
+# Run Docker NAT traversal test (WebRTC through simulated NAT)
+[group('dev-docker')]
+nat-test:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Docker NAT traversal test..."
+    bash docker/nat-test.sh
+
+# Run Docker NAT test without cleanup (for debugging)
+[group('dev-docker')]
+nat-test-debug:
+    #!/bin/bash
+    set -eou pipefail
+    echo "Running Docker NAT traversal test (debug mode - no cleanup)..."
+    NAT_TEST_CLEANUP=0 bash docker/nat-test.sh
+
 [group('devstack')]
 sbdev-start *ARGS:
     GOCACHE=$(pwd)/.gocache go run ./cmd/devstack start {{ ARGS }}
@@ -1485,6 +1501,22 @@ deploy-server remote: build-server
     scp .out/syftbox_server_linux_amd64_v1/syftbox_server {{ remote }}:/home/azureuser/syftbox_server_new
     ssh {{ remote }} "rm -fv /home/azureuser/syftbox_server && mv -fv /home/azureuser/syftbox_server_new /home/azureuser/syftbox_server"
     ssh {{ remote }} "sudo systemctl restart syftbox"
+
+[group('deploy')]
+deploy-turn remote turn_user turn_pass ssh_key="":
+    #!/bin/bash
+    set -euo pipefail
+    echo -e "{{ _cyan }}Deploying TURN server to {{ remote }}{{ _nc }}"
+    SSH_KEY="{{ ssh_key }}"
+    # Expand ~ manually
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    SSH_OPTS=""
+    if [ -n "$SSH_KEY" ]; then
+        SSH_OPTS="-i $SSH_KEY"
+    fi
+    scp $SSH_OPTS deploy/turnserver.conf deploy/coturn.service deploy/setup-coturn.sh "{{ remote }}":/tmp/
+    ssh $SSH_OPTS "{{ remote }}" "chmod +x /tmp/setup-coturn.sh && sudo /tmp/setup-coturn.sh '{{ turn_user }}' '{{ turn_pass }}'"
+    echo -e "{{ _green }}TURN server deployed to {{ remote }}{{ _nc }}"
 
 [group('deploy')]
 deploy remote: (deploy-client remote) (deploy-server remote)

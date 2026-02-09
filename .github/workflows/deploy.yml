@@ -82,5 +82,26 @@ jobs:
               exit 1
               ;;
           esac
-          
+
           just deploy $REMOTE
+
+      - name: Deploy TURN server
+        if: env.TURN_USER != '' && env.TURN_PASS != ''
+        env:
+          TURN_USER: ${{ secrets.TURN_USER }}
+          TURN_PASS: ${{ secrets.TURN_PASS }}
+        run: |
+          case "${{ inputs.environment }}" in
+            "dev")
+              REMOTE="${{ secrets.SSH_USER_DEV }}@${{ secrets.SSH_HOST_DEV }}"
+              ;;
+            "stage")
+              REMOTE="${{ secrets.SSH_USER_STAGE }}@${{ secrets.SSH_HOST_STAGE }}"
+              ;;
+            *)
+              echo "Unknown environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+
+          just deploy-turn $REMOTE "$TURN_USER" "$TURN_PASS"

@@ -19,6 +19,7 @@ use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::{
         client::IntoClientRequest,
+        handshake::client::Response as WsResponse,
         http::header::AUTHORIZATION,
         http::HeaderValue,
         http::StatusCode as HttpStatusCode,
@@ -49,6 +50,47 @@ static ACL_READY: AtomicBool = AtomicBool::new(false);
 type PendingAcks = std::sync::Arc<
     tokio::sync::Mutex<std::collections::HashMap<String, oneshot::Sender<Result<()>>>>,
 >;
+
+fn maybe_apply_hotlink_ice_from_server(resp: &WsResponse) {
+    if env::var("SYFTBOX_HOTLINK_ICE_SERVERS").is_err() {
+        if let Some(ice) = resp
+            .headers()
+            .get("X-Syft-Hotlink-Ice-Servers")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            env::set_var("SYFTBOX_HOTLINK_ICE_SERVERS", ice);
+            crate::logging::info(format!("hotlink ICE servers from server: {}", ice));
+        }
+    }
+
+    if env::var("SYFTBOX_HOTLINK_TURN_USER").is_err() {
+        if let Some(user) = resp
+            .headers()
+            .get("X-Syft-Hotlink-Turn-User")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            env::set_var("SYFTBOX_HOTLINK_TURN_USER", user);
+            crate::logging::info(format!("hotlink TURN user from server: {}", user));
+        }
+    }
+
+    if env::var("SYFTBOX_HOTLINK_TURN_PASS").is_err() {
+        if let Some(pass) = resp
+            .headers()
+            .get("X-Syft-Hotlink-Turn-Pass")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            env::set_var("SYFTBOX_HOTLINK_TURN_PASS", pass);
+            crate::logging::info("hotlink TURN pass from server: [set]".to_string());
+        }
+    }
+}
 
 pub struct Client {
     cfg: Config,
@@ -657,6 +699,7 @@ async fn run_ws_listener(
             }
         };
         backoff = Duration::from_millis(250);
+        maybe_apply_hotlink_ice_from_server(&resp);
 
         let enc_header = resp
             .headers()
@@ -836,7 +879,9 @@ async fn handle_ws_message(
             .await
         }
         Decoded::HotlinkOpen(open) => {
-            hotlink_mgr.handle_open(open.session_id, open.path).await;
+            hotlink_mgr
+                .handle_open(open.session_id, open.path, open.from)
+                .await;
         }
         Decoded::HotlinkAccept(accept) => {
             hotlink_mgr.handle_accept(accept.session_id).await;

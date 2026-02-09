@@ -239,6 +239,42 @@ pub async fn dial_hotlink_ipc(marker_path: &Path, timeout: Duration) -> Result<H
     }
 }
 
+pub fn parse_hotlink_frame_from_bytes(data: &[u8]) -> Result<HotlinkFrame> {
+    let header_len = 4 + 1 + 2 + 2 + 4 + 8; // magic + version + path_len + etag_len + payload_len + seq
+    if data.len() < header_len {
+        anyhow::bail!("hotlink frame too short: {} < {}", data.len(), header_len);
+    }
+    if &data[0..4] != HOTLINK_FRAME_MAGIC {
+        anyhow::bail!("invalid hotlink frame magic");
+    }
+    let version = data[4];
+    if version != HOTLINK_FRAME_VERSION {
+        anyhow::bail!("unsupported hotlink frame version: {version}");
+    }
+    let path_len = u16::from_be_bytes([data[5], data[6]]) as usize;
+    let etag_len = u16::from_be_bytes([data[7], data[8]]) as usize;
+    let payload_len = u32::from_be_bytes([data[9], data[10], data[11], data[12]]) as usize;
+    let seq = u64::from_be_bytes([
+        data[13], data[14], data[15], data[16], data[17], data[18], data[19], data[20],
+    ]);
+    let total = header_len + path_len + etag_len + payload_len;
+    if data.len() < total {
+        anyhow::bail!("hotlink frame truncated: {} < {}", data.len(), total);
+    }
+    let path = String::from_utf8(data[header_len..header_len + path_len].to_vec())
+        .context("hotlink frame path utf8")?;
+    let etag =
+        String::from_utf8(data[header_len + path_len..header_len + path_len + etag_len].to_vec())
+            .context("hotlink frame etag utf8")?;
+    let payload = data[header_len + path_len + etag_len..total].to_vec();
+    Ok(HotlinkFrame {
+        path,
+        etag,
+        seq,
+        payload,
+    })
+}
+
 pub fn encode_hotlink_frame(frame: &HotlinkFrame) -> Vec<u8> {
     let path_bytes = frame.path.as_bytes();
     let etag_bytes = frame.etag.as_bytes();

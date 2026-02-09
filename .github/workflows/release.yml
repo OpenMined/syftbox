@@ -132,7 +132,16 @@ jobs:
         run: |
           REMOTE="${{ secrets.SSH_USER_PROD }}@${{ secrets.SSH_HOST_PROD }}"
           just deploy $REMOTE
-        
+
+      - name: Deploy TURN server
+        if: env.TURN_USER != '' && env.TURN_PASS != ''
+        env:
+          TURN_USER: ${{ secrets.TURN_USER }}
+          TURN_PASS: ${{ secrets.TURN_PASS }}
+        run: |
+          REMOTE="${{ secrets.SSH_USER_PROD }}@${{ secrets.SSH_HOST_PROD }}"
+          just deploy-turn $REMOTE "$TURN_USER" "$TURN_PASS"
+
       - name: Create release
         uses: ncipollo/release-action@v1
         with:

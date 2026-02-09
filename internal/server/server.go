@@ -419,11 +419,39 @@ func (s *Server) handleHotlinkOpen(msg *ws.ClientMessage) {
 		return
 	}
 
-	s.hotlinkStore.Open(open.SessionID, open.Path, from, msg.ConnID)
+	toUser := strings.TrimSpace(open.To)
+	if toUser == from {
+		toUser = ""
+	}
+	if toUser != "" {
+		if err := s.svc.ACL.CanAccess(
+			acl.NewRequest(open.Path, &acl.User{ID: toUser}, acl.AccessRead),
+		); err != nil {
+			slog.Warn("hotlink open target not permitted", msgGroup, "to", toUser, "error", err)
+			s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(open.SessionID, "permission denied"))
+			return
+		}
+	}
 
-	s.hub.BroadcastFiltered(msg.Message, func(info *ws.ClientInfo) bool {
+	s.hotlinkStore.Open(open.SessionID, open.Path, from, toUser, msg.ConnID)
+
+	forward := &syftmsg.Message{
+		Id:   msg.Message.Id,
+		Type: syftmsg.MsgHotlinkOpen,
+		Data: syftmsg.HotlinkOpen{
+			SessionID: open.SessionID,
+			Path:      open.Path,
+			From:      from,
+			To:        toUser,
+		},
+	}
+
+	s.hub.BroadcastFiltered(forward, func(info *ws.ClientInfo) bool {
 		to := info.User
 		if to == from {
+			return false
+		}
+		if toUser != "" && to != toUser {
 			return false
 		}
 		if err := s.svc.ACL.CanAccess(
@@ -450,6 +478,18 @@ func (s *Server) handleHotlinkAccept(msg *ws.ClientMessage) {
 
 	if msg.ClientInfo.User == session.FromUser {
 		return
+	}
+	if session.ToUser != "" && msg.ClientInfo.User != session.ToUser {
+		s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(accept.SessionID, "permission denied"))
+		return
+	}
+	if strings.HasSuffix(session.Path, "/stream.tcp.request") {
+		for _, acceptedUser := range session.Accepted {
+			if acceptedUser != msg.ClientInfo.User {
+				s.hub.SendMessage(msg.ConnID, syftmsg.NewHotlinkReject(accept.SessionID, "already accepted"))
+				return
+			}
+		}
 	}
 
 	if err := s.svc.ACL.CanAccess(
@@ -505,6 +545,28 @@ func (s *Server) handleHotlinkData(msg *ws.ClientMessage) {
 	if msg.ClientInfo.User != session.FromUser {
 		slog.Warn("hotlink data rejected (not sender)", "session", data.SessionID, "from", msg.ClientInfo.User)
 		return
+	}
+
+	allowedRecipients := make([]string, 0, len(session.Accepted))
+	for connID, user := range session.Accepted {
+		if err := s.svc.ACL.CanAccess(
+			acl.NewRequest(session.Path, &acl.User{ID: user}, acl.AccessRead),
+		); err != nil {
+			continue
+		}
+		allowedRecipients = append(allowedRecipients, user+"@"+connID)
+	}
+	if os.Getenv("SYFTBOX_HOTLINK_DEBUG") == "1" && (len(allowedRecipients) != 1 || data.Seq <= 3 || data.Seq%500 == 0) {
+		slog.Info(
+			"hotlink data relay",
+			"session", data.SessionID,
+			"from", msg.ClientInfo.User,
+			"path", data.Path,
+			"seq", data.Seq,
+			"bytes", len(data.Payload),
+			"recipients", len(allowedRecipients),
+			"to", allowedRecipients,
+		)
 	}
 
 	for connID, user := range session.Accepted {
