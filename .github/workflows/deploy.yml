@@ -86,7 +86,10 @@ jobs:
           just deploy $REMOTE
 
       - name: Deploy TURN server
-        if: ${{ secrets.TURN_USER != '' && secrets.TURN_PASS != '' }}
+        if: env.TURN_USER != '' && env.TURN_PASS != ''
+        env:
+          TURN_USER: ${{ secrets.TURN_USER }}
+          TURN_PASS: ${{ secrets.TURN_PASS }}
         run: |
           case "${{ inputs.environment }}" in
             "dev")
@@ -101,4 +104,4 @@ jobs:
               ;;
           esac
 
-          just deploy-turn $REMOTE "${{ secrets.TURN_USER }}" "${{ secrets.TURN_PASS }}"
+          just deploy-turn $REMOTE "$TURN_USER" "$TURN_PASS"
