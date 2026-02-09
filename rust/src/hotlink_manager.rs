@@ -80,6 +80,7 @@ pub struct HotlinkManager {
     ipc_writers: Arc<TokioMutex<HashMap<PathBuf, Arc<TokioMutex<HotlinkIpcWriter>>>>>,
     local_readers: Arc<StdMutex<HashMap<PathBuf, ()>>>,
     tcp_writers: Arc<TokioMutex<HashMap<String, TcpWriterEntry>>>,
+    tcp_writers_standby: Arc<TokioMutex<HashMap<String, TcpWriterEntry>>>,
     tcp_proxies: Arc<StdMutex<HashMap<String, TcpProxyInfo>>>,
     tcp_reorder: Arc<TokioMutex<HashMap<String, TcpReorderBuf>>>,
     tcp_bind_ip: Arc<StdMutex<Option<String>>>,
@@ -92,6 +93,7 @@ pub struct HotlinkManager {
 struct HotlinkSession {
     id: String,
     path: String,
+    remote_user: Option<String>,
     dir_abs: PathBuf,
     ipc_path: PathBuf,
     accept_path: PathBuf,
@@ -103,6 +105,7 @@ struct HotlinkOutbound {
     id: String,
     path_key: String,
     accepted: bool,
+    adopted_from_inbound: bool,
     seq: u64,
     notify: Arc<Notify>,
     rejected: Option<String>,
@@ -156,6 +159,76 @@ struct HotlinkTelemetryState {
 }
 
 impl HotlinkManager {
+    async fn promote_standby_tcp_writer(&self, key: &str) -> bool {
+        let replacement = {
+            let mut standby = self.tcp_writers_standby.lock().await;
+            standby.remove(key)
+        };
+        if let Some(entry) = replacement {
+            let mut writers = self.tcp_writers.lock().await;
+            let active_ok = writers
+                .get(key)
+                .map(|e| e.active.load(Ordering::Relaxed))
+                .unwrap_or(false);
+            if !active_ok {
+                writers.insert(key.to_string(), entry);
+                if hotlink_debug_enabled() {
+                    crate::logging::info(format!("hotlink tcp writer promoted standby key={}", key));
+                }
+                return true;
+            }
+            drop(writers);
+            let mut standby = self.tcp_writers_standby.lock().await;
+            if !standby.contains_key(key) {
+                standby.insert(key.to_string(), entry);
+            }
+        }
+        false
+    }
+
+    async fn upsert_tcp_writer_key(
+        &self,
+        key: &str,
+        writer: Arc<TokioMutex<tokio::net::tcp::OwnedWriteHalf>>,
+        active: Arc<AtomicBool>,
+    ) -> bool {
+        let entry = TcpWriterEntry { writer, active };
+        let mut writers = self.tcp_writers.lock().await;
+        let current_active = writers
+            .get(key)
+            .map(|e| e.active.load(Ordering::Relaxed))
+            .unwrap_or(false);
+        if !current_active {
+            writers.insert(key.to_string(), entry);
+            drop(writers);
+            let mut standby = self.tcp_writers_standby.lock().await;
+            standby.remove(key);
+            true
+        } else {
+            drop(writers);
+            let mut standby = self.tcp_writers_standby.lock().await;
+            standby.insert(key.to_string(), entry);
+            false
+        }
+    }
+
+    async fn clear_tcp_writer_key_if_current(
+        &self,
+        key: &str,
+        current_writer: &Arc<TokioMutex<tokio::net::tcp::OwnedWriteHalf>>,
+    ) {
+        {
+            let mut writers = self.tcp_writers.lock().await;
+            if matches!(
+                writers.get(key),
+                Some(entry) if Arc::ptr_eq(&entry.writer, current_writer)
+            ) {
+                writers.remove(key);
+            }
+        }
+        let _ = self.promote_standby_tcp_writer(key).await;
+    }
+
     pub fn new(
         datasites_root: PathBuf,
         ws: crate::client::WsHandle,
@@ -177,6 +250,7 @@ impl HotlinkManager {
             ipc_writers: Arc::new(TokioMutex::new(HashMap::new())),
             local_readers: Arc::new(StdMutex::new(HashMap::new())),
             tcp_writers: Arc::new(TokioMutex::new(HashMap::new())),
+            tcp_writers_standby: Arc::new(TokioMutex::new(HashMap::new())),
             tcp_proxies: Arc::new(StdMutex::new(HashMap::new())),
             tcp_reorder: Arc::new(TokioMutex::new(HashMap::new())),
             tcp_bind_ip: Arc::new(StdMutex::new(None)),
@@ -723,8 +797,9 @@ impl HotlinkManager {
         let local_key = local_tcp_key(&rel_marker);
         let owner_from_key = owner_tcp_key(&rel_marker, &info.from_email);
         let owner_to_key = owner_tcp_key(&rel_marker, &info.to_email);
-        // Use canonical channel key for outbound frames. This matches ACL ownership for
-        // _mpc channel paths and avoids permission-denied opens on peer-owned paths.
+        // Keep outbound on canonical key to match existing ACL ownership.
+        // Self-routing protection is handled in send_hotlink by reusing/waiting
+        // for inbound peer sessions when owner == local.
         let outbound_key = channel_key.clone();
         let port = info.port;
 
@@ -774,76 +849,43 @@ impl HotlinkManager {
 
             let writer_arc = Arc::new(TokioMutex::new(writer));
             let writer_active = Arc::new(AtomicBool::new(true));
-            {
-                let mut writers = self.tcp_writers.lock().await;
-                let existing_active = writers
-                    .get(&channel_key)
-                    .map(|entry| entry.active.load(Ordering::Relaxed))
-                    .unwrap_or(false);
-                if !existing_active {
-                    writers.insert(
-                        channel_key.clone(),
-                        TcpWriterEntry {
-                            writer: writer_arc.clone(),
-                            active: writer_active.clone(),
-                        },
-                    );
-                }
-                if let Some(local_key) = &local_key {
-                    let local_existing_active = writers
-                        .get(local_key)
-                        .map(|entry| entry.active.load(Ordering::Relaxed))
-                        .unwrap_or(false);
-                    if !local_existing_active {
-                        writers.insert(
-                            local_key.clone(),
-                            TcpWriterEntry {
-                                writer: writer_arc.clone(),
-                                active: writer_active.clone(),
-                            },
-                        );
-                    }
-                }
-                if let Some(owner_from_key) = &owner_from_key {
-                    let owner_from_existing_active = writers
-                        .get(owner_from_key)
-                        .map(|entry| entry.active.load(Ordering::Relaxed))
-                        .unwrap_or(false);
-                    if !owner_from_existing_active {
-                        writers.insert(
-                            owner_from_key.clone(),
-                            TcpWriterEntry {
-                                writer: writer_arc.clone(),
-                                active: writer_active.clone(),
-                            },
-                        );
-                    }
-                }
-                if let Some(owner_to_key) = &owner_to_key {
-                    let owner_to_existing_active = writers
-                        .get(owner_to_key)
-                        .map(|entry| entry.active.load(Ordering::Relaxed))
-                        .unwrap_or(false);
-                    if !owner_to_existing_active {
-                        writers.insert(
-                            owner_to_key.clone(),
-                            TcpWriterEntry {
-                                writer: writer_arc.clone(),
-                                active: writer_active.clone(),
-                            },
-                        );
-                    }
-                }
-                if debug {
-                    crate::logging::info(format!(
-                        "hotlink tcp proxy: writer mapped keys channel={} local={:?} owner_from={:?} owner_to={:?} active={}",
-                        channel_key,
-                        local_key,
-                        owner_from_key,
-                        owner_to_key,
-                        !existing_active
-                    ));
-                }
+            let channel_mapped = self
+                .upsert_tcp_writer_key(&channel_key, writer_arc.clone(), writer_active.clone())
+                .await;
+            let local_mapped = if let Some(local_key) = &local_key {
+                self.upsert_tcp_writer_key(local_key, writer_arc.clone(), writer_active.clone())
+                    .await
+            } else {
+                false
+            };
+            let owner_from_mapped = if let Some(owner_from_key) = &owner_from_key {
+                self.upsert_tcp_writer_key(
+                    owner_from_key,
+                    writer_arc.clone(),
+                    writer_active.clone(),
+                )
+                .await
+            } else {
+                false
+            };
+            let owner_to_mapped = if let Some(owner_to_key) = &owner_to_key {
+                self.upsert_tcp_writer_key(owner_to_key, writer_arc.clone(), writer_active.clone())
+                    .await
+            } else {
+                false
+            };
+            if debug {
+                crate::logging::info(format!(
+                    "hotlink tcp proxy: writer mapped keys channel={} local={:?} owner_from={:?} owner_to={:?} active(channel/local/from/to)={}/{}/{}/{}",
+                    channel_key,
+                    local_key,
+                    owner_from_key,
+                    owner_to_key,
+                    channel_mapped,
+                    local_mapped,
+                    owner_from_mapped,
+                    owner_to_mapped
+                ));
             }
 
             let manager = self.clone();
@@ -885,49 +927,38 @@ impl HotlinkManager {
                     crate::logging::info(format!("hotlink tcp proxy: closed channel={}", channel));
                 }
                 writer_active_for_cleanup.store(false, Ordering::Relaxed);
-                let mut writers = manager.tcp_writers.lock().await;
-                if matches!(
-                    writers.get(&channel),
-                    Some(entry) if Arc::ptr_eq(&entry.writer, &writer_for_cleanup)
-                ) {
-                    writers.remove(&channel);
-                }
+                manager
+                    .clear_tcp_writer_key_if_current(&channel, &writer_for_cleanup)
+                    .await;
                 if let Some(local_key) = local_channel {
-                    if matches!(
-                        writers.get(&local_key),
-                        Some(entry) if Arc::ptr_eq(&entry.writer, &writer_for_cleanup)
-                    ) {
-                        writers.remove(&local_key);
-                    }
+                    manager
+                        .clear_tcp_writer_key_if_current(&local_key, &writer_for_cleanup)
+                        .await;
                 }
                 if let Some(owner_from_key) = owner_from_channel {
-                    if matches!(
-                        writers.get(&owner_from_key),
-                        Some(entry) if Arc::ptr_eq(&entry.writer, &writer_for_cleanup)
-                    ) {
-                        writers.remove(&owner_from_key);
-                    }
+                    manager
+                        .clear_tcp_writer_key_if_current(&owner_from_key, &writer_for_cleanup)
+                        .await;
                 }
                 if let Some(owner_to_key) = owner_to_channel {
-                    if matches!(
-                        writers.get(&owner_to_key),
-                        Some(entry) if Arc::ptr_eq(&entry.writer, &writer_for_cleanup)
-                    ) {
-                        writers.remove(&owner_to_key);
-                    }
+                    manager
+                        .clear_tcp_writer_key_if_current(&owner_to_key, &writer_for_cleanup)
+                        .await;
                 }
             });
         }
     }
 
-    pub async fn handle_open(&self, session_id: String, path: String) {
+    pub async fn handle_open(&self, session_id: String, path: String, from: Option<String>) {
         if !self.enabled {
             return;
         }
         if hotlink_debug_enabled() {
             crate::logging::info(format!(
-                "hotlink open received: session={} path={}",
-                session_id, path
+                "hotlink open received: session={} path={} from={}",
+                session_id,
+                path,
+                from.as_deref().unwrap_or("")
             ));
         }
 
@@ -963,6 +994,7 @@ impl HotlinkManager {
         let session = HotlinkSession {
             id: session_id.clone(),
             path: path.clone(),
+            remote_user: from.clone(),
             dir_abs,
             ipc_path: ipc_path.clone(),
             accept_path: accept_path.clone(),
@@ -1119,10 +1151,10 @@ impl HotlinkManager {
             payload,
         };
 
-        self.handle_frame(&ipc_path, frame).await;
+        self.handle_frame(&ipc_path, frame, Some(&session_id)).await;
     }
 
-    async fn handle_frame(&self, ipc_path: &Path, frame: HotlinkFrame) {
+    async fn handle_frame(&self, ipc_path: &Path, frame: HotlinkFrame, session_id: Option<&str>) {
         let payload_len = frame.payload.len();
         let write_started = tokio::time::Instant::now();
         if is_tcp_proxy_path(&frame.path) {
@@ -1133,9 +1165,13 @@ impl HotlinkManager {
                 // where a slow TCP consumer (e.g. aggregator trusted dealer) holds the
                 // reorder lock across write_all, blocking all other paths.
                 let ready_frames = {
+                    let reorder_key = match session_id {
+                        Some(sid) => format!("{}#{}", frame.path, sid),
+                        None => frame.path.clone(),
+                    };
                     let mut reorder = self.tcp_reorder.lock().await;
                     let buf = reorder
-                        .entry(frame.path.clone())
+                        .entry(reorder_key)
                         .or_insert_with(|| TcpReorderBuf {
                             next_seq: 1,
                             pending: BTreeMap::new(),
@@ -1789,7 +1825,7 @@ impl HotlinkManager {
             sessions.get(session_id).map(|s| s.ipc_path.clone())
         };
         if let Some(ipc_path) = ipc_path {
-            self.handle_frame(&ipc_path, frame).await;
+            self.handle_frame(&ipc_path, frame, Some(session_id)).await;
             return;
         }
 
@@ -1803,7 +1839,8 @@ impl HotlinkManager {
                     session_id, frame.path
                 ));
             }
-            self.handle_frame(Path::new(""), frame).await;
+            self.handle_frame(Path::new(""), frame, Some(session_id))
+                .await;
             return;
         }
 
@@ -1896,23 +1933,146 @@ impl HotlinkManager {
 
     async fn send_hotlink(&self, rel_path: String, etag: String, payload: Vec<u8>) -> Result<()> {
         let payload_len = payload.len();
+        let p2p_only = self.is_p2p_only();
         let path_key = parent_path(&rel_path);
-        let existing_session = {
+        let owner_is_local = self
+            .local_email
+            .lock()
+            .unwrap()
+            .as_deref()
+            .map(|local| path_key.split('/').next() == Some(local))
+            .unwrap_or(false);
+
+        let mut existing_session = {
             let guard = self.outbound_by_path.read().await;
             guard.get(&path_key).cloned()
         };
-        let inbound_session = if existing_session.is_none() {
-            let sessions = self.sessions.read().await;
-            sessions.iter().find_map(|(sid, sess)| {
-                if parent_path(&sess.path) == path_key {
-                    Some((sid.clone(), sess.webrtc.clone()))
-                } else {
-                    None
+        // In WS-fallback mode, outbound session ownership must stay local
+        // (server forwards hotlink data only from session.FromUser).
+        // Any previously adopted inbound session is invalid for WS sending.
+        if !p2p_only {
+            if let Some(id) = existing_session.clone() {
+                let adopted = {
+                    let out = self.outbound.read().await;
+                    out.get(&id).map(|e| e.adopted_from_inbound).unwrap_or(false)
+                };
+                if adopted {
+                    self.remove_outbound(&id).await;
+                    existing_session = None;
                 }
+            }
+        }
+        // Self-routed TCP sessions can occur when owner(path) == local.
+        // Those sessions are locally initiated (present in `outbound`) and
+        // also reflected in `sessions` with the same sid/path. Ignore them.
+        if is_tcp_proxy_path(&rel_path) && owner_is_local {
+            if let Some(id) = existing_session.clone() {
+                let local_email = self.local_email.lock().unwrap().clone();
+                let self_routed = {
+                    let out = self.outbound.read().await;
+                    let sess = self.sessions.read().await;
+                    let local_outbound = out
+                        .get(&id)
+                        .map(|e| e.path_key == path_key)
+                        .unwrap_or(false);
+                    let inbound_same_path = sess.get(&id).map(|s| {
+                        let same_path = parent_path(&s.path) == path_key;
+                        let self_peer = match (s.remote_user.as_deref(), local_email.as_deref()) {
+                            (Some(remote), Some(local)) => remote == local,
+                            _ => false,
+                        };
+                        same_path && self_peer
+                    });
+                    local_outbound && inbound_same_path.unwrap_or(false)
+                };
+                if self_routed {
+                    if hotlink_debug_enabled() {
+                        crate::logging::info(format!(
+                            "hotlink tcp self-route guard: discarding existing self session={} path={}",
+                            &id[..8.min(id.len())],
+                            rel_path
+                        ));
+                    }
+                    existing_session = None;
+                }
+            }
+        }
+        let mut inbound_session = if p2p_only && existing_session.is_none() {
+            let local_email = self.local_email.lock().unwrap().clone();
+            let sessions = self.sessions.read().await;
+            let outbound = self.outbound.read().await;
+            sessions.iter().find_map(|(sid, sess)| {
+                if parent_path(&sess.path) != path_key {
+                    return None;
+                }
+                if is_tcp_proxy_path(&rel_path)
+                    && owner_is_local
+                    && matches!(
+                        (sess.remote_user.as_deref(), local_email.as_deref()),
+                        (Some(remote), Some(local)) if remote == local
+                    )
+                {
+                    return None;
+                }
+                // Ignore locally-initiated sessions when owner(path) == local:
+                // those are self-routes, not peer inbound channels.
+                if is_tcp_proxy_path(&rel_path) && owner_is_local {
+                    if let Some(entry) = outbound.get(sid) {
+                        if entry.path_key == path_key && !entry.adopted_from_inbound {
+                            return None;
+                        }
+                    }
+                }
+                Some((sid.clone(), sess.webrtc.clone()))
             })
         } else {
             None
         };
+
+        // For TCP proxy paths owned by local, opening a new outbound can self-route.
+        // Give the real peer a short window to open first, then reuse that inbound session.
+        if existing_session.is_none()
+            && inbound_session.is_none()
+            && is_tcp_proxy_path(&rel_path)
+            && owner_is_local
+            && p2p_only
+        {
+            let mut waited = Duration::from_millis(0);
+            while waited < HOTLINK_ACCEPT_TIMEOUT {
+                tokio::time::sleep(HOTLINK_IPC_RETRY_DELAY).await;
+                waited += HOTLINK_IPC_RETRY_DELAY;
+                let local_email = self.local_email.lock().unwrap().clone();
+                let sessions = self.sessions.read().await;
+                let outbound = self.outbound.read().await;
+                inbound_session = sessions.iter().find_map(|(sid, sess)| {
+                    if parent_path(&sess.path) != path_key {
+                        return None;
+                    }
+                    if matches!(
+                        (sess.remote_user.as_deref(), local_email.as_deref()),
+                        (Some(remote), Some(local)) if remote == local
+                    ) {
+                        return None;
+                    }
+                    if let Some(entry) = outbound.get(sid) {
+                        if entry.path_key == path_key && !entry.adopted_from_inbound {
+                            return None;
+                        }
+                    }
+                    Some((sid.clone(), sess.webrtc.clone()))
+                });
+                if inbound_session.is_some() {
+                    if hotlink_debug_enabled() {
+                        crate::logging::info(format!(
+                            "hotlink tcp self-route guard: reused inbound after {}ms path={}",
+                            waited.as_millis(),
+                            rel_path
+                        ));
+                    }
+                    break;
+                }
+            }
+        }
 
         let (session_id, is_new) = if let Some(id) = existing_session {
             (id, false)
@@ -1928,6 +2088,7 @@ impl HotlinkManager {
                 id: id.clone(),
                 path_key: path_key.clone(),
                 accepted: true,
+                adopted_from_inbound: true,
                 seq: 0,
                 notify: Arc::new(Notify::new()),
                 rejected: None,
@@ -1950,6 +2111,7 @@ impl HotlinkManager {
                 id: id.clone(),
                 path_key: path_key.clone(),
                 accepted: false,
+                adopted_from_inbound: false,
                 seq: 0,
                 notify: Arc::new(Notify::new()),
                 rejected: None,
@@ -1961,13 +2123,37 @@ impl HotlinkManager {
                 .write()
                 .await
                 .insert(path_key.clone(), id.clone());
-            if let Err(err) = self.send_open(&id, rel_path.clone()).await {
+            let preferred_to = {
+                let local_email = self.local_email.lock().unwrap().clone();
+                let sessions = self.sessions.read().await;
+                sessions.values().find_map(|s| {
+                    if parent_path(&s.path) != path_key {
+                        return None;
+                    }
+                    let remote = s.remote_user.as_ref()?.to_string();
+                    if local_email.as_deref() == Some(remote.as_str()) {
+                        return None;
+                    }
+                    Some(remote)
+                })
+            };
+            if let Err(err) = self.send_open(&id, rel_path.clone(), preferred_to).await {
                 crate::logging::error(format!("hotlink send open failed: {err:?}"));
                 self.remove_outbound(&id).await;
                 return Err(err);
             }
             (id, true)
         };
+
+        if hotlink_debug_enabled() && is_tcp_proxy_path(&rel_path) {
+            crate::logging::info(format!(
+                "hotlink send path selected: path={} session={} is_new={} p2p_only={}",
+                rel_path,
+                &session_id[..8.min(session_id.len())],
+                is_new,
+                p2p_only
+            ));
+        }
 
         // Only block-wait for accept on newly created sessions.
         // For existing sessions, check non-blocking so we don't stall the TCP read loop.
@@ -2003,7 +2189,19 @@ impl HotlinkManager {
             }
         };
 
-        let p2p_only = self.is_p2p_only();
+        if hotlink_debug_enabled()
+            && is_tcp_proxy_path(&rel_path)
+            && (seq <= 3 || seq % 500 == 0)
+        {
+            crate::logging::info(format!(
+                "hotlink send data: path={} session={} seq={} bytes={}",
+                rel_path,
+                &session_id[..8.min(session_id.len())],
+                seq,
+                payload_len
+            ));
+        }
+
         {
             let send_started = tokio::time::Instant::now();
             // In p2p_only mode, wait for WebRTC data channel to be ready.
@@ -2202,7 +2400,7 @@ impl HotlinkManager {
         Ok(())
     }
 
-    async fn send_open(&self, session_id: &str, path: String) -> Result<()> {
+    async fn send_open(&self, session_id: &str, path: String, to: Option<String>) -> Result<()> {
         let id = Uuid::new_v4().to_string();
         if hotlink_debug_enabled() {
             crate::logging::info(format!(
@@ -2217,7 +2415,7 @@ impl HotlinkManager {
                 let payload = serde_json::json!({
                     "id": id,
                     "typ": 9,
-                    "dat": {"sid": session_id, "pth": path}
+                    "dat": {"sid": session_id, "pth": path, "to": to}
                 });
                 self.ws
                     .send_ws(Message::Text(serde_json::to_string(&payload)?))
@@ -2227,6 +2425,8 @@ impl HotlinkManager {
                 let open = MsgpackHotlinkOpen {
                     session_id: session_id.to_string(),
                     path,
+                    from: None,
+                    to,
                 };
                 let bin = crate::wsproto::encode_msgpack(&id, 9, &open)?;
                 self.ws.send_ws(Message::Binary(bin)).await?;

@@ -9,6 +9,7 @@ type hotlinkSession struct {
 	ID       string
 	Path     string
 	FromUser string
+	ToUser   string
 	FromConn string
 	Created  time.Time
 	Accepted map[string]string // connID -> user
@@ -25,7 +26,7 @@ func newHotlinkStore() *hotlinkStore {
 	}
 }
 
-func (s *hotlinkStore) Open(id, path, fromUser, fromConn string) *hotlinkSession {
+func (s *hotlinkStore) Open(id, path, fromUser, toUser, fromConn string) *hotlinkSession {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -33,6 +34,7 @@ func (s *hotlinkStore) Open(id, path, fromUser, fromConn string) *hotlinkSession
 		ID:       id,
 		Path:     path,
 		FromUser: fromUser,
+		ToUser:   toUser,
 		FromConn: fromConn,
 		Created:  time.Now(),
 		Accepted: make(map[string]string),
