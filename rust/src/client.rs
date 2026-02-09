@@ -52,21 +52,44 @@ type PendingAcks = std::sync::Arc<
 >;
 
 fn maybe_apply_hotlink_ice_from_server(resp: &WsResponse) {
-    if env::var("SYFTBOX_HOTLINK_ICE_SERVERS").is_ok() {
-        return;
+    if env::var("SYFTBOX_HOTLINK_ICE_SERVERS").is_err() {
+        if let Some(ice) = resp
+            .headers()
+            .get("X-Syft-Hotlink-Ice-Servers")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            env::set_var("SYFTBOX_HOTLINK_ICE_SERVERS", ice);
+            crate::logging::info(format!("hotlink ICE servers from server: {}", ice));
+        }
     }
-    let Some(ice) = resp
-        .headers()
-        .get("X-Syft-Hotlink-Ice-Servers")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.trim())
-        .filter(|v| !v.is_empty())
-    else {
-        return;
-    };
 
-    env::set_var("SYFTBOX_HOTLINK_ICE_SERVERS", ice);
-    crate::logging::info(format!("hotlink ICE servers from server: {}", ice));
+    if env::var("SYFTBOX_HOTLINK_TURN_USER").is_err() {
+        if let Some(user) = resp
+            .headers()
+            .get("X-Syft-Hotlink-Turn-User")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            env::set_var("SYFTBOX_HOTLINK_TURN_USER", user);
+            crate::logging::info(format!("hotlink TURN user from server: {}", user));
+        }
+    }
+
+    if env::var("SYFTBOX_HOTLINK_TURN_PASS").is_err() {
+        if let Some(pass) = resp
+            .headers()
+            .get("X-Syft-Hotlink-Turn-Pass")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
+            env::set_var("SYFTBOX_HOTLINK_TURN_PASS", pass);
+            crate::logging::info("hotlink TURN pass from server: [set]".to_string());
+        }
+    }
 }
 
 pub struct Client {

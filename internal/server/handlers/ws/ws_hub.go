@@ -106,6 +106,12 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	enc := wsproto.PreferredEncoding(ctx.GetHeader("X-Syft-WS-Encodings"))
 	ctx.Writer.Header().Set("X-Syft-WS-Encoding", strings.ToLower(enc.String()))
 	ctx.Writer.Header().Set("X-Syft-Hotlink-Ice-Servers", advertisedIceServers(ctx.Request.Host))
+	if turnUser := strings.TrimSpace(os.Getenv("SYFTBOX_HOTLINK_TURN_USER")); turnUser != "" {
+		ctx.Writer.Header().Set("X-Syft-Hotlink-Turn-User", turnUser)
+	}
+	if turnPass := strings.TrimSpace(os.Getenv("SYFTBOX_HOTLINK_TURN_PASS")); turnPass != "" {
+		ctx.Writer.Header().Set("X-Syft-Hotlink-Turn-Pass", turnPass)
+	}
 	conn, err := websocket.Accept(ctx.Writer, ctx.Request, nil)
 	if err != nil {
 		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("websocket accept failed: %w", err))
