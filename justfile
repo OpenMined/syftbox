@@ -1503,6 +1503,22 @@ deploy-server remote: build-server
     ssh {{ remote }} "sudo systemctl restart syftbox"
 
 [group('deploy')]
+deploy-turn remote turn_user turn_pass ssh_key="":
+    #!/bin/bash
+    set -euo pipefail
+    echo -e "{{ _cyan }}Deploying TURN server to {{ remote }}{{ _nc }}"
+    SSH_KEY="{{ ssh_key }}"
+    # Expand ~ manually
+    SSH_KEY="${SSH_KEY/#\~/$HOME}"
+    SSH_OPTS=""
+    if [ -n "$SSH_KEY" ]; then
+        SSH_OPTS="-i $SSH_KEY"
+    fi
+    scp $SSH_OPTS deploy/turnserver.conf deploy/coturn.service deploy/setup-coturn.sh "{{ remote }}":/tmp/
+    ssh $SSH_OPTS "{{ remote }}" "chmod +x /tmp/setup-coturn.sh && sudo /tmp/setup-coturn.sh '{{ turn_user }}' '{{ turn_pass }}'"
+    echo -e "{{ _green }}TURN server deployed to {{ remote }}{{ _nc }}"
+
+[group('deploy')]
 deploy remote: (deploy-client remote) (deploy-server remote)
     echo "Deployed syftbox client & server to {{ _cyan }}{{ remote }}{{ _nc }}"
 

@@ -37,16 +37,29 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
-const HOTLINK_ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
+// Keep close to the legacy Go hotlink handshake window so stalled sessions
+// fail quickly instead of adding multi-second pauses per new stream.
+const HOTLINK_ACCEPT_TIMEOUT: Duration = Duration::from_millis(1500);
 const HOTLINK_ACCEPT_DELAY: Duration = Duration::from_millis(200);
 const HOTLINK_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOTLINK_IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOTLINK_IPC_RETRY_DELAY: Duration = Duration::from_millis(100);
 const HOTLINK_TCP_SUFFIX: &str = "stream.tcp.request";
-// Keep below common WebRTC data-channel max message limits.
-const HOTLINK_TCP_PROXY_CHUNK_SIZE: usize = 14 * 1024;
+// Default near 60KiB to stay under common SCTP/WebRTC message limits while
+// still reducing per-send overhead vs the old 14KiB default.
+const HOTLINK_TCP_PROXY_CHUNK_SIZE_DEFAULT: usize = 60 * 1024;
+const HOTLINK_TCP_PROXY_CHUNK_SIZE_MIN: usize = 4 * 1024;
+const HOTLINK_TCP_PROXY_CHUNK_SIZE_MAX: usize = 1024 * 1024;
 const HOTLINK_WEBRTC_READY_TIMEOUT: Duration = Duration::from_secs(10);
+const HOTLINK_WEBRTC_FALLBACK_GRACE_DEFAULT_MS: u64 = 1500;
+const HOTLINK_WEBRTC_BUFFERED_HIGH_DEFAULT: usize = 1024 * 1024;
+const HOTLINK_WEBRTC_BUFFERED_HIGH_MAX: usize = 16 * 1024 * 1024;
+const HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS_DEFAULT: u64 = 1500;
+const HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS_MAX: u64 = 10_000;
+const HOTLINK_WEBRTC_BACKPRESSURE_POLL_MS: u64 = 5;
+const HOTLINK_WEBRTC_ERR_OUTBOUND_TOO_LARGE: &str = "outbound packet larger than maximum message size";
 const HOTLINK_TELEMETRY_FLUSH_MS: u64 = 1000;
+const HOTLINK_BENCH_STRICT_ENV: &str = "SYFTBOX_HOTLINK_BENCH_STRICT";
 
 struct TcpMarkerInfo {
     port: u16,
@@ -150,6 +163,7 @@ struct HotlinkTelemetryCounters {
     p2p_answers_ok: u64,
     p2p_answers_err: u64,
     ws_fallbacks: u64,
+    strict_violations: u64,
 }
 
 struct HotlinkTelemetryState {
@@ -271,6 +285,8 @@ impl HotlinkManager {
     fn telemetry_mode(&self) -> &'static str {
         if !self.enabled {
             "disabled"
+        } else if hotlink_bench_strict_enabled() {
+            "hotlink_p2p_strict"
         } else {
             "hotlink_p2p"
         }
@@ -319,6 +335,14 @@ impl HotlinkManager {
         {
             let mut telemetry = self.telemetry.lock().unwrap();
             telemetry.counters.ws_fallbacks += 1;
+        }
+        self.flush_telemetry(false);
+    }
+
+    fn record_strict_violation(&self) {
+        {
+            let mut telemetry = self.telemetry.lock().unwrap();
+            telemetry.counters.strict_violations += 1;
         }
         self.flush_telemetry(false);
     }
@@ -531,6 +555,7 @@ impl HotlinkManager {
 
             let json = json!({
                 "mode": self.telemetry_mode(),
+                "bench_strict": hotlink_bench_strict_enabled(),
                 "started_ms": telemetry.started_ms,
                 "updated_ms": now_ms,
                 "tx_packets": c.tx_packets,
@@ -547,6 +572,7 @@ impl HotlinkManager {
                 "p2p_answers_ok": c.p2p_answers_ok,
                 "p2p_answers_err": c.p2p_answers_err,
                 "ws_fallbacks": c.ws_fallbacks,
+                "strict_violations": c.strict_violations,
                 "webrtc_connected": wrtc_up,
                 "live": snapshot,
             });
@@ -913,7 +939,8 @@ impl HotlinkManager {
             let writer_for_cleanup = writer_arc.clone();
             let writer_active_for_cleanup = writer_active.clone();
             tokio::spawn(async move {
-                let mut buf = vec![0u8; HOTLINK_TCP_PROXY_CHUNK_SIZE];
+                let mut buf = vec![0u8; hotlink_tcp_proxy_chunk_size()];
+                let mut send_chunk_size = hotlink_tcp_proxy_chunk_size();
                 loop {
                     let n = match reader.read(&mut buf).await {
                         Ok(0) => break,
@@ -926,17 +953,42 @@ impl HotlinkManager {
                             n, channel, outbound_channel
                         ));
                     }
-                    if let Err(err) = manager
-                        .send_best_effort_ordered(
-                            outbound_channel.clone(),
-                            "".to_string(),
-                            buf[..n].to_vec(),
-                        )
-                        .await
-                    {
-                        crate::logging::error(format!(
-                            "hotlink tcp proxy: send failed (continuing): {err:?}"
-                        ));
+                    let mut off = 0usize;
+                    while off < n {
+                        let end = (off + send_chunk_size).min(n);
+                        let chunk = buf[off..end].to_vec();
+                        match manager
+                            .send_best_effort_ordered(
+                                outbound_channel.clone(),
+                                "".to_string(),
+                                chunk,
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                off = end;
+                            }
+                            Err(err) => {
+                                if hotlink_is_packet_too_large_err(&err)
+                                    && send_chunk_size > HOTLINK_TCP_PROXY_CHUNK_SIZE_MIN
+                                {
+                                    let next =
+                                        (send_chunk_size / 2).max(HOTLINK_TCP_PROXY_CHUNK_SIZE_MIN);
+                                    if next < send_chunk_size {
+                                        send_chunk_size = next;
+                                        crate::logging::info(format!(
+                                            "hotlink tcp proxy: reducing send chunk size to {} after oversized packet error",
+                                            send_chunk_size
+                                        ));
+                                        continue;
+                                    }
+                                }
+                                crate::logging::error(format!(
+                                    "hotlink tcp proxy: send failed (continuing): {err:?}"
+                                ));
+                                break;
+                            }
+                        }
                     }
                 }
                 if hotlink_debug_enabled() {
@@ -1804,10 +1856,14 @@ impl HotlinkManager {
                 return Err(anyhow::anyhow!(err.clone()));
             }
         }
-        let dc_guard = webrtc.data_channel.lock().await;
-        let Some(dc) = dc_guard.as_ref() else {
-            return Ok(None);
+        let dc = {
+            let dc_guard = webrtc.data_channel.lock().await;
+            let Some(dc) = dc_guard.as_ref() else {
+                return Ok(None);
+            };
+            dc.clone()
         };
+        self.wait_for_webrtc_send_capacity(&dc).await?;
         let frame = HotlinkFrame {
             path: rel_path.to_string(),
             etag: etag.to_string(),
@@ -1817,6 +1873,27 @@ impl HotlinkManager {
         let bytes = crate::hotlink::encode_hotlink_frame(&frame);
         dc.send(&Bytes::from(bytes)).await?;
         Ok(Some(()))
+    }
+
+    async fn wait_for_webrtc_send_capacity(&self, dc: &Arc<RTCDataChannel>) -> Result<()> {
+        let high_water = hotlink_webrtc_buffered_high();
+        let wait_budget = hotlink_webrtc_backpressure_wait();
+        let deadline = tokio::time::Instant::now() + wait_budget;
+        loop {
+            let buffered = dc.buffered_amount().await;
+            if buffered <= high_water {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "webrtc send buffer still high: buffered={} high={} wait_ms={}",
+                    buffered,
+                    high_water,
+                    wait_budget.as_millis()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(HOTLINK_WEBRTC_BACKPRESSURE_POLL_MS)).await;
+        }
     }
 
     async fn mark_ws_fallback(&self, session_id: &str, rel_path: &str) {
@@ -1955,6 +2032,7 @@ impl HotlinkManager {
     async fn send_hotlink(&self, rel_path: String, etag: String, payload: Vec<u8>) -> Result<()> {
         let payload_len = payload.len();
         let p2p_only = self.is_p2p_only();
+        let bench_strict = hotlink_bench_strict_enabled();
         let path_key = parent_path(&rel_path);
         let owner_is_local = self
             .local_email
@@ -2145,18 +2223,22 @@ impl HotlinkManager {
                 .await
                 .insert(path_key.clone(), id.clone());
             let preferred_to = {
-                let local_email = self.local_email.lock().unwrap().clone();
-                let sessions = self.sessions.read().await;
-                sessions.values().find_map(|s| {
-                    if parent_path(&s.path) != path_key {
-                        return None;
-                    }
-                    let remote = s.remote_user.as_ref()?.to_string();
-                    if local_email.as_deref() == Some(remote.as_str()) {
-                        return None;
-                    }
-                    Some(remote)
-                })
+                if is_tcp_proxy_path(&rel_path) {
+                    self.preferred_remote_for_tcp_path(&rel_path)
+                } else {
+                    let local_email = self.local_email.lock().unwrap().clone();
+                    let sessions = self.sessions.read().await;
+                    sessions.values().find_map(|s| {
+                        if parent_path(&s.path) != path_key {
+                            return None;
+                        }
+                        let remote = s.remote_user.as_ref()?.to_string();
+                        if local_email.as_deref() == Some(remote.as_str()) {
+                            return None;
+                        }
+                        Some(remote)
+                    })
+                }
             };
             if let Err(err) = self.send_open(&id, rel_path.clone(), preferred_to).await {
                 crate::logging::error(format!("hotlink send open failed: {err:?}"));
@@ -2185,6 +2267,17 @@ impl HotlinkManager {
                     &session_id[..8]
                 ));
             } else {
+                if bench_strict {
+                    let err = format!(
+                        "hotlink strict: accept timeout session={} path={}",
+                        &session_id[..8.min(session_id.len())],
+                        rel_path
+                    );
+                    self.record_strict_violation();
+                    crate::logging::error(err.clone());
+                    self.remove_outbound(&session_id).await;
+                    return Err(anyhow::anyhow!(err));
+                }
                 crate::logging::info(format!(
                     "hotlink accept timeout ({}s), sending anyway: session={} path={}",
                     HOTLINK_ACCEPT_TIMEOUT.as_secs(),
@@ -2223,6 +2316,14 @@ impl HotlinkManager {
             ));
         }
 
+        // In fallback mode, allow a short grace period for SDP/ICE completion
+        // before dropping to websocket, which reduces avoidable ws fallbacks.
+        if !p2p_only && seq <= 3 {
+            let _ = self
+                .wait_for_outbound_webrtc_for(&session_id, hotlink_ws_fallback_grace(), false)
+                .await;
+        }
+
         {
             let send_started = tokio::time::Instant::now();
             // In p2p_only mode, wait for WebRTC data channel to be ready.
@@ -2240,11 +2341,34 @@ impl HotlinkManager {
                     return Ok(());
                 }
                 Ok(None) => {
+                    if bench_strict {
+                        let err = format!(
+                            "hotlink strict: websocket fallback attempted (not ready) session={} path={} seq={}",
+                            &session_id[..8.min(session_id.len())],
+                            rel_path,
+                            seq
+                        );
+                        self.record_strict_violation();
+                        crate::logging::error(err.clone());
+                        return Err(anyhow::anyhow!(err));
+                    }
                     if !p2p_only {
                         self.mark_ws_fallback(&session_id, &rel_path).await;
                     }
                 }
                 Err(e) => {
+                    if bench_strict {
+                        let err = format!(
+                            "hotlink strict: websocket fallback attempted after webrtc error session={} path={} seq={} err={:?}",
+                            &session_id[..8.min(session_id.len())],
+                            rel_path,
+                            seq,
+                            e
+                        );
+                        self.record_strict_violation();
+                        crate::logging::error(err.clone());
+                        return Err(anyhow::anyhow!(err));
+                    }
                     if hotlink_debug_enabled() {
                         crate::logging::info(format!(
                             "hotlink webrtc send err: {e:?}"
@@ -2258,11 +2382,14 @@ impl HotlinkManager {
         }
 
         if p2p_only {
-            crate::logging::info(format!(
-                "hotlink p2p_only: dropping packet seq={} (webrtc not ready after wait)",
+            let err = format!(
+                "hotlink p2p_only send failed: webrtc not ready after wait session={} path={} seq={}",
+                &session_id[..8.min(session_id.len())],
+                rel_path,
                 seq
-            ));
-            return Ok(());
+            );
+            crate::logging::error(err.clone());
+            return Err(anyhow::anyhow!(err));
         }
 
         let send_started = tokio::time::Instant::now();
@@ -2282,32 +2409,46 @@ impl HotlinkManager {
     }
 
     async fn wait_for_outbound_webrtc(&self, session_id: &str) {
-        let deadline =
-            tokio::time::Instant::now() + HOTLINK_WEBRTC_READY_TIMEOUT;
+        let _ = self
+            .wait_for_outbound_webrtc_for(session_id, HOTLINK_WEBRTC_READY_TIMEOUT, true)
+            .await;
+    }
+
+    async fn wait_for_outbound_webrtc_for(
+        &self,
+        session_id: &str,
+        timeout_dur: Duration,
+        log_timeout: bool,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout_dur;
         loop {
             {
                 let out = self.outbound.read().await;
                 if let Some(entry) = out.get(session_id) {
                     if let Some(ref w) = entry.webrtc {
                         if w.ready_flag.load(Ordering::SeqCst) {
-                            crate::logging::info(format!(
-                                "hotlink webrtc ready for outbound: session={}",
-                                &session_id[..8.min(session_id.len())]
-                            ));
-                            return;
+                            if log_timeout {
+                                crate::logging::info(format!(
+                                    "hotlink webrtc ready for outbound: session={}",
+                                    &session_id[..8.min(session_id.len())]
+                                ));
+                            }
+                            return true;
                         }
                     }
                 } else {
-                    return;
+                    return false;
                 }
             }
             if tokio::time::Instant::now() >= deadline {
-                crate::logging::info(format!(
-                    "hotlink webrtc ready timeout ({}s): session={}",
-                    HOTLINK_WEBRTC_READY_TIMEOUT.as_secs(),
-                    &session_id[..8.min(session_id.len())]
-                ));
-                return;
+                if log_timeout {
+                    crate::logging::info(format!(
+                        "hotlink webrtc ready timeout ({}s): session={}",
+                        timeout_dur.as_secs(),
+                        &session_id[..8.min(session_id.len())]
+                    ));
+                }
+                return false;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -2341,6 +2482,19 @@ impl HotlinkManager {
         let mut out = self.outbound.write().await;
         if let Some(entry) = out.remove(session_id) {
             self.outbound_by_path.write().await.remove(&entry.path_key);
+        }
+    }
+
+    fn preferred_remote_for_tcp_path(&self, rel_path: &str) -> Option<String> {
+        let local_email = self.local_email.lock().unwrap().clone()?;
+        let proxies = self.tcp_proxies.lock().unwrap();
+        let info = proxies.get(rel_path)?;
+        if info.from_email == local_email {
+            Some(info.to_email.clone())
+        } else if info.to_email == local_email {
+            Some(info.from_email.clone())
+        } else {
+            None
         }
     }
 
@@ -2653,6 +2807,56 @@ fn tcp_proxy_bind_ip() -> String {
     std::env::var("SYFTBOX_HOTLINK_TCP_PROXY_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
+fn hotlink_tcp_proxy_chunk_size() -> usize {
+    std::env::var("SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|v| v.clamp(HOTLINK_TCP_PROXY_CHUNK_SIZE_MIN, HOTLINK_TCP_PROXY_CHUNK_SIZE_MAX))
+        .unwrap_or(HOTLINK_TCP_PROXY_CHUNK_SIZE_DEFAULT)
+}
+
+fn hotlink_webrtc_buffered_high() -> usize {
+    std::env::var("SYFTBOX_HOTLINK_WEBRTC_BUFFERED_HIGH")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|v| v.min(HOTLINK_WEBRTC_BUFFERED_HIGH_MAX))
+        .unwrap_or(HOTLINK_WEBRTC_BUFFERED_HIGH_DEFAULT)
+}
+
+fn hotlink_webrtc_backpressure_wait() -> Duration {
+    let ms = std::env::var("SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS_DEFAULT)
+        .min(HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS_MAX);
+    Duration::from_millis(ms)
+}
+
+fn hotlink_is_packet_too_large_err(err: &anyhow::Error) -> bool {
+    err.to_string()
+        .to_ascii_lowercase()
+        .contains(HOTLINK_WEBRTC_ERR_OUTBOUND_TOO_LARGE)
+}
+
+fn hotlink_ws_fallback_grace() -> Duration {
+    let ms = std::env::var("SYFTBOX_HOTLINK_WS_FALLBACK_GRACE_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(HOTLINK_WEBRTC_FALLBACK_GRACE_DEFAULT_MS)
+        .min(10_000);
+    Duration::from_millis(ms)
+}
+
+fn hotlink_bench_strict_enabled() -> bool {
+    matches!(
+        std::env::var(HOTLINK_BENCH_STRICT_ENV)
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 fn is_tcp_proxy_path(path: &str) -> bool {
     path.ends_with(HOTLINK_TCP_SUFFIX)
 }
@@ -2946,4 +3150,101 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    #[test]
+    fn tcp_proxy_chunk_size_defaults_and_clamps() {
+        let _guard = env_lock();
+        std::env::remove_var("SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE");
+        assert_eq!(
+            hotlink_tcp_proxy_chunk_size(),
+            HOTLINK_TCP_PROXY_CHUNK_SIZE_DEFAULT
+        );
+
+        std::env::set_var("SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE", "1");
+        assert_eq!(
+            hotlink_tcp_proxy_chunk_size(),
+            HOTLINK_TCP_PROXY_CHUNK_SIZE_MIN
+        );
+
+        std::env::set_var(
+            "SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE",
+            (HOTLINK_TCP_PROXY_CHUNK_SIZE_MAX * 2).to_string(),
+        );
+        assert_eq!(
+            hotlink_tcp_proxy_chunk_size(),
+            HOTLINK_TCP_PROXY_CHUNK_SIZE_MAX
+        );
+
+        std::env::set_var("SYFTBOX_HOTLINK_TCP_PROXY_CHUNK_SIZE", "262144");
+        assert_eq!(hotlink_tcp_proxy_chunk_size(), 262_144);
+    }
+
+    #[test]
+    fn webrtc_buffered_high_defaults_and_clamps() {
+        let _guard = env_lock();
+        std::env::remove_var("SYFTBOX_HOTLINK_WEBRTC_BUFFERED_HIGH");
+        assert_eq!(
+            hotlink_webrtc_buffered_high(),
+            HOTLINK_WEBRTC_BUFFERED_HIGH_DEFAULT
+        );
+
+        std::env::set_var(
+            "SYFTBOX_HOTLINK_WEBRTC_BUFFERED_HIGH",
+            (HOTLINK_WEBRTC_BUFFERED_HIGH_MAX * 2).to_string(),
+        );
+        assert_eq!(
+            hotlink_webrtc_buffered_high(),
+            HOTLINK_WEBRTC_BUFFERED_HIGH_MAX
+        );
+
+        std::env::set_var("SYFTBOX_HOTLINK_WEBRTC_BUFFERED_HIGH", "2097152");
+        assert_eq!(hotlink_webrtc_buffered_high(), 2 * 1024 * 1024);
+    }
+
+    #[test]
+    fn webrtc_backpressure_wait_defaults_and_clamps() {
+        let _guard = env_lock();
+        std::env::remove_var("SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS");
+        assert_eq!(
+            hotlink_webrtc_backpressure_wait(),
+            Duration::from_millis(HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS_DEFAULT)
+        );
+
+        std::env::set_var("SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS", "999999");
+        assert_eq!(
+            hotlink_webrtc_backpressure_wait(),
+            Duration::from_millis(HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS_MAX)
+        );
+
+        std::env::set_var("SYFTBOX_HOTLINK_WEBRTC_BACKPRESSURE_WAIT_MS", "250");
+        assert_eq!(
+            hotlink_webrtc_backpressure_wait(),
+            Duration::from_millis(250)
+        );
+    }
+
+    #[test]
+    fn packet_too_large_error_detection() {
+        let err = anyhow::anyhow!("outbound packet larger than maximum message size");
+        assert!(hotlink_is_packet_too_large_err(&err));
+
+        let wrapped = anyhow::anyhow!(
+            "hotlink strict: websocket fallback attempted after webrtc error: outbound packet larger than maximum message size"
+        );
+        assert!(hotlink_is_packet_too_large_err(&wrapped));
+
+        let other = anyhow::anyhow!("webrtc wait timeout");
+        assert!(!hotlink_is_packet_too_large_err(&other));
+    }
 }
