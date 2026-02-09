@@ -8,21 +8,15 @@ use crate::wsproto::{
 };
 use anyhow::{Context, Result};
 use base64::Engine;
+use bytes::Bytes;
 use futures_util::FutureExt;
 use md5::compute as md5_compute;
-use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn::{ClientConfig, Endpoint, EndpointConfig, ServerConfig, TokioRuntime};
-use rcgen::generate_simple_self_signed;
-use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use serde_json::json;
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write as _;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, Once};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -30,26 +24,25 @@ use tokio::sync::{Mutex as TokioMutex, Notify, RwLock};
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
+use webrtc::api::interceptor_registry::register_default_interceptors;
+use webrtc::api::media_engine::MediaEngine;
+use webrtc::api::setting_engine::SettingEngine;
+use webrtc::api::APIBuilder;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::data_channel::RTCDataChannel;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
+use webrtc::ice_transport::ice_server::RTCIceServer;
+use webrtc::interceptor::registry::Registry;
+use webrtc::peer_connection::configuration::RTCConfiguration;
+use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
+use webrtc::peer_connection::RTCPeerConnection;
 
 const HOTLINK_ACCEPT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOTLINK_ACCEPT_DELAY: Duration = Duration::from_millis(200);
 const HOTLINK_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const HOTLINK_IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 const HOTLINK_IPC_RETRY_DELAY: Duration = Duration::from_millis(100);
-const HOTLINK_TCP_BIND_TIMEOUT: Duration = Duration::from_secs(30);
-const HOTLINK_TCP_BIND_RETRY_DELAY: Duration = Duration::from_millis(250);
 const HOTLINK_TCP_SUFFIX: &str = "stream.tcp.request";
-const HOTLINK_QUIC_DIAL_TIMEOUT: Duration = Duration::from_millis(1500);
-const HOTLINK_QUIC_ACCEPT_TIMEOUT: Duration = Duration::from_millis(2500);
-const HOTLINK_QUIC_ALPN: &[u8] = b"syftbox-hotlink";
-const HOTLINK_STUN_SERVER_ENV: &str = "SYFTBOX_HOTLINK_STUN_SERVER";
-const HOTLINK_STUN_TIMEOUT: Duration = Duration::from_millis(1200);
-const STUN_BINDING_REQUEST: u16 = 0x0001;
-const STUN_BINDING_SUCCESS: u16 = 0x0101;
-const STUN_MAGIC_COOKIE: u32 = 0x2112_A442;
-const STUN_MAPPED_ADDRESS: u16 = 0x0001;
-const STUN_XOR_MAPPED_ADDRESS: u16 = 0x0020;
-static RUSTLS_PROVIDER_INIT: Once = Once::new();
 // Keep below common WebRTC data-channel max message limits.
 const HOTLINK_TCP_PROXY_CHUNK_SIZE: usize = 14 * 1024;
 const HOTLINK_WEBRTC_READY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -61,12 +54,6 @@ struct TcpMarkerInfo {
     to_email: String,
     from_pid: usize,
     to_pid: usize,
-}
-
-fn debug_writer_keys(keys: impl Iterator<Item = String>) -> String {
-    let mut all: Vec<String> = keys.collect();
-    all.sort();
-    all.join(",")
 }
 
 #[derive(Clone)]
@@ -85,9 +72,6 @@ struct TcpWriterEntry {
 #[derive(Clone)]
 pub struct HotlinkManager {
     enabled: bool,
-    socket_only: bool,
-    quic_enabled: bool,
-    quic_only: bool,
     datasites_root: PathBuf,
     ws: crate::client::WsHandle,
     sessions: Arc<RwLock<HashMap<String, HotlinkSession>>>,
@@ -113,7 +97,7 @@ struct HotlinkSession {
     dir_abs: PathBuf,
     ipc_path: PathBuf,
     accept_path: PathBuf,
-    quic: Option<HotlinkQuicSession>,
+    webrtc: Option<WebRTCSession>,
 }
 
 #[allow(dead_code)]
@@ -126,28 +110,18 @@ struct HotlinkOutbound {
     notify: Arc<Notify>,
     rejected: Option<String>,
     ws_fallback_logged: bool,
-    quic: Option<HotlinkQuicOutbound>,
+    webrtc: Option<WebRTCSession>,
 }
 
 #[derive(Clone)]
-struct HotlinkQuicSession {
-    endpoint: Endpoint,
-    state: Arc<TokioMutex<HotlinkQuicState>>,
+struct WebRTCSession {
+    peer_connection: Arc<RTCPeerConnection>,
+    data_channel: Arc<TokioMutex<Option<Arc<RTCDataChannel>>>>,
     ready: Arc<Notify>,
     ready_flag: Arc<AtomicBool>,
-}
-
-#[derive(Clone)]
-struct HotlinkQuicOutbound {
-    endpoint: Endpoint,
-    state: Arc<TokioMutex<HotlinkQuicState>>,
-    ready: Arc<Notify>,
-    ready_flag: Arc<AtomicBool>,
-}
-
-struct HotlinkQuicState {
-    send: Option<quinn::SendStream>,
-    err: Option<String>,
+    err: Arc<TokioMutex<Option<String>>>,
+    pending_candidates: Arc<TokioMutex<Vec<RTCIceCandidateInit>>>,
+    remote_desc_set: Arc<AtomicBool>,
 }
 
 struct HotlinkIpcWriter {
@@ -164,7 +138,7 @@ struct TcpReorderBuf {
 struct HotlinkTelemetryCounters {
     tx_packets: u64,
     tx_bytes: u64,
-    tx_quic_packets: u64,
+    tx_p2p_packets: u64,
     tx_ws_packets: u64,
     tx_send_ms_total: u64,
     tx_send_ms_max: u64,
@@ -172,9 +146,9 @@ struct HotlinkTelemetryCounters {
     rx_bytes: u64,
     rx_write_ms_total: u64,
     rx_write_ms_max: u64,
-    quic_offers: u64,
-    quic_answers_ok: u64,
-    quic_answers_err: u64,
+    p2p_offers: u64,
+    p2p_answers_ok: u64,
+    p2p_answers_err: u64,
     ws_fallbacks: u64,
 }
 
@@ -260,43 +234,14 @@ impl HotlinkManager {
         ws: crate::client::WsHandle,
         shutdown: Arc<Notify>,
     ) -> Self {
-        // Hotlink defaults to ON. Set SYFTBOX_HOTLINK=0 to disable.
-        let enabled = std::env::var("SYFTBOX_HOTLINK")
-            .ok()
-            .as_deref()
-            .map(|v| v != "0")
-            .unwrap_or(true);
-        let socket_only = std::env::var("SYFTBOX_HOTLINK_SOCKET_ONLY")
-            .ok()
-            .as_deref()
-            .map(|v| v != "0")
-            .unwrap_or(true);
-        let quic_enabled = std::env::var("SYFTBOX_HOTLINK_QUIC")
-            .ok()
-            .as_deref()
-            .map(|v| v != "0")
-            .unwrap_or(true);
-        let quic_only = std::env::var("SYFTBOX_HOTLINK_QUIC_ONLY").ok().as_deref() == Some("1");
-        let tcp_proxy = tcp_proxy_enabled();
+        // SYFTBOX_HOTLINK=1 enables hotlink mode (WebRTC P2P + WS fallback + TCP proxy).
+        // Everything else is on by default when hotlink is enabled.
+        let enabled = std::env::var("SYFTBOX_HOTLINK").ok().as_deref() == Some("1");
         if enabled {
-            crate::logging::info(format!(
-                "hotlink config: socket_only={} quic_enabled={} quic_only={} tcp_proxy={}",
-                socket_only, quic_enabled, quic_only, tcp_proxy
-            ));
-        }
-        // Note: QUIC works for both socket-only IPC and TCP proxy modes.
-        // This warning helps catch cases where TCP proxy is expected but not enabled.
-        if quic_only && !tcp_proxy && !socket_only && enabled {
-            crate::logging::info(
-                "WARN: SYFTBOX_HOTLINK_QUIC_ONLY=1 but SYFTBOX_HOTLINK_TCP_PROXY is not enabled. \
-                 If using MPC/syqure, TCP proxy must be enabled. Set SYFTBOX_HOTLINK_TCP_PROXY=1.",
-            );
+            crate::logging::info("hotlink enabled: webrtc p2p + ws fallback + tcp proxy");
         }
         Self {
             enabled,
-            socket_only,
-            quic_enabled,
-            quic_only,
             datasites_root,
             ws,
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -323,20 +268,11 @@ impl HotlinkManager {
         self.enabled
     }
 
-    #[allow(dead_code)]
-    pub fn socket_only(&self) -> bool {
-        self.socket_only
-    }
-
     fn telemetry_mode(&self) -> &'static str {
         if !self.enabled {
             "disabled"
-        } else if self.quic_only {
-            "hotlink_quic_only"
-        } else if self.quic_enabled {
-            "hotlink_quic_pref"
         } else {
-            "hotlink_ws_only"
+            "hotlink_p2p"
         }
     }
 
@@ -350,14 +286,14 @@ impl HotlinkManager {
         )
     }
 
-    fn record_tx(&self, bytes: usize, send_ms: u64, via_quic: bool) {
+    fn record_tx(&self, bytes: usize, send_ms: u64, via_p2p: bool) {
         {
             let mut telemetry = self.telemetry.lock().unwrap();
             let c = &mut telemetry.counters;
             c.tx_packets += 1;
             c.tx_bytes += bytes as u64;
-            if via_quic {
-                c.tx_quic_packets += 1;
+            if via_p2p {
+                c.tx_p2p_packets += 1;
             } else {
                 c.tx_ws_packets += 1;
             }
@@ -387,21 +323,21 @@ impl HotlinkManager {
         self.flush_telemetry(false);
     }
 
-    fn record_quic_offer(&self) {
+    fn record_p2p_offer(&self) {
         {
             let mut telemetry = self.telemetry.lock().unwrap();
-            telemetry.counters.quic_offers += 1;
+            telemetry.counters.p2p_offers += 1;
         }
         self.flush_telemetry(false);
     }
 
-    fn record_quic_answer(&self, ok: bool) {
+    fn record_p2p_answer(&self, ok: bool) {
         {
             let mut telemetry = self.telemetry.lock().unwrap();
             if ok {
-                telemetry.counters.quic_answers_ok += 1;
+                telemetry.counters.p2p_answers_ok += 1;
             } else {
-                telemetry.counters.quic_answers_err += 1;
+                telemetry.counters.p2p_answers_err += 1;
             }
         }
         self.flush_telemetry(false);
@@ -599,7 +535,7 @@ impl HotlinkManager {
                 "updated_ms": now_ms,
                 "tx_packets": c.tx_packets,
                 "tx_bytes": c.tx_bytes,
-                "tx_quic_packets": c.tx_quic_packets,
+                "tx_p2p_packets": c.tx_p2p_packets,
                 "tx_ws_packets": c.tx_ws_packets,
                 "tx_avg_send_ms": tx_avg,
                 "tx_max_send_ms": c.tx_send_ms_max,
@@ -607,9 +543,9 @@ impl HotlinkManager {
                 "rx_bytes": c.rx_bytes,
                 "rx_avg_write_ms": rx_avg,
                 "rx_max_write_ms": c.rx_write_ms_max,
-                "quic_offers": c.quic_offers,
-                "quic_answers_ok": c.quic_answers_ok,
-                "quic_answers_err": c.quic_answers_err,
+                "p2p_offers": c.p2p_offers,
+                "p2p_answers_ok": c.p2p_answers_ok,
+                "p2p_answers_err": c.p2p_answers_err,
                 "ws_fallbacks": c.ws_fallbacks,
                 "webrtc_connected": wrtc_up,
                 "live": snapshot,
@@ -629,7 +565,7 @@ impl HotlinkManager {
     }
 
     pub fn start_local_discovery(&self, owner_email: String) {
-        if !self.enabled || !self.socket_only {
+        if !self.enabled {
             return;
         }
         {
@@ -681,10 +617,10 @@ impl HotlinkManager {
     }
 
     pub fn start_tcp_proxy_discovery(&self, _owner_email: String) {
-        if !self.enabled || !tcp_proxy_enabled() {
+        if !self.enabled {
             return;
         }
-        let bind_ip = tcp_proxy_bind_ip(&_owner_email);
+        let bind_ip = tcp_proxy_bind_ip();
         {
             let mut guard = self.tcp_bind_ip.lock().unwrap();
             if guard.is_none() {
@@ -879,48 +815,21 @@ impl HotlinkManager {
         let addr = format!("{bind_ip}:{port}");
         if debug {
             crate::logging::info(format!(
-                "hotlink tcp proxy: marker={} rel={} from={}({}) to={}({}) port={} bind={} canonical_key={} local_key={}",
+                "hotlink tcp proxy: marker={} from={}({}) to={}({}) port={} bind={}",
                 marker_path.display(),
-                rel_marker.display(),
                 info.from_email,
                 info.from_pid,
                 info.to_email,
                 info.to_pid,
                 port,
-                addr,
-                channel_key,
-                local_key.clone().unwrap_or_else(|| "<none>".to_string())
+                addr
             ));
         }
-        let bind_deadline = tokio::time::Instant::now() + HOTLINK_TCP_BIND_TIMEOUT;
-        let mut next_bind_log = tokio::time::Instant::now();
-        let listener = loop {
-            if self.shutdown.notified().now_or_never().is_some() {
-                self.clear_tcp_proxy_state(&channel_key, local_key.as_deref())
-                    .await;
+        let listener = match TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(err) => {
+                crate::logging::error(format!("hotlink tcp proxy: bind failed {}: {err:?}", addr));
                 return;
-            }
-            match TcpListener::bind(&addr).await {
-                Ok(listener) => break listener,
-                Err(err) => {
-                    if tokio::time::Instant::now() >= bind_deadline {
-                        crate::logging::error(format!(
-                            "hotlink tcp proxy: bind timeout {} after {:?}: {err:?}",
-                            addr, HOTLINK_TCP_BIND_TIMEOUT
-                        ));
-                        self.clear_tcp_proxy_state(&channel_key, local_key.as_deref())
-                            .await;
-                        return;
-                    }
-                    if debug || tokio::time::Instant::now() >= next_bind_log {
-                        crate::logging::info(format!(
-                            "hotlink tcp proxy: bind retry {}: {err:?}",
-                            addr
-                        ));
-                        next_bind_log = tokio::time::Instant::now() + Duration::from_secs(2);
-                    }
-                    tokio::time::sleep(HOTLINK_TCP_BIND_RETRY_DELAY).await;
-                }
             }
         };
 
@@ -942,9 +851,6 @@ impl HotlinkManager {
             let (mut reader, writer) = stream.into_split();
 
             let writer_arc = Arc::new(TokioMutex::new(writer));
-            // Do not clobber an existing active mapping for this channel.
-            // Desktop watchdog/health probes can briefly connect and close;
-            // replacing the writer here can blackhole in-flight remote frames.
             let writer_active = Arc::new(AtomicBool::new(true));
             let channel_mapped = self
                 .upsert_tcp_writer_key(&channel_key, writer_arc.clone(), writer_active.clone())
@@ -1020,7 +926,6 @@ impl HotlinkManager {
                             n, channel, outbound_channel
                         ));
                     }
-                    log_hotlink_tcp_dump("local->remote", &channel, None, &buf[..n]);
                     if let Err(err) = manager
                         .send_best_effort_ordered(
                             outbound_channel.clone(),
@@ -1035,34 +940,7 @@ impl HotlinkManager {
                     }
                 }
                 if hotlink_debug_enabled() {
-                    let keys = {
-                        let writers = manager.tcp_writers.lock().await;
-                        debug_writer_keys(writers.keys().cloned())
-                    };
-                    crate::logging::info(format!(
-                        "hotlink tcp proxy: closed channel={} remaining_keys=[{}]",
-                        channel, keys
-                    ));
-                }
-                let mut writers = manager.tcp_writers.lock().await;
-                // Only clear entries that still point at this exact writer.
-                // Multiple accepts can exist transiently; removing by key alone
-                // can tear down the active mapping and recreate the desktop hang.
-                if writers
-                    .get(&channel)
-                    .map(|w| Arc::ptr_eq(w, &writer_for_cleanup))
-                    .unwrap_or(false)
-                {
-                    writers.remove(&channel);
-                }
-                if let Some(local_key) = &local_channel {
-                    if writers
-                        .get(local_key)
-                        .map(|w| Arc::ptr_eq(w, &writer_for_cleanup))
-                        .unwrap_or(false)
-                    {
-                        writers.remove(local_key);
-                    }
+                    crate::logging::info(format!("hotlink tcp proxy: closed channel={}", channel));
                 }
                 writer_active_for_cleanup.store(false, Ordering::Relaxed);
                 manager
@@ -1089,29 +967,6 @@ impl HotlinkManager {
                         .await;
                 }
             });
-        }
-        self.clear_tcp_proxy_state(&channel_key, local_key.as_deref())
-            .await;
-    }
-
-    async fn clear_tcp_proxy_state(&self, channel_key: &str, local_key: Option<&str>) {
-        {
-            let mut proxies = self.tcp_proxies.lock().unwrap();
-            proxies.remove(channel_key);
-        }
-        {
-            let mut writers = self.tcp_writers.lock().await;
-            writers.remove(channel_key);
-            if let Some(local_key) = local_key {
-                writers.remove(local_key);
-            }
-        }
-        {
-            let mut reorder = self.tcp_reorder.lock().await;
-            reorder.remove(channel_key);
-            if let Some(local_key) = local_key {
-                reorder.remove(local_key);
-            }
         }
     }
 
@@ -1164,7 +1019,7 @@ impl HotlinkManager {
             dir_abs,
             ipc_path: ipc_path.clone(),
             accept_path: accept_path.clone(),
-            quic: None,
+            webrtc: None,
         };
         self.sessions
             .write()
@@ -1286,10 +1141,6 @@ impl HotlinkManager {
         if !self.enabled {
             return;
         }
-        if self.quic_only {
-            crate::logging::info("hotlink ws data ignored (quic-only)");
-            return;
-        }
         if hotlink_debug_enabled() {
             crate::logging::info(format!(
                 "hotlink data received: session={} seq={} bytes={}",
@@ -1371,16 +1222,6 @@ impl HotlinkManager {
                 "hotlink tcp write skipped: no writer for path={} after retries",
                 frame.path
             ));
-            if hotlink_debug_enabled() {
-                let keys = {
-                    let writers = self.tcp_writers.lock().await;
-                    debug_writer_keys(writers.keys().cloned())
-                };
-                crate::logging::error(format!(
-                    "hotlink tcp write skipped detail: session={} frame_path={} known_writer_keys=[{}]",
-                    session.id, frame.path, keys
-                ));
-            }
         }
 
         if let Err(err) = self.write_ipc(ipc_path, frame).await {
@@ -1412,26 +1253,18 @@ impl HotlinkManager {
             return Some(w);
         }
         if hotlink_debug_enabled() {
-            let keys = {
-                let writers = self.tcp_writers.lock().await;
-                debug_writer_keys(writers.keys().cloned())
-            };
             crate::logging::info(format!(
-                "hotlink tcp writer not ready, waiting for path={} known_writer_keys=[{}]",
-                rel_path, keys
+                "hotlink tcp writer not ready, waiting for path={}",
+                rel_path
             ));
         }
         for _ in 0..20 {
             tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
             if let Some(w) = self.get_tcp_writer(rel_path).await {
                 if hotlink_debug_enabled() {
-                    let keys = {
-                        let writers = self.tcp_writers.lock().await;
-                        debug_writer_keys(writers.keys().cloned())
-                    };
                     crate::logging::info(format!(
-                        "hotlink tcp writer ready after wait path={} known_writer_keys=[{}]",
-                        rel_path, keys
+                        "hotlink tcp writer ready after wait path={}",
+                        rel_path
                     ));
                 }
                 return Some(w);
@@ -1451,7 +1284,7 @@ impl HotlinkManager {
     }
 
     pub async fn handle_signal(&self, signal: crate::wsproto::HotlinkSignal) {
-        if !self.enabled || !self.quic_enabled {
+        if !self.enabled {
             return;
         }
         match signal.kind.as_str() {
@@ -1475,306 +1308,469 @@ impl HotlinkManager {
             }
             "webrtc_error" => {
                 crate::logging::error(format!(
-                    "hotlink quic error: session={} error={}",
+                    "hotlink webrtc error: session={} error={}",
                     signal.session_id, signal.error
                 ));
             }
+            // backwards compat: ignore old quic signals
+            "quic_offer" | "quic_answer" | "quic_error" => {}
             _ => {}
         }
     }
 
-    async fn maybe_start_quic_offer(&self, session_id: &str) {
-        if !self.quic_enabled {
-            return;
-        }
+    async fn maybe_start_webrtc_offer(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
         let session = match sessions.get_mut(session_id) {
             Some(s) => s,
             None => return,
         };
-        if session.quic.is_some() {
+        if session.webrtc.is_some() {
             return;
         }
         crate::logging::info(format!(
-            "hotlink quic offer starting: session={}",
+            "hotlink webrtc offer starting: session={}",
             session_id
         ));
-        let (endpoint, stun_addr) = match quic_server_endpoint() {
-            Ok(values) => values,
+
+        let webrtc_session = match create_webrtc_session().await {
+            Ok(s) => s,
             Err(err) => {
-                crate::logging::error(format!("hotlink quic server endpoint failed: {err:?}"));
+                crate::logging::error(format!("hotlink webrtc session create failed: {err:?}"));
                 return;
             }
         };
-        let addr = endpoint.local_addr().ok();
-        let quic = HotlinkQuicSession {
-            endpoint: endpoint.clone(),
-            state: Arc::new(TokioMutex::new(HotlinkQuicState {
-                send: None,
-                err: None,
-            })),
-            ready: Arc::new(Notify::new()),
-            ready_flag: Arc::new(AtomicBool::new(false)),
+
+        let dc = webrtc_session
+            .peer_connection
+            .create_data_channel("hotlink", None)
+            .await;
+        let dc = match dc {
+            Ok(dc) => dc,
+            Err(err) => {
+                crate::logging::error(format!(
+                    "hotlink webrtc data channel create failed: {err:?}"
+                ));
+                return;
+            }
         };
-        session.quic = Some(quic.clone());
+
+        {
+            let mut dc_guard = webrtc_session.data_channel.lock().await;
+            *dc_guard = Some(dc.clone());
+        }
+
+        // Set up data channel callbacks
+        let manager_for_open = self.clone();
+        let session_id_for_open = session_id.to_string();
+        let ready_for_open = webrtc_session.ready.clone();
+        let ready_flag_for_open = webrtc_session.ready_flag.clone();
+        dc.on_open(Box::new(move || {
+            Box::pin(async move {
+                crate::logging::info(format!(
+                    "hotlink webrtc data channel open (offerer): session={}",
+                    session_id_for_open
+                ));
+                webrtc_set_ready(&ready_for_open, &ready_flag_for_open);
+                manager_for_open.record_p2p_answer(true);
+            })
+        }));
+
+        let manager_for_msg = self.clone();
+        let session_id_for_msg = session_id.to_string();
+        dc.on_message(Box::new(move |msg: DataChannelMessage| {
+            let mgr = manager_for_msg.clone();
+            let sid = session_id_for_msg.clone();
+            Box::pin(async move {
+                mgr.handle_webrtc_message(&sid, &msg.data).await;
+            })
+        }));
+
+        // Set up ICE candidate trickle
+        let manager_for_ice = self.clone();
+        let session_id_for_ice = session_id.to_string();
+        webrtc_session
+            .peer_connection
+            .on_ice_candidate(Box::new(move |candidate| {
+                let mgr = manager_for_ice.clone();
+                let sid = session_id_for_ice.clone();
+                Box::pin(async move {
+                    if let Some(candidate) = candidate {
+                        if let Ok(init) = candidate.to_json() {
+                            let json = serde_json::to_string(&init).unwrap_or_default();
+                            if let Err(err) =
+                                mgr.send_signal(&sid, "ice_candidate", &[], &json, "").await
+                            {
+                                crate::logging::error(format!(
+                                    "hotlink ice candidate send failed: {err:?}"
+                                ));
+                            }
+                        }
+                    }
+                })
+            }));
+
+        session.webrtc = Some(webrtc_session.clone());
         drop(sessions);
 
-        let addrs = quic_offer_addrs(addr, stun_addr);
-        if addrs.is_empty() {
-            crate::logging::error("hotlink quic offer missing local addr");
+        // Create and send SDP offer
+        let offer = match webrtc_session.peer_connection.create_offer(None).await {
+            Ok(o) => o,
+            Err(err) => {
+                crate::logging::error(format!("hotlink webrtc create offer failed: {err:?}"));
+                return;
+            }
+        };
+        if let Err(err) = webrtc_session
+            .peer_connection
+            .set_local_description(offer.clone())
+            .await
+        {
+            crate::logging::error(format!("hotlink webrtc set local desc failed: {err:?}"));
             return;
         }
+
+        let sdp_json = json!({"type": "offer", "sdp": offer.sdp}).to_string();
         if let Err(err) = self
-            .send_signal(session_id, "quic_offer", &addrs, "", "")
+            .send_signal(session_id, "sdp_offer", &[], &sdp_json, "")
             .await
         {
             crate::logging::error(format!(
-                "hotlink quic offer send failed: session={} error={err:?}",
+                "hotlink webrtc offer send failed: session={} error={err:?}",
                 session_id
             ));
         } else {
-            self.record_quic_offer();
-            crate::logging::info(format!(
-                "hotlink quic offer sent: session={} addrs={:?}",
-                session_id, addrs
-            ));
+            self.record_p2p_offer();
+            crate::logging::info(format!("hotlink webrtc offer sent: session={}", session_id));
         }
-
-        let manager = self.clone();
-        let session_id = session_id.to_string();
-        tokio::spawn(async move {
-            manager.accept_quic(&session_id, quic).await;
-        });
     }
 
-    async fn accept_quic(&self, session_id: &str, quic: HotlinkQuicSession) {
-        crate::logging::info(format!(
-            "hotlink quic accept waiting: session={}",
-            session_id
-        ));
-        let incoming: Option<quinn::Incoming> =
-            timeout(HOTLINK_QUIC_ACCEPT_TIMEOUT, quic.endpoint.accept())
-                .await
-                .unwrap_or_default();
-        let Some(incoming) = incoming else {
-            quic_set_err_state(
-                &quic.state,
-                &quic.ready,
-                &quic.ready_flag,
-                "quic accept timeout".to_string(),
-            )
-            .await;
-            crate::logging::info(format!(
-                "hotlink quic accept timeout, ws fallback: session={}",
-                session_id
-            ));
-            return;
-        };
-
-        let conn = match incoming.await {
-            Ok(conn) => conn,
-            Err(err) => {
-                quic_set_err_state(
-                    &quic.state,
-                    &quic.ready,
-                    &quic.ready_flag,
-                    format!("quic accept failed: {err:?}"),
-                )
-                .await;
-                return;
-            }
-        };
-
-        let (mut send, mut recv) = match conn.accept_bi().await {
-            Ok(streams) => streams,
-            Err(err) => {
-                quic_set_err_state(
-                    &quic.state,
-                    &quic.ready,
-                    &quic.ready_flag,
-                    format!("quic accept stream failed: {err:?}"),
-                )
-                .await;
-                return;
-            }
-        };
-
-        if let Err(err) = read_quic_handshake(&mut recv, session_id).await {
-            quic_set_err_state(
-                &quic.state,
-                &quic.ready,
-                &quic.ready_flag,
-                format!("quic handshake failed: {err:?}"),
-            )
-            .await;
-            let _ = send.finish();
-            return;
-        }
-
-        {
-            let mut state = quic.state.lock().await;
-            state.send = Some(send);
-            state.err = None;
-        }
-        quic_ready_flag(&quic.ready, &quic.ready_flag);
-
-        let manager = self.clone();
-        let session_id = session_id.to_string();
-        tokio::spawn(async move {
-            manager.quic_read_loop(&session_id, &mut recv).await;
-        });
-    }
-
-    async fn handle_quic_offer(&self, signal: crate::wsproto::HotlinkSignal) {
+    async fn handle_sdp_offer(&self, signal: crate::wsproto::HotlinkSignal) {
         let session_id = signal.session_id.clone();
         crate::logging::info(format!(
-            "hotlink quic offer received: session={} addrs={:?}",
-            session_id, signal.addrs
+            "hotlink webrtc sdp_offer received: session={}",
+            session_id
         ));
-        let quic = {
+
+        let webrtc_session = {
             let out = self.outbound.read().await;
-            out.get(&session_id).and_then(|o| o.quic.clone())
+            out.get(&session_id).and_then(|o| o.webrtc.clone())
         };
-        let Some(quic) = quic else {
-            return;
-        };
-
-        if signal.addrs.is_empty() {
-            quic_set_err_state(
-                &quic.state,
-                &quic.ready,
-                &quic.ready_flag,
-                "quic offer missing addrs".to_string(),
-            )
-            .await;
-            if let Err(err) = self
-                .send_signal(&session_id, "quic_answer", &[], "", "offer missing addrs")
-                .await
-            {
-                crate::logging::error(format!(
-                    "hotlink quic answer send failed: session={} err={err:?}",
-                    session_id
-                ));
-                self.record_quic_answer(false);
-            }
-            return;
-        }
-
-        let mut last_err: Option<String> = None;
-        for addr in signal.addrs.iter() {
-            let addr = match addr.parse::<SocketAddr>() {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-            let connect = quic
-                .endpoint
-                .connect_with(quic_client_config(), addr, "syftbox-hotlink");
-            let conn = match connect {
-                Ok(c) => c,
-                Err(err) => {
-                    last_err = Some(format!("{err:?}"));
-                    continue;
-                }
-            };
-            let conn = match timeout(HOTLINK_QUIC_DIAL_TIMEOUT, conn).await {
-                Ok(Ok(c)) => c,
-                Ok(Err(err)) => {
-                    last_err = Some(format!("{err:?}"));
-                    continue;
-                }
-                Err(_) => {
-                    last_err = Some("quic dial timeout".to_string());
-                    continue;
-                }
-            };
-            let (mut send, mut recv) = match conn.open_bi().await {
-                Ok(streams) => streams,
-                Err(err) => {
-                    last_err = Some(format!("{err:?}"));
-                    continue;
-                }
-            };
-            if let Err(err) = write_quic_handshake(&mut send, &session_id).await {
-                last_err = Some(format!("{err:?}"));
-                continue;
-            }
-
-            {
-                let mut state = quic.state.lock().await;
-                state.send = Some(send);
-                state.err = None;
-            }
-            quic_ready_flag(&quic.ready, &quic.ready_flag);
-            if let Err(err) = self
-                .send_signal(&session_id, "quic_answer", &[addr.to_string()], "ok", "")
-                .await
-            {
-                crate::logging::error(format!(
-                    "hotlink quic answer send failed: session={} err={err:?}",
-                    session_id
-                ));
-            } else {
-                self.record_quic_answer(true);
+        let webrtc_session = match webrtc_session {
+            Some(s) => s,
+            None => {
                 crate::logging::info(format!(
-                    "hotlink quic answer sent: session={} addr={}",
-                    session_id, addr
+                    "hotlink webrtc sdp_offer: no outbound session, creating answerer: session={}",
+                    session_id
                 ));
+                let s = match create_webrtc_session().await {
+                    Ok(s) => s,
+                    Err(err) => {
+                        crate::logging::error(format!(
+                            "hotlink webrtc session create failed: {err:?}"
+                        ));
+                        return;
+                    }
+                };
+
+                // Answerer receives data channel via on_data_channel
+                let manager_for_dc = self.clone();
+                let session_id_for_dc = session_id.clone();
+                let dc_holder = s.data_channel.clone();
+                let ready_for_dc = s.ready.clone();
+                let ready_flag_for_dc = s.ready_flag.clone();
+                s.peer_connection
+                    .on_data_channel(Box::new(move |dc: Arc<RTCDataChannel>| {
+                        let mgr = manager_for_dc.clone();
+                        let sid = session_id_for_dc.clone();
+                        let holder = dc_holder.clone();
+                        let ready = ready_for_dc.clone();
+                        let flag = ready_flag_for_dc.clone();
+                        Box::pin(async move {
+                            crate::logging::info(format!(
+                            "hotlink webrtc data channel received (answerer): session={} label={}",
+                            sid,
+                            dc.label()
+                        ));
+                            {
+                                let mut guard = holder.lock().await;
+                                *guard = Some(dc.clone());
+                            }
+
+                            let mgr_open = mgr.clone();
+                            let sid_open = sid.clone();
+                            dc.on_open(Box::new(move || {
+                                Box::pin(async move {
+                                    crate::logging::info(format!(
+                                        "hotlink webrtc data channel open (answerer): session={}",
+                                        sid_open
+                                    ));
+                                    webrtc_set_ready(&ready, &flag);
+                                    mgr_open.record_p2p_answer(true);
+                                })
+                            }));
+
+                            dc.on_message(Box::new(move |msg: DataChannelMessage| {
+                                let m = mgr.clone();
+                                let s = sid.clone();
+                                Box::pin(async move {
+                                    m.handle_webrtc_message(&s, &msg.data).await;
+                                })
+                            }));
+                        })
+                    }));
+
+                // Set up ICE candidate trickle
+                let manager_for_ice = self.clone();
+                let session_id_for_ice = session_id.clone();
+                s.peer_connection
+                    .on_ice_candidate(Box::new(move |candidate| {
+                        let mgr = manager_for_ice.clone();
+                        let sid = session_id_for_ice.clone();
+                        Box::pin(async move {
+                            if let Some(candidate) = candidate {
+                                if let Ok(init) = candidate.to_json() {
+                                    let json = serde_json::to_string(&init).unwrap_or_default();
+                                    if let Err(err) =
+                                        mgr.send_signal(&sid, "ice_candidate", &[], &json, "").await
+                                    {
+                                        crate::logging::error(format!(
+                                            "hotlink ice candidate send failed: {err:?}"
+                                        ));
+                                    }
+                                }
+                            }
+                        })
+                    }));
+
+                // Store in outbound
+                {
+                    let mut out = self.outbound.write().await;
+                    if let Some(entry) = out.get_mut(&session_id) {
+                        entry.webrtc = Some(s.clone());
+                    }
+                }
+
+                // Also store in sessions for the receiver side
+                {
+                    let mut sessions = self.sessions.write().await;
+                    if let Some(sess) = sessions.get_mut(&session_id) {
+                        sess.webrtc = Some(s.clone());
+                    }
+                }
+
+                s
             }
-            let manager = self.clone();
-            tokio::spawn(async move {
-                manager.quic_read_loop(&session_id, &mut recv).await;
-            });
+        };
+
+        // Parse the SDP offer from token
+        let sdp_value: serde_json::Value = match serde_json::from_str(&signal.token) {
+            Ok(v) => v,
+            Err(err) => {
+                crate::logging::error(format!("hotlink webrtc sdp_offer parse failed: {err:?}"));
+                return;
+            }
+        };
+        let sdp_str = sdp_value
+            .get("sdp")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let offer = match RTCSessionDescription::offer(sdp_str.to_string()) {
+            Ok(o) => o,
+            Err(err) => {
+                crate::logging::error(format!("hotlink webrtc offer construct failed: {err:?}"));
+                return;
+            }
+        };
+
+        if let Err(err) = webrtc_session
+            .peer_connection
+            .set_remote_description(offer)
+            .await
+        {
+            crate::logging::error(format!("hotlink webrtc set remote desc failed: {err:?}"));
             return;
         }
+        webrtc_session.remote_desc_set.store(true, Ordering::SeqCst);
 
-        let err = last_err.unwrap_or_else(|| "quic dial failed".to_string());
-        quic_set_err_state(&quic.state, &quic.ready, &quic.ready_flag, err.clone()).await;
-        if let Err(err) = self
-            .send_signal(&session_id, "quic_answer", &[], "", &err)
+        // Flush any buffered ICE candidates
+        {
+            let mut pending = webrtc_session.pending_candidates.lock().await;
+            for candidate in pending.drain(..) {
+                if let Err(err) = webrtc_session
+                    .peer_connection
+                    .add_ice_candidate(candidate)
+                    .await
+                {
+                    crate::logging::error(format!(
+                        "hotlink webrtc add buffered ice candidate failed: {err:?}"
+                    ));
+                }
+            }
+        }
+
+        // Create and send SDP answer
+        let answer = match webrtc_session.peer_connection.create_answer(None).await {
+            Ok(a) => a,
+            Err(err) => {
+                crate::logging::error(format!("hotlink webrtc create answer failed: {err:?}"));
+                return;
+            }
+        };
+        if let Err(err) = webrtc_session
+            .peer_connection
+            .set_local_description(answer.clone())
             .await
         {
             crate::logging::error(format!(
-                "hotlink quic answer send failed: session={} err={err:?}",
+                "hotlink webrtc set local desc (answer) failed: {err:?}"
+            ));
+            return;
+        }
+
+        let sdp_json = json!({"type": "answer", "sdp": answer.sdp}).to_string();
+        if let Err(err) = self
+            .send_signal(&session_id, "sdp_answer", &[], &sdp_json, "")
+            .await
+        {
+            crate::logging::error(format!(
+                "hotlink webrtc answer send failed: session={} err={err:?}",
                 session_id
             ));
         } else {
-            self.record_quic_answer(false);
+            self.record_p2p_answer(true);
             crate::logging::info(format!(
-                "hotlink quic answer sent: session={} error={}",
-                session_id, err
+                "hotlink webrtc answer sent: session={}",
+                session_id
             ));
         }
-        crate::logging::info(format!(
-            "hotlink quic dial failed, ws fallback: session={} error={}",
-            session_id, err
-        ));
     }
 
-    async fn handle_quic_answer(&self, signal: crate::wsproto::HotlinkSignal) {
+    async fn handle_sdp_answer(&self, signal: crate::wsproto::HotlinkSignal) {
+        let session_id = signal.session_id.clone();
         crate::logging::info(format!(
-            "hotlink quic answer received: session={} addrs={:?} error={}",
-            signal.session_id, signal.addrs, signal.error
+            "hotlink webrtc sdp_answer received: session={}",
+            session_id
         ));
-        if !signal.error.is_empty() {
-            self.record_quic_answer(false);
-            crate::logging::info(format!(
-                "hotlink quic answer error, ws fallback: session={} error={}",
-                signal.session_id, signal.error
+
+        let webrtc_session = {
+            let sessions = self.sessions.read().await;
+            sessions.get(&session_id).and_then(|s| s.webrtc.clone())
+        };
+        let Some(webrtc_session) = webrtc_session else {
+            crate::logging::error(format!(
+                "hotlink webrtc sdp_answer: no session found: session={}",
+                session_id
             ));
-            if self.quic_only {
-                let _ = self.send_close(&signal.session_id, "quic-only").await;
+            return;
+        };
+
+        let sdp_value: serde_json::Value = match serde_json::from_str(&signal.token) {
+            Ok(v) => v,
+            Err(err) => {
+                crate::logging::error(format!("hotlink webrtc sdp_answer parse failed: {err:?}"));
+                return;
             }
+        };
+        let sdp_str = sdp_value
+            .get("sdp")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        let answer = match RTCSessionDescription::answer(sdp_str.to_string()) {
+            Ok(a) => a,
+            Err(err) => {
+                crate::logging::error(format!("hotlink webrtc answer construct failed: {err:?}"));
+                return;
+            }
+        };
+
+        if let Err(err) = webrtc_session
+            .peer_connection
+            .set_remote_description(answer)
+            .await
+        {
+            crate::logging::error(format!(
+                "hotlink webrtc set remote desc (answer) failed: {err:?}"
+            ));
             return;
         }
+        webrtc_session.remote_desc_set.store(true, Ordering::SeqCst);
+
+        // Flush any buffered ICE candidates
+        {
+            let mut pending = webrtc_session.pending_candidates.lock().await;
+            for candidate in pending.drain(..) {
+                if let Err(err) = webrtc_session
+                    .peer_connection
+                    .add_ice_candidate(candidate)
+                    .await
+                {
+                    crate::logging::error(format!(
+                        "hotlink webrtc add buffered ice candidate failed: {err:?}"
+                    ));
+                }
+            }
+        }
+
         crate::logging::info(format!(
-            "hotlink quic answer ok: session={} addr={}",
-            signal.session_id,
-            signal.addrs.join(",")
+            "hotlink webrtc answer applied: session={}",
+            session_id
         ));
-        self.record_quic_answer(true);
     }
 
-    async fn try_send_quic(
+    async fn handle_ice_candidate(&self, signal: crate::wsproto::HotlinkSignal) {
+        let session_id = signal.session_id.clone();
+        if hotlink_debug_enabled() {
+            crate::logging::info(format!(
+                "hotlink webrtc ice_candidate received: session={}",
+                session_id
+            ));
+        }
+
+        // Try sessions first (receiver side), then outbound (sender side)
+        let webrtc_session = {
+            let sessions = self.sessions.read().await;
+            sessions.get(&session_id).and_then(|s| s.webrtc.clone())
+        };
+        let webrtc_session = match webrtc_session {
+            Some(s) => s,
+            None => {
+                let out = self.outbound.read().await;
+                match out.get(&session_id).and_then(|o| o.webrtc.clone()) {
+                    Some(s) => s,
+                    None => return,
+                }
+            }
+        };
+
+        let candidate: RTCIceCandidateInit = match serde_json::from_str(&signal.token) {
+            Ok(c) => c,
+            Err(err) => {
+                crate::logging::error(format!(
+                    "hotlink webrtc ice_candidate parse failed: {err:?}"
+                ));
+                return;
+            }
+        };
+
+        if !webrtc_session.remote_desc_set.load(Ordering::SeqCst) {
+            // Buffer until remote description is set
+            let mut pending = webrtc_session.pending_candidates.lock().await;
+            pending.push(candidate);
+            return;
+        }
+
+        if let Err(err) = webrtc_session
+            .peer_connection
+            .add_ice_candidate(candidate)
+            .await
+        {
+            crate::logging::error(format!("hotlink webrtc add ice candidate failed: {err:?}"));
+        }
+    }
+
+    async fn try_send_webrtc(
         &self,
         session_id: &str,
         rel_path: &str,
@@ -1783,30 +1779,33 @@ impl HotlinkManager {
         payload: &[u8],
         wait: bool,
     ) -> Result<Option<()>> {
-        let quic = {
+        let webrtc = {
             let out = self.outbound.read().await;
-            out.get(session_id).and_then(|o| o.quic.clone())
+            out.get(session_id).and_then(|o| o.webrtc.clone())
         };
-        let Some(quic) = quic else {
+        let Some(webrtc) = webrtc else {
             return Ok(None);
         };
-        if !quic.ready_flag.load(Ordering::SeqCst) {
+        if !webrtc.ready_flag.load(Ordering::SeqCst) {
             if wait {
-                if timeout(HOTLINK_QUIC_ACCEPT_TIMEOUT, quic.ready.notified())
+                if timeout(HOTLINK_WEBRTC_READY_TIMEOUT, webrtc.ready.notified())
                     .await
                     .is_err()
                 {
-                    return Err(anyhow::anyhow!("quic wait timeout"));
+                    return Err(anyhow::anyhow!("webrtc wait timeout"));
                 }
             } else {
                 return Ok(None);
             }
         }
-        let mut state = quic.state.lock().await;
-        if let Some(err) = state.err.clone() {
-            return Err(anyhow::anyhow!(err));
+        {
+            let err_guard = webrtc.err.lock().await;
+            if let Some(err) = err_guard.as_ref() {
+                return Err(anyhow::anyhow!(err.clone()));
+            }
         }
-        let Some(send) = state.send.as_mut() else {
+        let dc_guard = webrtc.data_channel.lock().await;
+        let Some(dc) = dc_guard.as_ref() else {
             return Ok(None);
         };
         let frame = HotlinkFrame {
@@ -1816,7 +1815,7 @@ impl HotlinkManager {
             payload: payload.to_vec(),
         };
         let bytes = crate::hotlink::encode_hotlink_frame(&frame);
-        send.write_all(&bytes).await?;
+        dc.send(&Bytes::from(bytes)).await?;
         Ok(Some(()))
     }
 
@@ -1827,7 +1826,7 @@ impl HotlinkManager {
                 entry.ws_fallback_logged = true;
                 self.record_ws_fallback();
                 crate::logging::info(format!(
-                    "hotlink quic not ready, using ws fallback: session={} path={}",
+                    "hotlink p2p not ready, using ws fallback: session={} path={}",
                     session_id, rel_path
                 ));
             }
@@ -2650,87 +2649,8 @@ fn hotlink_debug_enabled() -> bool {
     std::env::var("SYFTBOX_HOTLINK_DEBUG").ok().as_deref() == Some("1")
 }
 
-fn hotlink_tcp_dump_enabled() -> bool {
-    env_flag_truthy("SYFTBOX_HOTLINK_TCP_DUMP")
-}
-
-fn hotlink_tcp_dump_full_enabled() -> bool {
-    env_flag_truthy("SYFTBOX_HOTLINK_TCP_DUMP_FULL")
-}
-
-fn hotlink_tcp_dump_preview_bytes() -> usize {
-    std::env::var("SYFTBOX_HOTLINK_TCP_DUMP_PREVIEW")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .map(|n| n.clamp(1, 4096))
-        .unwrap_or(64)
-}
-
-fn env_flag_truthy(name: &str) -> bool {
-    match std::env::var(name) {
-        Ok(v) => matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
-        Err(_) => false,
-    }
-}
-
-fn hex_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len() * 2);
-    for b in data {
-        let _ = write!(&mut out, "{:02x}", b);
-    }
-    out
-}
-
-fn log_hotlink_tcp_dump(direction: &str, channel: &str, seq: Option<u64>, payload: &[u8]) {
-    if !hotlink_tcp_dump_enabled() {
-        return;
-    }
-    let preview_len = if hotlink_tcp_dump_full_enabled() {
-        payload.len()
-    } else {
-        payload.len().min(hotlink_tcp_dump_preview_bytes())
-    };
-    let preview = &payload[..preview_len];
-    let truncated = preview_len < payload.len();
-    let seq_label = seq
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "-".to_string());
-    crate::logging::info(format!(
-        "hotlink tcp dump: dir={} channel={} seq={} bytes={} sample_bytes={} truncated={} hex={}",
-        direction,
-        channel,
-        seq_label,
-        payload.len(),
-        preview.len(),
-        truncated,
-        hex_encode(preview)
-    ));
-}
-
-fn tcp_proxy_enabled() -> bool {
-    // TCP proxy defaults to ON. Set SYFTBOX_HOTLINK_TCP_PROXY=0 to disable.
-    std::env::var("SYFTBOX_HOTLINK_TCP_PROXY")
-        .ok()
-        .as_deref()
-        .map(|v| v != "0")
-        .unwrap_or(true)
-}
-
-fn tcp_proxy_bind_ip(owner_email: &str) -> String {
-    if let Ok(addr) = std::env::var("SYFTBOX_HOTLINK_TCP_PROXY_ADDR") {
-        let trimmed = addr.trim();
-        if !trimmed.is_empty() {
-            if let Some((ip, _)) = trimmed.split_once(':') {
-                return ip.to_string();
-            }
-            return trimmed.to_string();
-        }
-    }
-    let _ = owner_email;
-    "127.0.0.1".to_string()
+fn tcp_proxy_bind_ip() -> String {
+    std::env::var("SYFTBOX_HOTLINK_TCP_PROXY_ADDR").unwrap_or_else(|_| "127.0.0.1".to_string())
 }
 
 fn is_tcp_proxy_path(path: &str) -> bool {
@@ -2951,8 +2871,8 @@ fn parent_path(path: &str) -> String {
 
 // Expose IPC dial helper for SDKs.
 #[allow(dead_code)]
-pub async fn connect_ipc(marker_path: &Path, timeout: Duration) -> Result<HotlinkStream> {
-    dial_hotlink_ipc(marker_path, timeout).await
+pub async fn connect_ipc(marker_path: &Path, timeout_dur: Duration) -> Result<HotlinkStream> {
+    dial_hotlink_ipc(marker_path, timeout_dur).await
 }
 
 fn ice_servers() -> Vec<RTCIceServer> {
@@ -3015,301 +2935,9 @@ async fn create_webrtc_session() -> Result<WebRTCSession> {
     })
 }
 
-fn quic_client_endpoint() -> Result<Endpoint> {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
-    Ok(Endpoint::client(addr)?)
-}
-
-fn quic_server_config() -> Result<ServerConfig> {
-    ensure_rustls_provider();
-    let cert = generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
-    let cert_chain = vec![cert.cert.into()];
-    let mut server_crypto = rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, key.into())?;
-    server_crypto.alpn_protocols = vec![HOTLINK_QUIC_ALPN.to_vec()];
-    let server_config =
-        ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
-    Ok(server_config)
-}
-
-fn quic_client_config() -> ClientConfig {
-    ensure_rustls_provider();
-    let mut client_crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyCert))
-        .with_no_client_auth();
-    client_crypto.alpn_protocols = vec![HOTLINK_QUIC_ALPN.to_vec()];
-    ClientConfig::new(Arc::new(
-        QuicClientConfig::try_from(client_crypto).expect("quic client config"),
-    ))
-}
-
-fn quic_offer_addrs(addr: Option<SocketAddr>, stun_addr: Option<SocketAddr>) -> Vec<String> {
-    let mut out = Vec::new();
-    if let Some(addr) = addr {
-        let port = addr.port();
-        append_unique_addr(&mut out, format!("127.0.0.1:{port}"));
-        let bind_ip = tcp_proxy_bind_ip("");
-        if bind_ip != "127.0.0.1" {
-            append_unique_addr(&mut out, format!("{bind_ip}:{port}"));
-        }
-    }
-    if let Some(stun_addr) = stun_addr {
-        append_unique_addr(&mut out, stun_addr.to_string());
-    }
-    out
-}
-
-fn append_unique_addr(out: &mut Vec<String>, addr: String) {
-    if addr.trim().is_empty() {
-        return;
-    }
-    if out
-        .iter()
-        .any(|existing| existing.eq_ignore_ascii_case(&addr))
-    {
-        return;
-    }
-    out.push(addr);
-}
-
-fn discover_stun_addr(socket: &std::net::UdpSocket) -> Result<Option<SocketAddr>> {
-    let mut server = std::env::var(HOTLINK_STUN_SERVER_ENV)
-        .unwrap_or_else(|_| "stun.l.google.com:19302".to_string());
-    server = server.trim().to_string();
-    if server.is_empty() {
-        server = "stun.l.google.com:19302".to_string();
-    }
-    if server == "0"
-        || server.eq_ignore_ascii_case("off")
-        || server.eq_ignore_ascii_case("disabled")
-    {
-        return Ok(None);
-    }
-
-    let server_addr = server
-        .to_socket_addrs()?
-        .find(|addr| matches!(addr, SocketAddr::V4(_) | SocketAddr::V6(_)))
-        .ok_or_else(|| anyhow::anyhow!("unable to resolve stun server {}", server))?;
-
-    let mut txid = [0u8; 12];
-    let uuid_bytes = *Uuid::new_v4().as_bytes();
-    txid.copy_from_slice(&uuid_bytes[..12]);
-
-    let mut req = [0u8; 20];
-    req[0..2].copy_from_slice(&STUN_BINDING_REQUEST.to_be_bytes());
-    req[2..4].copy_from_slice(&0u16.to_be_bytes());
-    req[4..8].copy_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
-    req[8..20].copy_from_slice(&txid);
-
-    socket.set_write_timeout(Some(HOTLINK_STUN_TIMEOUT))?;
-    let send_res = socket.send_to(&req, server_addr);
-    socket.set_write_timeout(None)?;
-    send_res?;
-
-    let mut resp = [0u8; 1024];
-    socket.set_read_timeout(Some(HOTLINK_STUN_TIMEOUT))?;
-    let read_res = socket.recv_from(&mut resp);
-    socket.set_read_timeout(None)?;
-    let (n, _) = read_res?;
-
-    let mapped = parse_stun_mapped_addr(&resp[..n], txid)?;
-    Ok(Some(mapped))
-}
-
-fn parse_stun_mapped_addr(msg: &[u8], txid: [u8; 12]) -> Result<SocketAddr> {
-    if msg.len() < 20 {
-        anyhow::bail!("stun response too short");
-    }
-    if u16::from_be_bytes([msg[0], msg[1]]) != STUN_BINDING_SUCCESS {
-        anyhow::bail!("unexpected stun response type");
-    }
-    if u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]) != STUN_MAGIC_COOKIE {
-        anyhow::bail!("invalid stun magic cookie");
-    }
-    if msg[8..20] != txid {
-        anyhow::bail!("stun transaction mismatch");
-    }
-
-    let msg_len = u16::from_be_bytes([msg[2], msg[3]]) as usize;
-    let limit = (20 + msg_len).min(msg.len());
-    let mut offset = 20usize;
-    while offset + 4 <= limit {
-        let attr_type = u16::from_be_bytes([msg[offset], msg[offset + 1]]);
-        let attr_len = u16::from_be_bytes([msg[offset + 2], msg[offset + 3]]) as usize;
-        offset += 4;
-        if offset + attr_len > limit {
-            break;
-        }
-        let value = &msg[offset..offset + attr_len];
-        match attr_type {
-            STUN_XOR_MAPPED_ADDRESS => {
-                if let Ok(addr) = parse_stun_address_value(value, &txid, true) {
-                    return Ok(addr);
-                }
-            }
-            STUN_MAPPED_ADDRESS => {
-                if let Ok(addr) = parse_stun_address_value(value, &txid, false) {
-                    return Ok(addr);
-                }
-            }
-            _ => {}
-        }
-        offset += attr_len;
-        let rem = offset % 4;
-        if rem != 0 {
-            offset += 4 - rem;
-        }
-    }
-    anyhow::bail!("no mapped address attributes in stun response");
-}
-
-fn parse_stun_address_value(value: &[u8], txid: &[u8; 12], xor: bool) -> Result<SocketAddr> {
-    if value.len() < 8 {
-        anyhow::bail!("stun address attribute too short");
-    }
-    let family = value[1];
-    let mut port = u16::from_be_bytes([value[2], value[3]]);
-    if xor {
-        port ^= (STUN_MAGIC_COOKIE >> 16) as u16;
-    }
-    match family {
-        0x01 => {
-            if value.len() < 8 {
-                anyhow::bail!("stun ipv4 attribute too short");
-            }
-            let mut octets = [value[4], value[5], value[6], value[7]];
-            if xor {
-                let cookie = STUN_MAGIC_COOKIE.to_be_bytes();
-                for i in 0..4 {
-                    octets[i] ^= cookie[i];
-                }
-            }
-            Ok(SocketAddr::new(IpAddr::V4(Ipv4Addr::from(octets)), port))
-        }
-        0x02 => {
-            if value.len() < 20 {
-                anyhow::bail!("stun ipv6 attribute too short");
-            }
-            let mut octets = [0u8; 16];
-            octets.copy_from_slice(&value[4..20]);
-            if xor {
-                let cookie = STUN_MAGIC_COOKIE.to_be_bytes();
-                for i in 0..4 {
-                    octets[i] ^= cookie[i];
-                }
-                for i in 0..12 {
-                    octets[4 + i] ^= txid[i];
-                }
-            }
-            Ok(SocketAddr::new(IpAddr::from(octets), port))
-        }
-        _ => anyhow::bail!("unsupported stun address family {}", family),
-    }
-}
-
-fn ensure_rustls_provider() {
-    RUSTLS_PROVIDER_INIT.call_once(|| {
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
-        if let Err(err) = provider.install_default() {
-            crate::logging::error(format!(
-                "hotlink quic rustls provider install failed: {err:?}"
-            ));
-        }
-    });
-}
-
-async fn quic_set_err_state(
-    state: &Arc<TokioMutex<HotlinkQuicState>>,
-    ready: &Arc<Notify>,
-    flag: &Arc<AtomicBool>,
-    err: String,
-) {
-    {
-        let mut guard = state.lock().await;
-        guard.err = Some(err);
-    }
-    quic_ready_flag(ready, flag);
-}
-
-fn quic_ready_flag(ready: &Arc<Notify>, flag: &Arc<AtomicBool>) {
+fn webrtc_set_ready(ready: &Arc<Notify>, flag: &Arc<AtomicBool>) {
     if !flag.swap(true, Ordering::SeqCst) {
-        ready.notify_waiters();
-    }
-}
-
-async fn write_quic_handshake(send: &mut quinn::SendStream, session_id: &str) -> Result<()> {
-    if session_id.len() > u16::MAX as usize {
-        anyhow::bail!("session id too long");
-    }
-    send.write_all(b"HLQ1").await?;
-    send.write_all(&(session_id.len() as u16).to_be_bytes())
-        .await?;
-    send.write_all(session_id.as_bytes()).await?;
-    Ok(())
-}
-
-async fn read_quic_handshake(recv: &mut quinn::RecvStream, session_id: &str) -> Result<()> {
-    let mut magic = [0u8; 4];
-    recv.read_exact(&mut magic).await?;
-    if &magic != b"HLQ1" {
-        anyhow::bail!("invalid quic handshake magic");
-    }
-    let mut len_buf = [0u8; 2];
-    recv.read_exact(&mut len_buf).await?;
-    let len = u16::from_be_bytes(len_buf) as usize;
-    if len == 0 || len > 1024 {
-        anyhow::bail!("invalid quic handshake length");
-    }
-    let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf).await?;
-    if buf != session_id.as_bytes() {
-        anyhow::bail!("quic handshake session mismatch");
-    }
-    Ok(())
-}
-
-#[derive(Debug)]
-struct AcceptAnyCert;
-
-impl ServerCertVerifier for AcceptAnyCert {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
-        Ok(ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        Ok(HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::ED25519,
-            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            rustls::SignatureScheme::RSA_PKCS1_SHA256,
-        ]
+        ready.notify_one();
     }
 }
 
