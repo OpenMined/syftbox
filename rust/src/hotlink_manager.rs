@@ -797,10 +797,13 @@ impl HotlinkManager {
         let local_key = local_tcp_key(&rel_marker);
         let owner_from_key = owner_tcp_key(&rel_marker, &info.from_email);
         let owner_to_key = owner_tcp_key(&rel_marker, &info.to_email);
-        // Keep outbound on canonical key to match existing ACL ownership.
-        // Self-routing protection is handled in send_hotlink by reusing/waiting
-        // for inbound peer sessions when owner == local.
-        let outbound_key = channel_key.clone();
+        // Use directional outbound path owned by local user so that the
+        // server write-ACL check always passes.  Each party sends on its own
+        // namespace (`local_email/_mpc/local_pid_to_peer_pid/...`).
+        let peer_inbound_key =
+            peer_inbound_tcp_key(&rel_marker, &info, local_email.as_deref());
+        let outbound_key = local_outbound_tcp_key(&rel_marker, &info, local_email.as_deref())
+            .unwrap_or_else(|| channel_key.clone());
         let port = info.port;
 
         let bind_ip = self
@@ -874,17 +877,29 @@ impl HotlinkManager {
             } else {
                 false
             };
+            // Map writer to the path the PEER would use for their outbound
+            // traffic.  When the peer sends on their own directional path
+            // (e.g. `peer@.../peer_pid_to_local_pid/...`), incoming hotlink
+            // data carries that path and we need a matching writer entry.
+            let peer_mapped = if let Some(peer_key) = &peer_inbound_key {
+                self.upsert_tcp_writer_key(peer_key, writer_arc.clone(), writer_active.clone())
+                    .await
+            } else {
+                false
+            };
             if debug {
                 crate::logging::info(format!(
-                    "hotlink tcp proxy: writer mapped keys channel={} local={:?} owner_from={:?} owner_to={:?} active(channel/local/from/to)={}/{}/{}/{}",
+                    "hotlink tcp proxy: writer mapped keys channel={} local={:?} owner_from={:?} owner_to={:?} peer_inbound={:?} active(ch/loc/from/to/peer)={}/{}/{}/{}/{}",
                     channel_key,
                     local_key,
                     owner_from_key,
                     owner_to_key,
+                    peer_inbound_key,
                     channel_mapped,
                     local_mapped,
                     owner_from_mapped,
-                    owner_to_mapped
+                    owner_to_mapped,
+                    peer_mapped
                 ));
             }
 
@@ -893,6 +908,7 @@ impl HotlinkManager {
             let local_channel = local_key.clone();
             let owner_from_channel = owner_from_key.clone();
             let owner_to_channel = owner_to_key.clone();
+            let peer_inbound_channel = peer_inbound_key.clone();
             let outbound_channel = outbound_key.clone();
             let writer_for_cleanup = writer_arc.clone();
             let writer_active_for_cleanup = writer_active.clone();
@@ -943,6 +959,11 @@ impl HotlinkManager {
                 if let Some(owner_to_key) = owner_to_channel {
                     manager
                         .clear_tcp_writer_key_if_current(&owner_to_key, &writer_for_cleanup)
+                        .await;
+                }
+                if let Some(peer_key) = peer_inbound_channel {
+                    manager
+                        .clear_tcp_writer_key_if_current(&peer_key, &writer_for_cleanup)
                         .await;
                 }
             });
@@ -2703,6 +2724,56 @@ fn owner_tcp_key(rel_marker: &Path, owner_email: &str) -> Option<String> {
     let last_idx = comps.len().checked_sub(1)?;
     comps[last_idx] = HOTLINK_TCP_SUFFIX.to_string();
     Some(comps.join("/"))
+}
+
+/// Compute the hotlink path the PEER would use for their outbound traffic
+/// on this channel.  Both parties share the same channel directory name
+/// (e.g. `0_to_1`); only the email prefix differs.  The result is
+/// `{peer_email}/.../{channel_dir}/stream.tcp.request`.
+/// We register a TCP writer under this key so that incoming hotlink data
+/// from the peer (which carries their directional path) can be routed to
+/// the correct TCP socket.
+fn peer_inbound_tcp_key(
+    rel_marker: &Path,
+    info: &TcpMarkerInfo,
+    local_email: Option<&str>,
+) -> Option<String> {
+    let local_email = local_email?;
+    let peer_email = if info.from_email == local_email {
+        &info.to_email
+    } else if info.to_email == local_email {
+        &info.from_email
+    } else {
+        return None;
+    };
+    let mut comps: Vec<String> = rel_marker
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    if comps.len() < 2 {
+        return None;
+    }
+    let last = comps.last()?.as_str();
+    if last != "stream.tcp" {
+        return None;
+    }
+    comps[0] = peer_email.to_string();
+    let last_idx = comps.len().checked_sub(1)?;
+    comps[last_idx] = HOTLINK_TCP_SUFFIX.to_string();
+    Some(comps.join("/"))
+}
+
+/// Compute the local directional outbound path for this channel.
+/// Since the marker lives under the local user's datasite, `local_tcp_key`
+/// already produces the correct path (`{local_email}/.../{channel_dir}/stream.tcp.request`).
+/// This wrapper exists only for symmetry with `peer_inbound_tcp_key`.
+fn local_outbound_tcp_key(
+    rel_marker: &Path,
+    _info: &TcpMarkerInfo,
+    local_email: Option<&str>,
+) -> Option<String> {
+    let _local_email = local_email?;
+    local_tcp_key(rel_marker)
 }
 
 fn parse_channel_pids(rel_marker: &Path) -> Option<(usize, usize)> {
