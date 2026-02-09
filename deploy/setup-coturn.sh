@@ -94,7 +94,7 @@ echo "  ICE URL:     turn:${EXTERNAL_IP}:3478?transport=udp"
 if command -v turnutils_uclient &>/dev/null; then
     echo ""
     echo "Running health check..."
-    if turnutils_uclient -T -p 3478 127.0.0.1 -u "$TURN_USER" -w "$TURN_PASS" 2>&1 | grep -q "Total"; then
+    if timeout 10 turnutils_uclient -T -p 3478 127.0.0.1 -u "$TURN_USER" -w "$TURN_PASS" 2>&1 | grep -q "Total"; then
         echo "Health check PASSED"
     else
         echo "Health check inconclusive (turnutils_uclient output may vary)"
