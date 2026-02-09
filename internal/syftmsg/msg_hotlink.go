@@ -3,6 +3,8 @@ package syftmsg
 type HotlinkOpen struct {
 	SessionID string `json:"sid" msgpack:"sid"`
 	Path      string `json:"pth" msgpack:"pth"`
+	From      string `json:"frm,omitempty" msgpack:"frm,omitempty"`
+	To        string `json:"to,omitempty" msgpack:"to,omitempty"`
 }
 
 type HotlinkAccept struct {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 
@@ -103,6 +105,7 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	// Upgrade HTTP connection to WebSocket
 	enc := wsproto.PreferredEncoding(ctx.GetHeader("X-Syft-WS-Encodings"))
 	ctx.Writer.Header().Set("X-Syft-WS-Encoding", strings.ToLower(enc.String()))
+	ctx.Writer.Header().Set("X-Syft-Hotlink-Ice-Servers", advertisedIceServers(ctx.Request.Host))
 	conn, err := websocket.Accept(ctx.Writer, ctx.Request, nil)
 	if err != nil {
 		api.AbortWithError(ctx, http.StatusBadRequest, api.CodeInvalidRequest, fmt.Errorf("websocket accept failed: %w", err))
@@ -121,6 +124,55 @@ func (h *WebsocketHub) WebsocketHandler(ctx *gin.Context) {
 	client.MsgTx <- syftmsg.NewSystemMessage(version.Version, "ok")
 
 	h.register <- client
+}
+
+func advertisedIceServers(requestHost string) string {
+	if configured := strings.TrimSpace(os.Getenv("SYFTBOX_HOTLINK_ICE_SERVERS")); configured != "" {
+		return configured
+	}
+
+	host := strings.TrimSpace(os.Getenv("SYFTBOX_HOTLINK_TURN_HOST"))
+	if host == "" {
+		host = stripPort(requestHost)
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	port := strings.TrimSpace(os.Getenv("SYFTBOX_HOTLINK_TURN_PORT"))
+	if port == "" {
+		port = "5349"
+	}
+
+	return fmt.Sprintf("turns:%s:%s?transport=tcp", formatHostForURL(host), port)
+}
+
+func stripPort(hostport string) string {
+	hostport = strings.TrimSpace(hostport)
+	if hostport == "" {
+		return ""
+	}
+
+	if host, _, err := net.SplitHostPort(hostport); err == nil {
+		return strings.Trim(host, "[]")
+	}
+
+	// host:port (non-IPv6)
+	if strings.Count(hostport, ":") == 1 {
+		if i := strings.LastIndex(hostport, ":"); i > 0 {
+			return strings.Trim(hostport[:i], "[]")
+		}
+	}
+
+	return strings.Trim(hostport, "[]")
+}
+
+func formatHostForURL(host string) string {
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if strings.Contains(host, ":") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 func (h *WebsocketHub) SendMessage(connId string, msg *syftmsg.Message) {

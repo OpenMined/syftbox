@@ -86,6 +86,8 @@ pub struct MsgpackFileWrite {
 pub struct HotlinkOpen {
     pub session_id: String,
     pub path: String,
+    pub from: Option<String>,
+    pub to: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +133,10 @@ struct JsonHotlinkOpen {
     pub session_id: String,
     #[serde(rename = "pth")]
     pub path: String,
+    #[serde(rename = "frm", default)]
+    pub from: Option<String>,
+    #[serde(rename = "to", default)]
+    pub to: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,6 +196,10 @@ pub struct MsgpackHotlinkOpen {
     pub session_id: String,
     #[serde(rename = "pth")]
     pub path: String,
+    #[serde(rename = "frm", default)]
+    pub from: Option<String>,
+    #[serde(rename = "to", default)]
+    pub to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -578,6 +588,8 @@ fn decode_wire(wire: WireMessage) -> Result<Decoded> {
             Ok(Decoded::HotlinkOpen(HotlinkOpen {
                 session_id: open.session_id,
                 path: open.path,
+                from: open.from,
+                to: open.to,
             }))
         }
         10 => {
@@ -687,6 +699,8 @@ fn decode_json_msg(msg: Message) -> Result<Decoded> {
             Ok(Decoded::HotlinkOpen(HotlinkOpen {
                 session_id: open.session_id,
                 path: open.path,
+                from: open.from,
+                to: open.to,
             }))
         }
         10 => {
