@@ -87,6 +87,7 @@ pub struct HotlinkOpen {
     pub session_id: String,
     pub path: String,
     pub from: Option<String>,
+    #[allow(dead_code)]
     pub to: Option<String>,
 }
 
@@ -121,6 +122,7 @@ pub struct HotlinkClose {
 pub struct HotlinkSignal {
     pub session_id: String,
     pub kind: String,
+    #[allow(dead_code)]
     pub addrs: Vec<String>,
     #[allow(dead_code)]
     pub token: String,

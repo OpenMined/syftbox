@@ -2783,6 +2783,7 @@ impl HotlinkManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn send_close(&self, session_id: &str, reason: &str) -> Result<()> {
         let id = Uuid::new_v4().to_string();
         if hotlink_debug_enabled() {
@@ -3126,7 +3127,6 @@ fn ice_servers() -> Vec<RTCIceServer> {
                 } else {
                     String::new()
                 },
-                ..Default::default()
             }
         })
         .collect()
