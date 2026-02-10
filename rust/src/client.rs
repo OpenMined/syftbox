@@ -87,7 +87,7 @@ fn maybe_apply_hotlink_ice_from_server(resp: &WsResponse) {
             .filter(|v| !v.is_empty())
         {
             env::set_var("SYFTBOX_HOTLINK_TURN_PASS", pass);
-            crate::logging::info("hotlink TURN pass from server: [set]".to_string());
+            crate::logging::info("hotlink TURN pass from server: [set]");
         }
     }
 }
