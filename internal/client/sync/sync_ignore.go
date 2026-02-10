@@ -15,12 +15,18 @@ import (
 var defaultIgnoreLines = []string{
 	// syft
 	"syftignore",
+	"**/syft.sub.yaml",
 	"**/*syftrejected*", // legacy marker
 	"**/*syftconflict*", // legacy marker
 	"**/*.conflict.*",
+	"**/*.conflict",
 	"**/*.rejected.*",
-	"*.syft.tmp.*", // temporary files
+	"**/*.rejected",
+	"*.syft.tmp.*", // temporary files (Go atomic writes)
+	"**/.*.tmp-*",  // temporary files (Rust download temp)
+	"**/*.tmp-*",   // temporary files (without leading dot)
 	".syftkeep",
+	".data/",
 	// python
 	".ipynb_checkpoints/",
 	"__pycache__/",
@@ -36,6 +42,11 @@ var defaultIgnoreLines = []string{
 	"*.tmp",
 	"*.log",
 	"logs/",
+	"**/stream.fifo",
+	"**/stream.sock",
+	"**/stream.pipe",
+	"**/stream.tcp",
+	"**/stream.accept",
 	// OS-specific
 	".DS_Store",
 	"Thumbds.db",
@@ -70,7 +81,19 @@ func (s *SyncIgnoreList) Load() {
 }
 
 func (s *SyncIgnoreList) ShouldIgnore(path string) bool {
-	return s.ignore.MatchesPath(path)
+	// CRITICAL FIX: Handle both absolute paths (from file watcher) and relative SyncPath strings (from reconciliation)
+	relPath := path
+	if filepath.IsAbs(path) {
+		// Convert absolute path to relative path before matching gitignore patterns
+		var err error
+		relPath, err = filepath.Rel(s.baseDir, path)
+		if err != nil {
+			// If we can't get relative path, the file is outside baseDir - don't ignore
+			return false
+		}
+	}
+	// For relative paths (SyncPath strings), use them directly
+	return s.ignore.MatchesPath(relPath)
 }
 
 func readIgnoreFile(path string) ([]string, error) {

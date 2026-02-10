@@ -18,6 +18,7 @@ By default, logs are stored in `.logs/access/` in the current working directory 
 - **Custom**: Set via `--logDir` flag or `SYFTBOX_LOG_DIR` environment variable
 
 Example directory structure with default setup:
+
 ```
 ~/
 ├── .data/                    # Database and state files
@@ -36,6 +37,7 @@ Example directory structure with default setup:
 ## Configuration
 
 ### Command Line
+
 ```bash
 # Use custom log directory
 ./syftbox_server --logDir /custom/path/to/logs
@@ -47,20 +49,21 @@ Each log entry is a JSON object with the following fields:
 
 ```json
 {
-  "timestamp": "2024-12-02 14:30:22.123 UTC",
-  "path": "/user@example.com/private/file.txt",
-  "access_type": "read",
-  "user": "user@example.com",
-  "ip": "192.168.1.100",
-  "user_agent": "SyftBox/0.5.0-dev (HEAD; darwin/arm64; Go/go1.24.3; macOS/14.5.0)",
-  "method": "GET",
-  "status_code": 200,
-  "allowed": true,
-  "denied_reason": ""
+	"timestamp": "2024-12-02 14:30:22.123 UTC",
+	"path": "/user@example.com/private/file.txt",
+	"access_type": "read",
+	"user": "user@example.com",
+	"ip": "192.168.1.100",
+	"user_agent": "SyftBox/0.5.0-dev (HEAD; darwin/arm64; Go/go1.24.3; macOS/14.5.0)",
+	"method": "GET",
+	"status_code": 200,
+	"allowed": true,
+	"denied_reason": ""
 }
 ```
 
 ### Access Types
+
 - `read`: File read/download operation
 - `write`: File write/upload operation
 - `admin`: Administrative operation
@@ -69,12 +72,14 @@ Each log entry is a JSON object with the following fields:
 ## User-Agent Enhancement
 
 The client now sends an enhanced User-Agent string with:
+
 - SyftBox version and git revision
 - Operating system and architecture
 - Go runtime version
 - OS-specific version details
 
 Examples:
+
 - macOS: `SyftBox/0.5.0-dev (HEAD; darwin/arm64; Go/go1.24.3; macOS/14.5.0)`
 - Linux: `SyftBox/0.5.0-dev (abc123; linux/amd64; Go/go1.24.3; Ubuntu/22.04; kernel/5.15.0)`
 - Windows: `SyftBox/0.5.0-dev (def456; windows/amd64; Go/go1.24.3; Windows/10.0.19044.2604)`

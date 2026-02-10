@@ -16,7 +16,6 @@ import (
 const (
 	appsDir            = "apps"
 	logsDir            = "logs"
-	datasitesDir       = "datasites"
 	publicDir          = "public"
 	metadataDir        = ".data"
 	pathSep            = string(filepath.Separator)
@@ -55,10 +54,10 @@ func NewWorkspace(rootDir string, user string) (*Workspace, error) {
 		Root:          root,
 		AppsDir:       filepath.Join(root, appsDir),
 		LogsDir:       filepath.Join(root, logsDir),
-		DatasitesDir:  filepath.Join(root, datasitesDir),
+		DatasitesDir:  filepath.Join(root, "datasites"),
 		MetadataDir:   filepath.Join(root, metadataDir),
-		UserDir:       filepath.Join(root, datasitesDir, user),
-		UserPublicDir: filepath.Join(root, datasitesDir, user, publicDir),
+		UserDir:       filepath.Join(root, "datasites", user),
+		UserPublicDir: filepath.Join(root, "datasites", user, publicDir),
 		flock:         flock,
 	}, nil
 }
@@ -110,7 +109,7 @@ func (w *Workspace) Setup() error {
 	slog.Info("workspace", "root", w.Root)
 
 	// Create required directories
-	dirs := []string{w.AppsDir, w.MetadataDir, w.UserPublicDir}
+	dirs := []string{w.AppsDir, w.MetadataDir, w.DatasitesDir, w.UserPublicDir}
 	for _, dir := range dirs {
 		if err := utils.EnsureDir(dir); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
@@ -164,11 +163,17 @@ func (w *Workspace) DatasiteAbsPath(relPath string) string {
 
 // DatasiteRelPath returns the relative path of a datasite from the workspace's datasites directory
 func (w *Workspace) DatasiteRelPath(absPath string) (string, error) {
-	relPath, err := filepath.Rel(w.DatasitesDir, absPath)
+	base := resolvePath(w.DatasitesDir)
+	target := resolvePath(absPath)
+	relPath, err := filepath.Rel(base, target)
 	if err != nil {
 		return "", err
 	}
-	return NormPath(relPath), nil
+	relPath = NormPath(relPath)
+	if relPath == "." || strings.HasPrefix(relPath, "..") {
+		return "", fmt.Errorf("path outside datasites dir: %s", absPath)
+	}
+	return relPath, nil
 }
 
 // PathOwner returns the owner of the path
@@ -185,6 +190,11 @@ func (w *Workspace) IsValidPath(path string) bool {
 	return IsValidPath(path)
 }
 
+// IsOwner checks if the path belongs to the workspace owner
+func (w *Workspace) IsOwner(path string) bool {
+	return IsOwner(path, w.Owner)
+}
+
 func (w *Workspace) isLegacyWorkspace() bool {
 	// a .metadata.json exists
 	return utils.FileExists(filepath.Join(w.Root, legacyMetadataFile))
@@ -196,4 +206,17 @@ func NormPath(path string) string {
 	path = strings.ReplaceAll(path, "\\", "/")
 	path = strings.TrimLeft(path, "/")
 	return path
+}
+
+func resolvePath(path string) string {
+	abs := path
+	if !filepath.IsAbs(abs) {
+		if resolved, err := filepath.Abs(abs); err == nil {
+			abs = resolved
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
 }

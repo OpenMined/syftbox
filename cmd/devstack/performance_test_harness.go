@@ -1,18 +1,29 @@
 package main
 
 import (
+	"context"
 	"crypto/md5"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/openmined/syftbox/internal/utils"
 )
 
@@ -33,6 +44,24 @@ type DevstackTestHarness struct {
 	blockProfile *os.File
 }
 
+// persistentSuite holds a reusable stack when PERF_TEST_SANDBOX is set.
+type persistentSuite struct {
+	mu          sync.Mutex
+	initialized bool
+	root        string
+	relayRoot   string
+	binDir      string
+	serverBin   string
+	clientBin   string
+	emails      []string
+	minio       minioState
+	server      serverState
+	clients     []clientState
+	cleanupOnce sync.Once
+}
+
+var suite persistentSuite
+
 // ClientHelper wraps a client with test utilities
 type ClientHelper struct {
 	t         *testing.T
@@ -41,6 +70,33 @@ type ClientHelper struct {
 	dataDir   string
 	publicDir string
 	metrics   *ClientMetrics
+}
+
+func (c *ClientHelper) rpcReceivePath(senderEmail, appName, endpoint, filename string) string {
+	return filepath.Join(
+		c.dataDir,
+		"datasites",
+		senderEmail,
+		"app_data",
+		appName,
+		"rpc",
+		endpoint,
+		filename,
+	)
+}
+
+func (c *ClientHelper) readRPCPayload(path string) ([]byte, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if isSharingViolation(err) {
+			return nil, err
+		}
+		return nil, err
+	}
+	return content, nil
 }
 
 // ClientMetrics tracks per-client metrics
@@ -86,84 +142,452 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	t.Helper()
 
 	// Use persistent sandbox dir if PERF_TEST_SANDBOX env var is set
-	var stackRoot string
 	if sandboxPath := os.Getenv("PERF_TEST_SANDBOX"); sandboxPath != "" {
-		stackRoot = sandboxPath
-		t.Logf("Using persistent sandbox: %s", stackRoot)
-	} else {
-		tmpDir := t.TempDir()
-		stackRoot = filepath.Join(tmpDir, "teststack")
-		t.Logf("Using temporary directory: %s", stackRoot)
+		suite.mu.Lock()
+		defer suite.mu.Unlock()
+
+		if !suite.initialized {
+			if err := suite.initPersistent(t, sandboxPath); err != nil {
+				t.Fatalf("init persistent suite: %v", err)
+			}
+		} else {
+			if err := suite.resetForTest(t); err != nil {
+				t.Fatalf("reset persistent suite: %v", err)
+			}
+		}
+
+		state := stackState{
+			Root:    suite.root,
+			Server:  suite.server,
+			Minio:   suite.minio,
+			Clients: suite.clients,
+			Created: time.Now().UTC(),
+		}
+		return suite.newHarnessForTest(t, &state)
 	}
 
-	emails := []string{"alice@example.com", "bob@example.com"}
+	// Default (non-persistent) path: create a full fresh stack per test.
+	stackRoot := filepath.Join(t.TempDir(), "teststack")
+	t.Logf("Using temporary directory: %s", stackRoot)
+	state, err := startFullStack(t, stackRoot, true)
+	if err != nil {
+		t.Fatalf("start full stack: %v", err)
+	}
+	return newHarnessFromState(t, &state, true)
+}
 
+func (s *persistentSuite) initPersistent(t *testing.T, sandboxPath string) error {
+	t.Helper()
+	rootAbs, err := filepath.Abs(sandboxPath)
+	if err != nil {
+		return fmt.Errorf("resolve root: %w", err)
+	}
+	// Preflight: if another devstack is still running on this root, stop it.
+	preflightCleanup(rootAbs, t)
+	s.root = rootAbs
+	s.relayRoot = filepath.Join(s.root, relayDir)
+	s.binDir = filepath.Join(s.relayRoot, "bin")
+	s.emails = []string{"alice@example.com", "bob@example.com"}
+
+	if err := os.MkdirAll(s.binDir, 0o755); err != nil {
+		return fmt.Errorf("create bin dir: %w", err)
+	}
+
+	s.serverBin = addExe(filepath.Join(s.binDir, "server"))
+	s.clientBin = filepath.Join(s.binDir, "syftbox")
+
+	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
+	if err != nil {
+		return fmt.Errorf("find repo root: %w", err)
+	}
+
+	// If a previous devstack for the same sandbox is still running (e.g. from a prior
+	// go test invocation), try to reuse its MinIO instead of starting a second one.
+	if prev, _, rerr := readState(s.root); rerr == nil && prev != nil {
+		if prev.Minio.PID > 0 && processExists(prev.Minio.PID) {
+			if err := waitForMinio(prev.Minio.APIPort); err == nil {
+				t.Logf("Reusing existing MinIO for persistent suite (pid %d port %d)", prev.Minio.PID, prev.Minio.APIPort)
+				s.minio = prev.Minio
+			} else {
+				t.Logf("Previous MinIO not healthy; stopping and restarting: %v", err)
+				stopMinio(prev.Minio)
+			}
+		}
+	}
+
+	t.Logf("Using persistent sandbox: %s", s.root)
+	t.Logf("Building binaries once for persistent suite...")
+	if err := buildBinary(s.serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
+		return fmt.Errorf("build server: %w", err)
+	}
+
+	// Build (or resolve) the default Go client binary; per-email overrides and SBDEV_CLIENT_MODE
+	// are applied when starting each client so persistent mode works for rust/mixed too.
+	clientBin, err := resolveClientBinary(s.binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags)
+	if err != nil {
+		return fmt.Errorf("build client: %w", err)
+	}
+	s.clientBin = clientBin
+
+	if s.minio.PID == 0 {
+		// Allocate ports for MinIO; keep it running across tests.
+		minioAPIPort, _ := getFreePort()
+		minioConsolePort, _ := getFreePort()
+		for minioConsolePort == minioAPIPort {
+			minioConsolePort, _ = getFreePort()
+		}
+
+		t.Logf("Starting MinIO for persistent suite...")
+		minioBin, err := ensureMinioBinary(s.binDir)
+		if err != nil {
+			return fmt.Errorf("minio binary unavailable: %w", err)
+		}
+		mState, err := startMinio("local", minioBin, s.relayRoot, minioAPIPort, minioConsolePort, false)
+		if err != nil {
+			return fmt.Errorf("start minio: %w", err)
+		}
+		if err := setupBucket(mState.APIPort); err != nil {
+			stopMinio(mState)
+			return fmt.Errorf("setup bucket: %w", err)
+		}
+		s.minio = mState
+	}
+
+	// Start server+clients fresh for first test.
+	if err := s.resetForTest(t); err != nil {
+		stopMinio(s.minio)
+		return err
+	}
+
+	s.initialized = true
+	return nil
+}
+
+// preflightCleanup ensures no other tracked devstack is running on the same root.
+// This prevents path/port collisions from leaked local stacks.
+func preflightCleanup(root string, t *testing.T) {
+	t.Helper()
+	// Best effort prune of dead global stacks.
+	_ = pruneDeadStacks()
+
+	state, _, err := readState(root)
+	if err != nil || state == nil {
+		return
+	}
+	absRoot, _ := filepath.Abs(root)
+	if state.Root != "" {
+		stateAbs, _ := filepath.Abs(state.Root)
+		if stateAbs != absRoot {
+			// Hash collision or different root; ignore.
+			return
+		}
+	}
+
+	alive := false
+	if state.Server.PID > 0 && processExists(state.Server.PID) {
+		alive = true
+	}
+	if state.Minio.PID > 0 && processExists(state.Minio.PID) {
+		alive = true
+	}
+	for _, c := range state.Clients {
+		if c.PID > 0 && processExists(c.PID) {
+			alive = true
+			break
+		}
+	}
+	if alive {
+		t.Logf("Found existing devstack for %s; stopping before test run", absRoot)
+		stopStack(absRoot) // best effort
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func (s *persistentSuite) resetForTest(t *testing.T) error {
+	t.Helper()
+
+	// Stop prior server/clients, if any.
+	if s.server.PID > 0 {
+		_ = killProcess(s.server.PID)
+	}
+	for _, c := range s.clients {
+		if c.PID > 0 {
+			_ = killProcess(c.PID)
+		}
+	}
+	knownPIDs := map[int]struct{}{
+		s.server.PID: {},
+		s.minio.PID:  {},
+	}
+	for _, c := range s.clients {
+		knownPIDs[c.PID] = struct{}{}
+	}
+	killStrayProcessesFromState(t, s.root, knownPIDs)
+
+	// On Windows, wait for file handles to be released after process termination.
+	// Windows holds file locks slightly longer than Unix systems.
+	if runtime.GOOS == "windows" {
+		time.Sleep(2 * time.Second)
+	}
+
+	// Wipe server and client state on disk while processes are stopped.
+	serverDir := filepath.Join(s.relayRoot, "server")
+	if err := removeAllWithRetry(t, serverDir, "server state"); err != nil {
+		return fmt.Errorf("cleanup server state: %w", err)
+	}
+	for _, email := range s.emails {
+		emailRoot := filepath.Join(s.root, email)
+		if err := removeAllWithRetry(t, emailRoot, fmt.Sprintf("client state %s", email)); err != nil {
+			return fmt.Errorf("cleanup client state %s: %w", email, err)
+		}
+	}
+
+	// Clear MinIO bucket contents for a clean server state.
+	// If MinIO isn't healthy (e.g., externally stopped), restart it.
+	if err := waitForMinio(s.minio.APIPort); err != nil {
+		t.Logf("MinIO not healthy (%v); restarting for persistent suite", err)
+		stopMinio(s.minio)
+		minioAPIPort, _ := getFreePort()
+		minioConsolePort, _ := getFreePort()
+		for minioConsolePort == minioAPIPort {
+			minioConsolePort, _ = getFreePort()
+		}
+		minioBin, err2 := ensureMinioBinary(s.binDir)
+		if err2 != nil {
+			return fmt.Errorf("minio binary unavailable: %w", err2)
+		}
+		mState, err2 := startMinio("local", minioBin, s.relayRoot, minioAPIPort, minioConsolePort, false)
+		if err2 != nil {
+			return fmt.Errorf("restart minio: %w", err2)
+		}
+		if err2 := setupBucket(mState.APIPort); err2 != nil {
+			stopMinio(mState)
+			return fmt.Errorf("setup bucket after restart: %w", err2)
+		}
+		s.minio = mState
+	}
+	if err := emptyBucket(s.minio.APIPort); err != nil {
+		return fmt.Errorf("empty bucket: %w", err)
+	}
+
+	// Start server and clients using already-built binaries and existing MinIO.
+	serverPort, _ := getFreePort()
+	serverURL := fmt.Sprintf("http://127.0.0.1:%d", serverPort)
+	t.Logf("Starting server for test...")
+	sState, err := startServer(s.serverBin, s.relayRoot, serverPort, s.minio.APIPort)
+	if err != nil {
+		return fmt.Errorf("start server: %w", err)
+	}
+
+	t.Logf("Starting clients for test...")
+	var clients []clientState
+	for i, email := range s.emails {
+		port, _ := getFreePort()
+		binForEmail, err := clientBinaryForEmail(email, i, s.clientBin)
+		if err != nil {
+			_ = killProcess(sState.PID)
+			return fmt.Errorf("resolve client bin %s: %w", email, err)
+		}
+		cState, err := startClient(binForEmail, s.root, email, serverURL, port)
+		if err != nil {
+			_ = killProcess(sState.PID)
+			return fmt.Errorf("start client %s: %w", email, err)
+		}
+		clients = append(clients, cState)
+	}
+
+	// Write stack state for debugging tools.
+	statePath := filepath.Join(s.relayRoot, stateFileName)
+	state := stackState{
+		Root:    s.root,
+		Server:  sState,
+		Minio:   s.minio,
+		Clients: clients,
+		Created: time.Now().UTC(),
+	}
+	if err := writeState(statePath, &state); err != nil {
+		return fmt.Errorf("write state: %w", err)
+	}
+	// Also save to global state so preflight cleanup can find us
+	if err := saveGlobalState(s.root, &state); err != nil {
+		t.Logf("warning: failed to save global state: %v", err)
+	}
+
+	s.server = sState
+	s.clients = clients
+
+	// Wait for initial sync in the fresh state.
+	time.Sleep(2 * time.Second)
+	t.Logf("Persistent devstack ready: server=%s, alice=pid:%d, bob=pid:%d",
+		serverURL, clients[0].PID, clients[1].PID)
+
+	return nil
+}
+
+func killStrayProcessesFromState(t *testing.T, root string, knownPIDs map[int]struct{}) {
+	t.Helper()
+	state, _, err := readState(root)
+	if err != nil {
+		return
+	}
+
+	maybeKill := func(pid int, label string) {
+		if pid <= 0 {
+			return
+		}
+		if _, ok := knownPIDs[pid]; ok {
+			return
+		}
+		if !processExists(pid) {
+			return
+		}
+		t.Logf("cleanup: stopping stray %s pid %d", label, pid)
+		_ = killProcess(pid)
+	}
+
+	maybeKill(state.Server.PID, "server")
+	maybeKill(state.Minio.PID, "minio")
+	for _, c := range state.Clients {
+		maybeKill(c.PID, fmt.Sprintf("client %s", c.Email))
+	}
+}
+
+func removeAllWithRetry(t *testing.T, path string, label string) error {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return os.RemoveAll(path)
+	}
+	// Windows needs more retries and longer delays due to file handle release timing
+	const maxAttempts = 10
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := os.RemoveAll(path)
+		if err == nil || os.IsNotExist(err) {
+			if attempt > 1 {
+				t.Logf("cleanup: removed %s after %d attempts", label, attempt)
+			}
+			return nil
+		}
+		lastErr = err
+		t.Logf("cleanup: failed to remove %s (attempt %d/%d): %v", label, attempt, maxAttempts, err)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+	}
+	return lastErr
+}
+
+func (s *persistentSuite) newHarnessForTest(t *testing.T, state *stackState) *DevstackTestHarness {
+	t.Helper()
+	return newHarnessFromState(t, state, false)
+}
+
+func startFullStack(t *testing.T, stackRoot string, reset bool) (stackState, error) {
+	t.Helper()
 	opts := startOptions{
 		root:        stackRoot,
-		clients:     emails,
+		clients:     []string{"alice@example.com", "bob@example.com"},
 		randomPorts: true,
-		reset:       true,
+		reset:       reset,
 	}
 
 	var err error
 	opts.root, err = filepath.Abs(opts.root)
 	if err != nil {
-		t.Fatalf("resolve root: %v", err)
+		return stackState{}, fmt.Errorf("resolve root: %w", err)
+	}
+
+	if reset {
+		stopStack(opts.root) // best effort
+		_ = os.RemoveAll(opts.root)
 	}
 
 	// Create directories
 	if err := os.MkdirAll(opts.root, 0o755); err != nil {
-		t.Fatalf("create root dir: %v", err)
+		return stackState{}, fmt.Errorf("create root dir: %w", err)
 	}
 
 	relayRoot := filepath.Join(opts.root, relayDir)
 	if err := os.MkdirAll(relayRoot, 0o755); err != nil {
-		t.Fatalf("create relay dir: %v", err)
+		return stackState{}, fmt.Errorf("create relay dir: %w", err)
 	}
 
 	binDir := filepath.Join(relayRoot, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("create bin dir: %v", err)
+		return stackState{}, fmt.Errorf("create bin dir: %w", err)
 	}
 
 	// Build binaries
-	serverBin := filepath.Join(binDir, "server")
+	serverBin := addExe(filepath.Join(binDir, "server"))
 	clientBin := filepath.Join(binDir, "syftbox")
 
 	repoRoot, err := filepath.Abs(filepath.Join(".", "..", ".."))
 	if err != nil {
-		t.Fatalf("find repo root: %v", err)
+		return stackState{}, fmt.Errorf("find repo root: %w", err)
 	}
 
 	t.Logf("Building binaries...")
 	if err := buildBinary(serverBin, filepath.Join(repoRoot, "cmd", "server"), serverBuildTags); err != nil {
-		t.Fatalf("build server: %v", err)
+		return stackState{}, fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(clientBin, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
-		t.Fatalf("build client: %v", err)
+	if clientBin, err = resolveClientBinary(binDir, filepath.Join(repoRoot, "cmd", "client"), clientBuildTags); err != nil {
+		return stackState{}, fmt.Errorf("build client: %w", err)
 	}
 
-	// Allocate ports
+	// Allocate ports (ensure MinIO API and console ports differ).
+	// MinIO can occasionally fail to bind if a port becomes occupied between selection and start,
+	// especially across rapid test runs. Retry with new ports if startup fails.
 	serverPort, _ := getFreePort()
-	minioAPIPort, _ := getFreePort()
-	minioConsolePort, _ := getFreePort()
+	var minioAPIPort, minioConsolePort int
 
 	// Start MinIO
 	t.Logf("Starting MinIO...")
 	minioBin, err := ensureMinioBinary(binDir)
 	if err != nil {
-		t.Fatalf("minio binary unavailable: %v", err)
+		return stackState{}, fmt.Errorf("minio binary unavailable: %w", err)
 	}
 
-	mState, err := startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
-	if err != nil {
-		t.Fatalf("start minio: %v", err)
+	var mState minioState
+	var minioErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		var err error
+		minioAPIPort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio api port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		minioConsolePort, err = getFreePort()
+		if err != nil {
+			minioErr = fmt.Errorf("allocate minio console port: %w", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for tries := 0; tries < 10 && minioConsolePort == minioAPIPort; tries++ {
+			minioConsolePort, err = getFreePort()
+			if err != nil {
+				minioErr = fmt.Errorf("allocate minio console port: %w", err)
+				break
+			}
+		}
+		if minioConsolePort == minioAPIPort {
+			minioErr = fmt.Errorf("unable to allocate distinct minio ports")
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		mState, minioErr = startMinio("local", minioBin, relayRoot, minioAPIPort, minioConsolePort, false)
+		if minioErr == nil {
+			break
+		}
+		t.Logf("MinIO start failed (attempt %d/5): %v; retrying with new ports", attempt+1, minioErr)
+	}
+	if minioErr != nil {
+		return stackState{}, fmt.Errorf("start minio: %w", minioErr)
 	}
 
 	// Setup bucket
 	if err := setupBucket(mState.APIPort); err != nil {
 		stopMinio(mState)
-		t.Fatalf("setup bucket: %v", err)
+		return stackState{}, fmt.Errorf("setup bucket: %w", err)
 	}
 
 	// Start server
@@ -172,17 +596,23 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 	sState, err := startServer(serverBin, relayRoot, serverPort, mState.APIPort)
 	if err != nil {
 		stopMinio(mState)
-		t.Fatalf("start server: %v", err)
+		return stackState{}, fmt.Errorf("start server: %w", err)
 	}
 
 	// Start clients
 	t.Logf("Starting clients...")
 	var clients []clientState
-	for _, email := range emails {
+	for i, email := range opts.clients {
 		port, _ := getFreePort()
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
+		binForEmail, err := clientBinaryForEmail(email, i, clientBin)
 		if err != nil {
-			t.Fatalf("start client %s: %v", email, err)
+			t.Fatalf("client bin for %s: %v", email, err)
+		}
+		cState, err := startClient(binForEmail, opts.root, email, serverURL, port)
+		if err != nil {
+			_ = killProcess(sState.PID)
+			stopMinio(mState)
+			return stackState{}, fmt.Errorf("start client %s: %w", email, err)
 		}
 		clients = append(clients, cState)
 	}
@@ -197,19 +627,27 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		Created: time.Now().UTC(),
 	}
 	if err := writeState(statePath, &state); err != nil {
-		t.Fatalf("write state: %v", err)
+		return stackState{}, fmt.Errorf("write state: %w", err)
 	}
+	// Also save to global state so preflight cleanup can find us
+	_ = saveGlobalState(opts.root, &state)
 
 	// Wait for initial sync
 	time.Sleep(2 * time.Second)
+	return state, nil
+}
 
-	// Create client helpers
+func newHarnessFromState(t *testing.T, state *stackState, ownProcesses bool) *DevstackTestHarness {
+	t.Helper()
+	emails := []string{"alice@example.com", "bob@example.com"}
+	clients := state.Clients
+
 	aliceHelper := &ClientHelper{
 		t:         t,
 		email:     emails[0],
 		state:     clients[0],
 		dataDir:   clients[0].DataPath,
-		publicDir: filepath.Join(opts.root, emails[0], "datasites", emails[0], "public"),
+		publicDir: filepath.Join(clients[0].DataPath, "datasites", emails[0], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -218,7 +656,7 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 		email:     emails[1],
 		state:     clients[1],
 		dataDir:   clients[1].DataPath,
-		publicDir: filepath.Join(opts.root, emails[1], "datasites", emails[1], "public"),
+		publicDir: filepath.Join(clients[1].DataPath, "datasites", emails[1], "public"),
 		metrics:   &ClientMetrics{},
 	}
 
@@ -229,36 +667,113 @@ func NewDevstackHarness(t *testing.T) *DevstackTestHarness {
 
 	harness := &DevstackTestHarness{
 		t:       t,
-		root:    opts.root,
-		state:   &state,
+		root:    state.Root,
+		state:   state,
 		alice:   aliceHelper,
 		bob:     bobHelper,
 		metrics: metrics,
-		cleanup: []func(){
+	}
+
+	if ownProcesses {
+		sState := state.Server
+		mState := state.Minio
+		harness.cleanup = []func(){
 			func() { _ = killProcess(sState.PID) },
 			func() { stopMinio(mState) },
 			func() { _ = killProcess(clients[0].PID) },
 			func() { _ = killProcess(clients[1].PID) },
-		},
+			func() {
+				if os.Getenv("PERF_TEST_SANDBOX") == "" {
+					_ = os.RemoveAll(state.Root)
+				}
+			},
+		}
+
+		t.Cleanup(func() {
+			if err := harness.StopProfiling(); err != nil {
+				t.Logf("Warning: failed to stop profiling: %v", err)
+			}
+			harness.Cleanup()
+		})
+	} else {
+		// Persistent mode: do not stop shared processes per test.
+		t.Cleanup(func() {
+			if err := harness.StopProfiling(); err != nil {
+				t.Logf("Warning: failed to stop profiling: %v", err)
+			}
+		})
 	}
 
-	// Always cleanup processes, but preserve files if using sandbox
-	t.Cleanup(func() {
-		// Stop profiling first
-		if err := harness.StopProfiling(); err != nil {
-			t.Logf("Warning: failed to stop profiling: %v", err)
-		}
+	return harness
+}
 
-		if os.Getenv("PERF_TEST_SANDBOX") != "" {
-			t.Logf("Stopping processes but preserving sandbox at: %s", opts.root)
-		}
-		harness.Cleanup()
+// emptyBucket deletes all objects in the default bucket, leaving MinIO running.
+func emptyBucket(apiPort int) error {
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", apiPort)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(defaultMinioAdminUser, defaultMinioAdminPassword, ""),
+		),
+		config.WithRegion(defaultRegion),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 10
+			})
+		}),
+	)
+	if err != nil {
+		return err
+	}
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
 	})
 
-	t.Logf("Devstack ready: server=%s, alice=pid:%d, bob=pid:%d",
-		serverURL, clients[0].PID, clients[1].PID)
+	// Ensure bucket exists.
+	_, err = client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket: aws.String(defaultBucket),
+	})
+	if err != nil && !isBucketExistsError(err) {
+		return err
+	}
 
-	return harness
+	// List + delete in batches.
+	var continuation *string
+	for {
+		out, err := client.ListObjectsV2(context.Background(), &s3.ListObjectsV2Input{
+			Bucket:            aws.String(defaultBucket),
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return err
+		}
+		if len(out.Contents) == 0 {
+			break
+		}
+		var objs []s3types.ObjectIdentifier
+		for _, c := range out.Contents {
+			if c.Key != nil {
+				objs = append(objs, s3types.ObjectIdentifier{Key: c.Key})
+			}
+		}
+		_, err = client.DeleteObjects(context.Background(), &s3.DeleteObjectsInput{
+			Bucket: aws.String(defaultBucket),
+			Delete: &s3types.Delete{Objects: objs, Quiet: aws.Bool(true)},
+		})
+		if err != nil {
+			var apiErr smithy.APIError
+			if errors.As(err, &apiErr) {
+				return fmt.Errorf("delete objects: %s: %w", apiErr.ErrorCode(), err)
+			}
+			return err
+		}
+		if aws.ToBool(out.IsTruncated) && out.NextContinuationToken != nil {
+			continuation = out.NextContinuationToken
+			continue
+		}
+		break
+	}
+	return nil
 }
 
 // Cleanup stops all processes and cleans up
@@ -269,6 +784,16 @@ func (h *DevstackTestHarness) Cleanup() {
 			fn()
 		}
 	})
+}
+
+func (h *DevstackTestHarness) AllowSubscriptionsBetween(a, b *ClientHelper) error {
+	if err := a.SetSubscriptionsAllow(b.email); err != nil {
+		return err
+	}
+	if err := b.SetSubscriptionsAllow(a.email); err != nil {
+		return err
+	}
+	return nil
 }
 
 // UploadFile creates and uploads a file from a client
@@ -303,12 +828,43 @@ func (c *ClientHelper) UploadFile(relPath string, content []byte) error {
 	return nil
 }
 
+// SetSubscriptionsAllow writes a local-only syft.sub.yaml allowing the given datasites.
+func (c *ClientHelper) SetSubscriptionsAllow(datasites ...string) error {
+	c.t.Helper()
+
+	subPath := filepath.Join(c.dataDir, ".data", "syft.sub.yaml")
+	if err := os.MkdirAll(filepath.Dir(subPath), 0o755); err != nil {
+		return fmt.Errorf("create sub dir: %w", err)
+	}
+
+	var b strings.Builder
+	b.WriteString("version: 1\n")
+	b.WriteString("defaults:\n")
+	b.WriteString("  action: block\n")
+	b.WriteString("rules:\n")
+	for _, ds := range datasites {
+		b.WriteString("  - action: allow\n")
+		b.WriteString(fmt.Sprintf("    datasite: %q\n", ds))
+		b.WriteString("    path: \"**\"\n")
+	}
+
+	if err := os.WriteFile(subPath, []byte(b.String()), 0o600); err != nil {
+		return fmt.Errorf("write syft.sub.yaml: %w", err)
+	}
+
+	return nil
+}
+
 // WaitForFile waits for a file to appear in the client's datasite
 func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 string, timeout time.Duration) error {
 	c.t.Helper()
 
 	// File syncs to datasites/{sender}/public/{relPath}
 	fullPath := filepath.Join(c.dataDir, "datasites", senderEmail, "public", relPath)
+	var lastMD5 string
+	attempts := 0
+	notExistCount := 0
+	sharingViolationCount := 0
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -317,27 +873,123 @@ func (c *ClientHelper) WaitForFile(senderEmail, relPath string, expectedMD5 stri
 	for time.Now().Before(deadline) {
 		select {
 		case <-ticker.C:
-			if _, err := os.Stat(fullPath); err == nil {
-				// File exists, verify content if MD5 provided
-				if expectedMD5 != "" {
-					content, err := os.ReadFile(fullPath)
-					if err != nil {
-						return fmt.Errorf("read file: %w", err)
+			attempts++
+			content, err := os.ReadFile(fullPath)
+			if err != nil {
+				if os.IsNotExist(err) {
+					notExistCount++
+					// Log every 50 attempts (5 seconds)
+					if notExistCount%50 == 0 {
+						fmt.Printf("[DEBUG] WaitForFile: file not exist after %d checks path=%s\n", notExistCount, fullPath)
 					}
-
-					actualMD5 := fmt.Sprintf("%x", md5.Sum(content))
-					if actualMD5 != expectedMD5 {
-						return fmt.Errorf("MD5 mismatch: expected %s, got %s", expectedMD5, actualMD5)
-					}
+					continue
 				}
+				if isSharingViolation(err) {
+					sharingViolationCount++
+					fmt.Printf("[DEBUG] WaitForFile: sharing violation #%d path=%s\n", sharingViolationCount, fullPath)
+					continue
+				}
+				return fmt.Errorf("read file: %w", err)
+			}
 
+			if expectedMD5 == "" {
 				c.t.Logf("%s received %s from %s", c.email, relPath, senderEmail)
 				return nil
+			}
+
+			actualMD5 := fmt.Sprintf("%x", md5.Sum(content))
+			if actualMD5 == expectedMD5 {
+				c.t.Logf("%s received %s from %s", c.email, relPath, senderEmail)
+				return nil
+			}
+
+			if actualMD5 != lastMD5 {
+				// File arrived but is stale; keep waiting for the updated version.
+				c.t.Logf("waiting for %s from %s: have md5 %s, want %s", relPath, senderEmail, actualMD5, expectedMD5)
+				lastMD5 = actualMD5
 			}
 		}
 	}
 
-	return fmt.Errorf("timeout waiting for file %s", fullPath)
+	// Debug: dump parent directory contents on timeout
+	parentDir := filepath.Dir(fullPath)
+	entries, _ := os.ReadDir(parentDir)
+	fmt.Printf("[DEBUG] WaitForFile TIMEOUT: attempts=%d notExist=%d sharingViolation=%d path=%s\n",
+		attempts, notExistCount, sharingViolationCount, fullPath)
+	fmt.Printf("[DEBUG] WaitForFile TIMEOUT: parent=%s contents:\n", parentDir)
+	for _, e := range entries {
+		info, _ := e.Info()
+		if info != nil {
+			fmt.Printf("[DEBUG]   - %s (size=%d, mod=%v)\n", e.Name(), info.Size(), info.ModTime())
+		} else {
+			fmt.Printf("[DEBUG]   - %s\n", e.Name())
+		}
+	}
+
+	return fmt.Errorf("timeout waiting for file %s (last seen MD5=%s)", fullPath, lastMD5)
+}
+
+func isSharingViolation(err error) bool {
+	if err == nil || runtime.GOOS != "windows" {
+		return false
+	}
+	if errors.Is(err, syscall.Errno(32)) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "used by another process") ||
+		strings.Contains(lower, "sharing violation")
+}
+
+// CreateDefaultACLs creates the default root and public ACL files like the real client
+func (c *ClientHelper) CreateDefaultACLs() error {
+	c.t.Helper()
+
+	// Root directory is datasites/{email}/
+	userDir := filepath.Join(c.dataDir, "datasites", c.email)
+	publicDir := filepath.Join(userDir, "public")
+
+	// Create root ACL with private access (owner only via implicit isOwner check)
+	rootACLPath := filepath.Join(userDir, "syft.pub.yaml")
+	if _, err := os.Stat(rootACLPath); os.IsNotExist(err) {
+		rootACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: []
+      read: []
+`
+		if err := os.MkdirAll(userDir, 0o755); err != nil {
+			return fmt.Errorf("create user dir: %w", err)
+		}
+		if err := os.WriteFile(rootACLPath, []byte(rootACL), 0o644); err != nil {
+			return fmt.Errorf("create root ACL: %w", err)
+		}
+		c.t.Logf("%s created root ACL", c.email)
+	}
+
+	// Create public ACL with public read/write access
+	publicACLPath := filepath.Join(publicDir, "syft.pub.yaml")
+	if _, err := os.Stat(publicACLPath); os.IsNotExist(err) {
+		publicACL := `terminal: false
+rules:
+  - pattern: '**'
+    access:
+      admin: []
+      write: ['*']
+      read: ['*']
+`
+		if err := os.MkdirAll(publicDir, 0o755); err != nil {
+			return fmt.Errorf("create public dir: %w", err)
+		}
+		if err := os.WriteFile(publicACLPath, []byte(publicACL), 0o644); err != nil {
+			return fmt.Errorf("create public ACL: %w", err)
+		}
+		c.t.Logf("%s created public ACL", c.email)
+	}
+
+	return nil
 }
 
 // GetRPCPath returns the RPC directory path for a given app and endpoint
@@ -366,16 +1018,37 @@ func (c *ClientHelper) SetupRPCEndpoint(appName, endpoint string) error {
 		return fmt.Errorf("create rpc dir: %w", err)
 	}
 
-	// Create ACL file
+	// Ensure an app-level RPC ACL exists so peers can discover child ACLs.
+	// This only grants read access to ACL files - actual content permissions
+	// are defined by each endpoint's ACL.
+	rpcRootACL := `rules:
+  - pattern: '**/syft.pub.yaml'
+    access:
+      admin: []
+      read:
+        - '*'
+      write: []
+`
+	rpcRootPath := filepath.Join(filepath.Dir(rpcPath), "syft.pub.yaml")
+	if err := os.MkdirAll(filepath.Dir(rpcRootPath), 0o755); err != nil {
+		return fmt.Errorf("create rpc root dir: %w", err)
+	}
+	if err := os.WriteFile(rpcRootPath, []byte(rpcRootACL), 0o644); err != nil {
+		return fmt.Errorf("write rpc root acl: %w", err)
+	}
+
+	// Create ACL file for RPC endpoint
+	// Server will broadcast ACL files without permission checks (they're metadata)
+	// Use '**.request' to match files at any depth including same directory
 	aclContent := `rules:
-  - pattern: '**/*.request'
+  - pattern: '**.request'
     access:
       admin: []
       read:
         - '*'
       write:
         - '*'
-  - pattern: '**/*.response'
+  - pattern: '**.response'
     access:
       admin: []
       read:
@@ -434,7 +1107,7 @@ func (c *ClientHelper) UploadRPCRequest(appName, endpoint, filename string, cont
 func (c *ClientHelper) WaitForRPCRequest(senderEmail, appName, endpoint, filename, expectedMD5 string, timeout time.Duration) error {
 	c.t.Helper()
 
-	// Bob receives at: {bob's datasite}/datasites/{alice's datasite}/app_data/{appname}/rpc/{endpoint}/{filename}
+	// Bob receives at: {bob's datasites dir}/{alice's datasite}/app_data/{appname}/rpc/{endpoint}/{filename}
 	fullPath := filepath.Join(
 		c.dataDir,
 		"datasites",
@@ -460,6 +1133,10 @@ func (c *ClientHelper) WaitForRPCRequest(senderEmail, appName, endpoint, filenam
 				if expectedMD5 != "" {
 					content, err := os.ReadFile(fullPath)
 					if err != nil {
+						// On Windows, file may be locked during sync; retry
+						if isSharingViolation(err) {
+							continue
+						}
 						return fmt.Errorf("read file: %w", err)
 					}
 

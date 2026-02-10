@@ -15,6 +15,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/openmined/syftbox/internal/client"
 	"github.com/openmined/syftbox/internal/client/config"
+	"github.com/openmined/syftbox/internal/client/controlplane"
 	"github.com/openmined/syftbox/internal/utils"
 	"github.com/openmined/syftbox/internal/version"
 	"github.com/spf13/cobra"
@@ -30,15 +31,80 @@ var rootCmd = &cobra.Command{
 	Short:   "SyftBox CLI",
 	Version: version.Detailed(),
 	Run: func(cmd *cobra.Command, args []string) {
+		enableControlPlaneFlag, _ := cmd.Flags().GetBool("control-plane")
+		clientURLFlag, _ := cmd.Flags().GetString("client-url")
+		clientTokenFlag, _ := cmd.Flags().GetString("client-token")
+		enableSwagger, _ := cmd.Flags().GetBool("http-swagger")
+
 		cfg, err := loadConfig(cmd)
 		if err != nil {
 			slog.Error("syftbox config", "error", err)
 			os.Exit(1)
 		}
 
-		// not running any local server, so we don't need to set client_url or client_token
-		cfg.ClientURL = ""
-		cfg.ClientToken = ""
+		// Allow env overrides
+		if envURL := strings.TrimSpace(os.Getenv("SYFTBOX_CLIENT_URL")); envURL != "" {
+			cfg.ClientURL = envURL
+		}
+		if envToken := strings.TrimSpace(os.Getenv("SYFTBOX_CLIENT_TOKEN")); envToken != "" {
+			cfg.ClientToken = envToken
+		}
+
+		// Flags override env/config
+		if clientURLFlag != "" && clientURLFlag != config.DefaultClientURL {
+			cfg.ClientURL = clientURLFlag
+		}
+		if clientTokenFlag != "" {
+			cfg.ClientToken = clientTokenFlag
+		}
+
+		useControlPlane := enableControlPlaneFlag ||
+			strings.EqualFold(os.Getenv("SYFTBOX_ENABLE_CONTROL_PLANE"), "1") ||
+			strings.EqualFold(os.Getenv("SYFTBOX_ENABLE_CONTROL_PLANE"), "true") ||
+			cfg.ClientURL != "" || cfg.ClientToken != ""
+
+		if useControlPlane {
+			cmd.SilenceUsage = true
+
+			configPath := resolveConfigPath(cmd)
+			httpAddr := clientURLToAddr(cfg.ClientURL)
+			if httpAddr == "" {
+				httpAddr = "127.0.0.1:7938"
+			}
+			httpToken := cfg.ClientToken
+			if httpToken == "" {
+				httpToken = utils.TokenHex(16)
+			}
+
+			// Persist chosen values so Desktop can read them after daemon rewrites config.
+			cfg.ClientURL = fmt.Sprintf("http://%s", httpAddr)
+			cfg.ClientToken = httpToken
+			if err := cfg.Validate(); err == nil {
+				_ = cfg.Save()
+			}
+
+			showSyftBoxHeader()
+			slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
+			slog.Info("control plane mode", "addr", httpAddr, "config", configPath)
+
+			daemon, err := client.NewClientDaemon(&controlplane.CPServerConfig{
+				Addr:          httpAddr,
+				AuthToken:     httpToken,
+				EnableSwagger: enableSwagger,
+				ConfigPath:    configPath,
+			})
+			if err != nil {
+				slog.Error("syftbox control plane", "error", err)
+				os.Exit(1)
+			}
+
+			defer slog.Info("Bye!")
+			if err := daemon.Start(cmd.Context()); err != nil && !errors.Is(err, context.Canceled) {
+				slog.Error("syftbox control plane start", "error", err)
+				os.Exit(1)
+			}
+			return
+		}
 
 		if err := cfg.Validate(); err != nil {
 			slog.Error("syftbox config", "error", err)
@@ -75,7 +141,11 @@ func init() {
 	rootCmd.Flags().StringP("email", "e", "", "your email for your syftbox datasite")
 	rootCmd.Flags().StringP("datadir", "d", config.DefaultDataDir, "data directory where the syftbox workspace is stored")
 	rootCmd.Flags().StringP("server", "s", config.DefaultServerURL, "url of the syftbox server")
+	rootCmd.Flags().String("client-url", config.DefaultClientURL, "control plane URL (host:port)")
+	rootCmd.Flags().String("client-token", "", "control plane access token")
 	rootCmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath, "path to config file")
+	rootCmd.Flags().Bool("control-plane", false, "start the local control plane HTTP server")
+	rootCmd.Flags().Bool("http-swagger", true, "enable Swagger for the local control plane http server")
 }
 
 func main() {
@@ -180,9 +250,11 @@ func bindWithDefaults(v *viper.Viper, cmd *cobra.Command) {
 	v.BindPFlag("email", cmd.Flags().Lookup("email"))
 	v.BindPFlag("data_dir", cmd.Flags().Lookup("datadir"))
 	v.BindPFlag("server_url", cmd.Flags().Lookup("server"))
+	v.BindPFlag("client_url", cmd.Flags().Lookup("client-url"))
+	v.BindPFlag("client_token", cmd.Flags().Lookup("client-token"))
 	v.BindPFlag("config_path", cmd.PersistentFlags().Lookup("config"))
 	v.SetDefault("apps_enabled", config.DefaultAppsEnabled)
-	v.SetDefault("client_url", "") // this is not used in standard mode
+	v.SetDefault("client_url", config.DefaultClientURL)
 	v.SetDefault("client_token", "")
 	v.SetDefault("refresh_token", "")
 	v.SetDefault("access_token", "")
@@ -211,9 +283,31 @@ func logConfig(cfg *config.Config) {
 	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Data"), cyan.Render(cfg.DataDir)))
 	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Config"), cfg.Path))
 	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Server"), cfg.ServerURL))
+	sb.WriteString(fmt.Sprintf("%s\t%s\n", lightGray.Render("Client"), cfg.ClientURL))
 	fmt.Println(sb.String())
 }
 
 func showSyftBoxHeader() {
 	fmt.Println(cyan.Render(utils.SyftBoxArt))
+}
+
+// clientURLToAddr converts a URL like http://127.0.0.1:7938 into host:port
+func clientURLToAddr(clientURL string) string {
+	u := strings.TrimSpace(clientURL)
+	if u == "" {
+		return ""
+	}
+	u = strings.TrimPrefix(u, "http://")
+	u = strings.TrimPrefix(u, "https://")
+	if strings.Contains(u, "/") {
+		parts := strings.SplitN(u, "/", 2)
+		u = parts[0]
+	}
+	if u == "" {
+		return ""
+	}
+	if strings.Contains(u, ":") {
+		return u
+	}
+	return fmt.Sprintf("%s:7938", u)
 }

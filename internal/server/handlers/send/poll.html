@@ -1,45 +1,52 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta http-equiv="refresh" content="{{ .RefreshInterval }}; url={{ .PollURL }}" />
+		<title>Processing Request - SyftBox</title>
+		<style>
+			body {
+				font-family:
+					system-ui,
+					-apple-system,
+					sans-serif;
+				line-height: 1.5;
+				max-width: 600px;
+				margin: 2rem auto;
+				padding: 0 1rem;
+				color: #333;
+			}
 
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="{{ .RefreshInterval }}; url={{ .PollURL }}">
-    <title>Processing Request - SyftBox</title>
-    <style>
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            line-height: 1.5;
-            max-width: 600px;
-            margin: 2rem auto;
-            padding: 0 1rem;
-            color: #333;
-        }
+			.message {
+				background: #f8f9fa;
+				padding: 1rem;
+				border-radius: 4px;
+				margin: 1rem 0;
+			}
 
-        .message {
-            background: #f8f9fa;
-            padding: 1rem;
-            border-radius: 4px;
-            margin: 1rem 0;
-        }
+			a {
+				color: #0066cc;
+				text-decoration: none;
+			}
 
-        a {
-            color: #0066cc;
-            text-decoration: none;
-        }
+			a:hover {
+				text-decoration: underline;
+			}
+		</style>
+	</head>
 
-        a:hover {
-            text-decoration: underline;
-        }
-    </style>
-</head>
-
-<body>
-    <h1>Processing Your Request</h1>
-    <div class="message">
-        <p>Your request is being processed. This page will automatically refresh in {{ .RefreshInterval }} seconds.</p>
-        <p>If you are not redirected, <a href="{{ .BaseURL }}{{ .PollURL }}">click here</a> to check the status.</p>
-    </div>
-</body>
-
+	<body>
+		<h1>Processing Your Request</h1>
+		<div class="message">
+			<p>
+				Your request is being processed. This page will automatically refresh in {{ .RefreshInterval
+				}} seconds.
+			</p>
+			<p>
+				If you are not redirected, <a href="{{ .BaseURL }}{{ .PollURL }}">click here</a> to check
+				the status.
+			</p>
+		</div>
+	</body>
 </html>

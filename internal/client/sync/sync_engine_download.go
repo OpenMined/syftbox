@@ -77,7 +77,18 @@ func (se *SyncEngine) handleLocalWrites(ctx context.Context, batch BatchLocalWri
 			continue
 		}
 
-		se.journal.Set(res.Metadata)
+		// Persist stable local hash so later scans don't treat mixed-format ETags as modified.
+		if res.Metadata != nil {
+			localAbs := se.workspace.DatasiteAbsPath(syncRelPath.String())
+			if et, err := calculateETag(localAbs); err == nil {
+				res.Metadata.LocalETag = et
+			}
+		}
+		if err := se.journal.Set(res.Metadata); err != nil {
+			slog.Error("sync error", "type", SyncStandard, "op", OpWriteLocal, "status", "Error", "path", res.Path, "error", err)
+			se.syncStatus.SetError(syncRelPath, err)
+			continue
+		}
 		se.syncStatus.SetCompleted(syncRelPath)
 		slog.Info("sync", "type", SyncStandard, "op", OpWriteLocal, "status", "Completed", "path", res.Path, "size", humanize.Bytes(uint64(res.Metadata.Size)))
 	}
@@ -208,12 +219,23 @@ func (se *SyncEngine) downloadBatchUnique(ctx context.Context, batch BatchLocalW
 				for _, path := range pathsToCopy {
 					targetPath := filepath.Join(se.workspace.DatasitesDir, path)
 
+					// Resolve any path/type conflicts before writing the file.
+					skip, prepErr := se.prepareDownloadTarget(targetPath, pathToMeta[path])
+					if prepErr != nil {
+						resultsChan <- downloadResult{Path: path, Metadata: pathToMeta[path], Error: prepErr}
+						continue
+					}
+					if skip {
+						resultsChan <- downloadResult{Path: path, Metadata: pathToMeta[path], Error: nil}
+						continue
+					}
+
 					if se.isPriorityFile(targetPath) {
 						// a priority file was just downloaded, we don't wanna fire an event for THIS write
 						se.watcher.IgnoreOnce(targetPath)
 					}
 
-					err := copyLocal(res.DownloadPath, targetPath)
+					err := copyLocalWithTmp(res.DownloadPath, targetPath, se.workspace.Root)
 
 					if err != nil {
 						resultsChan <- downloadResult{Path: path, Metadata: pathToMeta[path], Error: err}
@@ -245,14 +267,69 @@ func (se *SyncEngine) getDownloadPriority(meta *FileMetadata) int {
 	return priority
 }
 
-func copyLocal(src, dst string) error {
+// prepareDownloadTarget ensures the download destination can be written safely.
+// It handles file-vs-directory type conflicts using a deterministic "directory wins" rule
+// to ensure convergence in a P2P network. When there's a type conflict:
+// - If local file blocks a remote directory: move file to .conflict, create directory
+// - If local directory blocks a remote file: skip download, keep directory (directory wins)
+func (se *SyncEngine) prepareDownloadTarget(dst string, meta *FileMetadata) (skip bool, err error) {
+	parentDir := filepath.Dir(dst)
+
+	// If the parent exists as a file, we have a file-vs-directory conflict.
+	// Directory wins: move the local file to .conflict and create the directory.
+	// This ensures convergence - both peers will end up with the directory structure.
+	if info, statErr := os.Stat(parentDir); statErr == nil {
+		if !info.IsDir() {
+			// Local file blocks directory creation - directory wins, preserve file as conflict.
+			localMtime := info.ModTime()
+			remoteMtime := meta.LastModified
+
+			// Move local file to conflict and create directory (directory wins for convergence)
+			conflictPath, markErr := SetMarker(parentDir, Conflict)
+			if markErr != nil {
+				return false, fmt.Errorf("prepare download target: parent is file %s: %w", parentDir, markErr)
+			}
+			slog.Warn("type conflict: local file vs remote directory; directory wins, preserving file as conflict",
+				"path", meta.Path, "conflictPath", conflictPath, "localMtime", localMtime, "remoteMtime", remoteMtime)
+			if err := os.MkdirAll(parentDir, 0o755); err != nil {
+				return false, fmt.Errorf("prepare download target: create directory %s: %w", parentDir, err)
+			}
+		}
+	} else if os.IsNotExist(statErr) {
+		if err := os.MkdirAll(parentDir, 0o755); err != nil {
+			return false, fmt.Errorf("prepare download target: create parent %s: %w", parentDir, err)
+		}
+	} else {
+		return false, fmt.Errorf("prepare download target: stat parent %s: %w", parentDir, statErr)
+	}
+
+	// If the destination already exists as a directory, we have a directory-vs-file conflict.
+	// Directory wins: skip the file download, keep the local directory.
+	// This ensures convergence - both peers will end up with the directory structure.
+	if info, statErr := os.Stat(dst); statErr == nil && info.IsDir() {
+		localMtime := info.ModTime()
+		remoteMtime := meta.LastModified
+
+		// Directory wins - skip download of the file, keep local directory
+		slog.Warn("type conflict: local directory vs remote file; directory wins, skipping file download",
+			"path", meta.Path, "localMtime", localMtime, "remoteMtime", remoteMtime)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func copyLocalWithTmp(src, dst, workspaceRoot string) error {
 	if err := utils.EnsureParent(dst); err != nil {
 		return err
 	}
 
-	// Write to unique temp file in same directory, then atomic rename
-	// This ensures the destination file appears complete or not at all
-	tmpDir := filepath.Dir(dst)
+	// Write to unique temp file in a dedicated temp area (outside watcher),
+	// then atomic rename. Keeps half-written temp files out of datasites.
+	tmpDir := filepath.Join(workspaceRoot, ".syft-tmp")
+	if err := utils.EnsureDir(tmpDir); err != nil {
+		return err
+	}
 	tmpPattern := filepath.Base(dst) + ".tmp.*"
 
 	sourceFile, err := os.Open(src)

@@ -40,8 +40,16 @@ func (s *SyncLocalState) Scan() (map[SyncPath]*FileMetadata, error) {
 			return fmt.Errorf("walk error %s: nil directory entry", path)
 		}
 
-		if d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
-			return nil // Skip directories and symlinks
+		if d.IsDir() {
+			// Skip .data directory (internal sync state) and symlinks
+			if d.Name() == ".data" {
+				return filepath.SkipDir
+			}
+			return nil // Skip other directories
+		}
+
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil // Skip symlinks
 		}
 
 		// Get file info
@@ -78,6 +86,7 @@ func (s *SyncLocalState) Scan() (map[SyncPath]*FileMetadata, error) {
 			Size:         info.Size(),
 			LastModified: info.ModTime(),
 			ETag:         etag,
+			LocalETag:    etag,
 			Version:      "",
 		}
 

@@ -66,7 +66,30 @@ func SetMarker(path string, mtype MarkerType) (string, error) {
 		return "", fmt.Errorf("cannot mark file: source file does not exist: %s", path)
 	}
 
+	// CRITICAL FIX: If the file is already marked with this marker type, do not mark it again.
+	// This prevents infinite rejection loops where sync.rejected.db becomes sync.rejected.rejected.db
+	if IsMarkedPath(path) && slices.Contains(GetMarkers(path), mtype) {
+		slog.Debug("file is already marked, skipping", "path", path, "marker", mtype)
+		return path, nil
+	}
+
 	markedPath := asMarkedPath(path, mtype)
+
+	// For rejected markers, avoid unbounded rotation/duplication.
+	// If any rejected marker already exists for this base path, keep the existing one,
+	// delete the new offending file, and do not rotate.
+	if mtype == Rejected && RejectedFileExists(path) {
+		keep := markedPath
+		if !utils.FileExists(keep) {
+			// Fall back to any rotated marker file.
+			if existing, ok := findExistingMarker(path, mtype); ok {
+				keep = existing
+			}
+		}
+		_ = os.Remove(path)
+		slog.Debug("rejected marker already exists, suppressing duplicate", "path", path, "keep", keep)
+		return keep, nil
+	}
 
 	// Check if the target marked path already exists.
 	if utils.FileExists(markedPath) {
@@ -83,6 +106,23 @@ func SetMarker(path string, mtype MarkerType) (string, error) {
 	}
 
 	return markedPath, nil
+}
+
+// findExistingMarker returns one existing marker file path for the base path/type.
+func findExistingMarker(basePath string, mtype MarkerType) (string, bool) {
+	if IsMarkedPath(basePath) {
+		basePath = GetUnmarkedPath(basePath)
+	}
+	ext := filepath.Ext(basePath)
+	base := strings.TrimSuffix(basePath, ext)
+	globPattern := base + string(mtype) + "*" + ext
+	matches, err := filepath.Glob(globPattern)
+	if err != nil || len(matches) == 0 {
+		return "", false
+	}
+	// Deterministic choice: pick lexicographically smallest (oldest timestamped).
+	slices.Sort(matches)
+	return matches[0], true
 }
 
 // RemoveMarker renames a marked file to its original, unmarked name.
@@ -208,4 +248,107 @@ func asRotatedPath(path string, t time.Time) string {
 	base := strings.TrimSuffix(path, ext)
 	timestamp := t.Format(timeFormat)
 	return fmt.Sprintf("%s.%s%s", base, timestamp, ext)
+}
+
+// TempFilePattern matches orphaned temp files from downloads/writes
+var tempFilePatterns = []string{
+	".*.tmp-*",    // Rust download temp files: .file.tmp-uuid
+	"*.syft.tmp.*", // Go atomic write temp files
+}
+
+// IsTempFile checks if a filename matches a temp file pattern
+func IsTempFile(name string) bool {
+	for _, pattern := range tempFilePatterns {
+		if matched, _ := filepath.Match(pattern, name); matched {
+			return true
+		}
+	}
+	// Also check for .tmp- anywhere in the name (for nested paths)
+	return strings.Contains(name, ".tmp-")
+}
+
+// CleanupOrphanedTempFiles removes orphaned temp files from the datasites directory.
+// It returns the number of files cleaned up and any errors encountered.
+func CleanupOrphanedTempFiles(datasitesDir string) (int, []error) {
+	var cleaned int
+	var errors []error
+
+	err := filepath.WalkDir(datasitesDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // continue on error
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		name := d.Name()
+		if IsTempFile(name) {
+			if removeErr := os.Remove(path); removeErr != nil {
+				errors = append(errors, fmt.Errorf("failed to remove temp file %s: %w", path, removeErr))
+			} else {
+				slog.Info("cleaned up orphaned temp file", "path", path)
+				cleaned++
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		errors = append(errors, fmt.Errorf("walkdir error: %w", err))
+	}
+
+	return cleaned, errors
+}
+
+// MarkedFileInfo contains information about a marked file (conflict or rejected)
+type MarkedFileInfo struct {
+	Path         string    `json:"path"`
+	MarkerType   string    `json:"markerType"`
+	OriginalPath string    `json:"originalPath"`
+	Size         int64     `json:"size"`
+	ModTime      time.Time `json:"modTime"`
+}
+
+// ListMarkedFiles finds all conflict and rejected files in the datasites directory.
+// It returns separate lists for conflicts and rejected files.
+func ListMarkedFiles(datasitesDir string) (conflicts []MarkedFileInfo, rejected []MarkedFileInfo, err error) {
+	err = filepath.WalkDir(datasitesDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil // continue on error
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		if !IsMarkedPath(path) && !IsLegacyMarkedPath(path) {
+			return nil
+		}
+
+		info, statErr := d.Info()
+		if statErr != nil {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(datasitesDir, path)
+		originalPath := GetUnmarkedPath(relPath)
+
+		fileInfo := MarkedFileInfo{
+			Path:         filepath.ToSlash(relPath),
+			OriginalPath: filepath.ToSlash(originalPath),
+			Size:         info.Size(),
+			ModTime:      info.ModTime(),
+		}
+
+		if IsConflictPath(path) || strings.Contains(path, string(LegacyConflict)) {
+			fileInfo.MarkerType = "conflict"
+			conflicts = append(conflicts, fileInfo)
+		} else if IsRejectedPath(path) || strings.Contains(path, string(LegacyRejected)) {
+			fileInfo.MarkerType = "rejected"
+			rejected = append(rejected, fileInfo)
+		}
+
+		return nil
+	})
+
+	return conflicts, rejected, err
 }

@@ -28,7 +28,7 @@ func (h *DIDHandler) GetDID(c *gin.Context) {
 		return
 	}
 
-	didKey := fmt.Sprintf("%s/public/did.json", user)
+	didKey := fmt.Sprintf("%s/public/crypto/did.json", user)
 
 	// check if it exists in blob index
 	_, exists := h.blobService.Index().Get(didKey)

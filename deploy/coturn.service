@@ -1,0 +1,13 @@
+[Unit]
+Description=coturn TURN server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/turnserver -c /etc/turnserver.conf
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-target.target

@@ -28,10 +28,14 @@ func newDaemonCmd() *cobra.Command {
 
 			slog.Info("syftbox", "version", version.Version, "revision", version.Revision, "build", version.BuildDate)
 
+			configPath := resolveConfigPath(cmd)
+			slog.Info("daemon using config", "path", configPath)
+
 			daemon, err := client.NewClientDaemon(&controlplane.CPServerConfig{
 				Addr:          addr,
 				AuthToken:     authToken,
 				EnableSwagger: enableSwagger,
+				ConfigPath:    configPath,
 			})
 			if err != nil {
 				return err

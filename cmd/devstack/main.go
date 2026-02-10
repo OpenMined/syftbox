@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -60,6 +61,13 @@ const (
 	cmdList   command = "list"
 	cmdPrune  command = "prune"
 )
+
+func windowsScaledTimeout(d time.Duration) time.Duration {
+	if runtime.GOOS == "windows" {
+		return d * 5
+	}
+	return d
+}
 
 type stackState struct {
 	Root     string         `json:"root"`
@@ -104,17 +112,18 @@ type clientState struct {
 }
 
 type startOptions struct {
-	root            string
-	clients         []string
-	randomPorts     bool
-	serverPort      int
-	clientPortStart int
-	minioAPIPort    int
-	minioConsole    int
-	useDockerMinio  bool
-	keepData        bool
-	skipSyncCheck   bool
-	reset           bool
+	root              string
+	clients           []string
+	randomPorts       bool
+	serverPort        int
+	clientPortStart   int
+	minioAPIPort      int
+	minioConsole      int
+	useDockerMinio    bool
+	keepData          bool
+	skipSyncCheck     bool
+	skipClientDaemons bool
+	reset             bool
 }
 
 func addExe(path string) string {
@@ -208,14 +217,16 @@ func runStart(args []string) error {
 		return fmt.Errorf("create bin dir: %w", err)
 	}
 
-	serverBin := filepath.Join(binDir, "server")
-	clientBin := filepath.Join(binDir, "syftbox")
-
+	serverBin := addExe(filepath.Join(binDir, "server"))
 	if err := buildBinary(serverBin, "./cmd/server", serverBuildTags); err != nil {
 		return fmt.Errorf("build server: %w", err)
 	}
-	if err := buildBinary(clientBin, "./cmd/client", clientBuildTags); err != nil {
-		return fmt.Errorf("build client: %w", err)
+	var defaultClientBin string
+	if !opts.skipClientDaemons {
+		defaultClientBin, err = resolveClientBinary(binDir, "./cmd/client", clientBuildTags)
+		if err != nil {
+			return fmt.Errorf("build client: %w", err)
+		}
 	}
 
 	serverPort := opts.serverPort
@@ -281,9 +292,21 @@ func runStart(args []string) error {
 			}
 		}
 
-		cState, err := startClient(clientBin, opts.root, email, serverURL, port)
-		if err != nil {
-			return fmt.Errorf("start client %s: %w", email, err)
+		var cState clientState
+		if opts.skipClientDaemons {
+			cState, err = initClient(opts.root, email, serverURL, port)
+			if err != nil {
+				return fmt.Errorf("init client %s: %w", email, err)
+			}
+		} else {
+			clientBin, err := clientBinaryForEmail(email, i, defaultClientBin)
+			if err != nil {
+				return fmt.Errorf("client bin for %s: %w", email, err)
+			}
+			cState, err = startClient(clientBin, opts.root, email, serverURL, port)
+			if err != nil {
+				return fmt.Errorf("start client %s: %w", email, err)
+			}
 		}
 		clients = append(clients, cState)
 	}
@@ -310,11 +333,15 @@ func runStart(args []string) error {
 	fmt.Printf("  Server: %s (pid %d)\n", serverURL, sState.PID)
 	fmt.Printf("  MinIO:  http://127.0.0.1:%d (console http://127.0.0.1:%d)\n", mState.APIPort, mState.ConsolePort)
 	for _, c := range clients {
-		fmt.Printf("  Client: %s (daemon http://127.0.0.1:%d pid %d)\n", c.Email, c.Port, c.PID)
+		if c.PID > 0 {
+			fmt.Printf("  Client: %s (daemon http://127.0.0.1:%d pid %d)\n", c.Email, c.Port, c.PID)
+		} else {
+			fmt.Printf("  Client: %s (config only; control-plane http://127.0.0.1:%d)\n", c.Email, c.Port)
+		}
 	}
 	fmt.Printf("State: %s\n", statePath)
 
-	if !opts.skipSyncCheck {
+	if !opts.skipSyncCheck && !opts.skipClientDaemons {
 		if err := runSyncCheck(opts.root, opts.clients); err != nil {
 			fmt.Printf("Sync check warning (continuing): %v\n", err)
 		}
@@ -359,6 +386,8 @@ func parseStartFlags(args []string) (startOptions, error) {
 			opts.keepData = true
 		case "--skip-sync-check":
 			opts.skipSyncCheck = true
+		case "--skip-client-daemons":
+			opts.skipClientDaemons = true
 		case "--reset":
 			opts.reset = true
 		default:
@@ -371,24 +400,140 @@ func parseStartFlags(args []string) (startOptions, error) {
 
 func buildBinary(outPath, pkg, tags string) error {
 	args := []string{"build", "-tags", tags, "-o", outPath, pkg}
+	if os.Getenv("SBDEV_REBUILD_ALL") == "1" {
+		// Full rebuild is opt-in to keep test runs fast in CI/dev
+		args = append(args[:1], append([]string{"-a"}, args[1:]...)...)
+	}
 	cmd := exec.Command("go", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func ensureMinioBinary(binDir string) (string, error) {
-	if path, err := exec.LookPath(minioBinaryName); err == nil {
+func resolveClientBinary(binDir, pkg, tags string) (string, error) {
+	if override := os.Getenv("SBDEV_CLIENT_BIN"); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve: %w", err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory: %s", path)
+		}
 		return path, nil
 	}
 
+	clientBin := filepath.Join(binDir, "syftbox")
+	clientBin = addExe(clientBin)
+	if err := buildBinary(clientBin, pkg, tags); err != nil {
+		return "", err
+	}
+	return clientBin, nil
+}
+
+func clientBinaryForEmail(email string, idx int, defaultBin string) (string, error) {
+	envKey := envKeyForEmail(email)
+	if override := os.Getenv(envKey); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve for %s: %w", email, err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat for %s: %w", email, err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory for %s: %s", email, path)
+		}
+		return path, nil
+	}
+
+	// Global override for all clients.
+	if override := os.Getenv("SBDEV_CLIENT_BIN"); override != "" {
+		path := filepath.Clean(override)
+		if !filepath.IsAbs(path) {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				return "", fmt.Errorf("client bin override resolve: %w", err)
+			}
+			path = abs
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("client bin override stat: %w", err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("client bin override points to directory: %s", path)
+		}
+		return path, nil
+	}
+
+	mode := strings.ToLower(os.Getenv("SBDEV_CLIENT_MODE"))
+	rustBin := os.Getenv("SBDEV_RUST_CLIENT_BIN")
+	switch mode {
+	case "rust":
+		if rustBin == "" {
+			return "", fmt.Errorf("SBDEV_CLIENT_MODE=rust requires SBDEV_RUST_CLIENT_BIN")
+		}
+		return rustBin, nil
+	case "mixed":
+		if idx%2 == 1 { // second client gets rust; third is go, etc.
+			if rustBin == "" {
+				return "", fmt.Errorf("SBDEV_CLIENT_MODE=mixed requires SBDEV_RUST_CLIENT_BIN")
+			}
+			return rustBin, nil
+		}
+	}
+
+	return defaultBin, nil
+}
+
+func envKeyForEmail(email string) string {
+	normalized := strings.ToUpper(email)
+	normalized = strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return '_'
+	}, normalized)
+	return fmt.Sprintf("SBDEV_CLIENT_BIN_%s", normalized)
+}
+
+func ensureMinioBinary(binDir string) (string, error) {
+	// On Windows, the binary has .exe extension
+	binaryName := minioBinaryName
+	if runtime.GOOS == "windows" {
+		binaryName = minioBinaryName + ".exe"
+	}
+
+	if path, err := exec.LookPath(binaryName); err == nil {
+		return path, nil
+	}
+
+	// check sbdev cache (~/.sbdev/bin/minio) if present
+	sbdevPath := filepath.Join(os.Getenv("HOME"), ".sbdev", "bin", binaryName)
+	if _, err := os.Stat(sbdevPath); err == nil {
+		return sbdevPath, nil
+	}
+
 	// check global cache
-	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", minioBinaryName)
+	cachePath := filepath.Join(os.Getenv("HOME"), cacheDirName, "bin", binaryName)
 	if _, err := os.Stat(cachePath); err == nil {
 		return cachePath, nil
 	}
 
-	target := filepath.Join(binDir, minioBinaryName)
+	target := filepath.Join(binDir, binaryName)
 	if _, err := os.Stat(target); err == nil {
 		return target, nil
 	}
@@ -426,12 +571,18 @@ func downloadMinio(dest string) error {
 		} else {
 			platform = "linux-amd64"
 		}
+	case "windows":
+		platform = "windows-amd64"
 	default:
 		return fmt.Errorf("unsupported platform for minio download: %s/%s", osName, arch)
 	}
 
-	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, minioBinaryName)
-	client := &http.Client{Timeout: 15 * time.Second}
+	binaryName := minioBinaryName
+	if osName == "windows" {
+		binaryName = minioBinaryName + ".exe"
+	}
+	url := fmt.Sprintf("%s/%s/%s", minioDownloadBase, platform, binaryName)
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Get(url) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("download minio: %w", err)
@@ -518,10 +669,16 @@ func startMinio(mode, binPath, root string, apiPort, consolePort int, keepData b
 	cmd.Stderr = f
 
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		return minioState{}, err
 	}
+	_ = f.Close()
 
 	if err := waitForMinio(apiPort); err != nil {
+		// MinIO may have failed to bind to the selected port; ensure the process is stopped
+		// so subsequent test runs can retry cleanly.
+		_ = killProcess(cmd.Process.Pid)
+		_ = f.Close()
 		return minioState{}, fmt.Errorf("minio health: %w", err)
 	}
 
@@ -611,6 +768,11 @@ func setupBucket(apiPort int) error {
 		),
 		config.WithRegion(defaultRegion),
 		config.WithLogger(logging.Nop{}),
+		config.WithRetryer(func() aws.Retryer {
+			return retry.NewStandard(func(o *retry.StandardOptions) {
+				o.MaxAttempts = 10
+			})
+		}),
 	)
 	if err != nil {
 		return err
@@ -663,8 +825,10 @@ func startServer(binPath, relayRoot string, port, minioPort int) (serverState, e
 	cmd.Dir = relayRoot
 
 	if err := cmd.Start(); err != nil {
+		_ = f.Close()
 		return serverState{}, err
 	}
+	_ = f.Close()
 
 	return serverState{
 		PID:      cmd.Process.Pid,
@@ -690,10 +854,25 @@ func stopMinio(ms minioState) {
 }
 
 func writeServerConfig(path string, port, minioPort int, dataDir, logDir string) error {
+	httpCfg := map[string]any{
+		"addr": fmt.Sprintf("127.0.0.1:%d", port),
+	}
+
+	if v := os.Getenv("SBDEV_HTTP_READ_TIMEOUT"); v != "" {
+		httpCfg["read_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_WRITE_TIMEOUT"); v != "" {
+		httpCfg["write_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_IDLE_TIMEOUT"); v != "" {
+		httpCfg["idle_timeout"] = v
+	}
+	if v := os.Getenv("SBDEV_HTTP_READ_HEADER_TIMEOUT"); v != "" {
+		httpCfg["read_header_timeout"] = v
+	}
+
 	cfg := map[string]any{
-		"http": map[string]any{
-			"addr": fmt.Sprintf("127.0.0.1:%d", port),
-		},
+		"http": httpCfg,
 		"blob": map[string]any{
 			"bucket_name": defaultBucket,
 			"region":      defaultRegion,
@@ -719,6 +898,62 @@ func writeServerConfig(path string, port, minioPort int, dataDir, logDir string)
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func initClient(root, email, serverURL string, port int) (clientState, error) {
+	emailDir := filepath.Join(root, email)
+	homeDir := emailDir
+	configDir := filepath.Join(homeDir, ".syftbox")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		return clientState{}, err
+	}
+	dataDir := emailDir
+	// Ensure encrypted and shadow roots exist under the workspace root.
+	if err := os.MkdirAll(filepath.Join(dataDir, "datasites"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "unencrypted"), 0o755); err != nil {
+		return clientState{}, err
+	}
+	logDir := filepath.Join(homeDir, ".syftbox", "logs")
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return clientState{}, err
+	}
+
+	clientURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	configPath := filepath.Join(configDir, "config.json")
+	cfg := map[string]any{
+		"data_dir":     dataDir,
+		"email":        email,
+		"server_url":   serverURL,
+		"client_url":   clientURL,
+		"client_token": "",
+	}
+	cfgData, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return clientState{}, err
+	}
+	if err := os.WriteFile(configPath, cfgData, 0o644); err != nil {
+		return clientState{}, err
+	}
+
+	logFile := filepath.Join(emailDir, "client-daemon.log")
+	// Create/truncate the log file so tooling that expects it can still tail it.
+	if err := os.WriteFile(logFile, []byte("client daemon not started (skip-client-daemons)\n"), 0o644); err != nil {
+		return clientState{}, err
+	}
+
+	return clientState{
+		Email:     email,
+		PID:       0,
+		Port:      port,
+		Config:    configPath,
+		DataPath:  dataDir,
+		LogPath:   logFile,
+		HomePath:  homeDir,
+		BinPath:   "",
+		ServerURL: serverURL,
+	}, nil
 }
 
 func startClient(binPath, root, email, serverURL string, port int) (clientState, error) {
@@ -775,10 +1010,12 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 	)
 
 	if err := cmd.Start(); err != nil {
+		_ = lf.Close()
 		return clientState{}, err
 	}
+	_ = lf.Close()
 
-	return clientState{
+	state := clientState{
 		Email:     email,
 		PID:       cmd.Process.Pid,
 		Port:      port,
@@ -788,7 +1025,37 @@ func startClient(binPath, root, email, serverURL string, port int) (clientState,
 		HomePath:  homeDir,
 		BinPath:   binPath,
 		ServerURL: serverURL,
-	}, nil
+	}
+
+	// Note: Updating suite.clients is handled by the caller (resetForTest/initPersistent)
+	// which already holds suite.mu. Acquiring the lock here would cause a deadlock.
+	updateStateForClient(root, state)
+
+	return state, nil
+}
+
+func updateStateForClient(root string, client clientState) {
+	state, path, err := readState(root)
+	if err != nil {
+		return
+	}
+
+	updated := false
+	for i := range state.Clients {
+		if state.Clients[i].Email == client.Email {
+			state.Clients[i] = client
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		state.Clients = append(state.Clients, client)
+	}
+
+	if err := writeState(path, state); err != nil {
+		return
+	}
+	_ = saveGlobalState(root, state)
 }
 
 func runSyncCheck(root string, emails []string) error {
@@ -804,34 +1071,56 @@ func runSyncCheck(root string, emails []string) error {
 	if err := os.MkdirAll(publicDir, 0o755); err != nil {
 		return fmt.Errorf("ensure source public dir: %w", err)
 	}
-	if err := waitForDir(publicDir, 15*time.Second); err != nil {
-		fmt.Printf("Sync probe note: source public dir not ready (%s): %v\n", publicDir, err)
-		return nil
+	if err := waitForDir(publicDir, windowsScaledTimeout(15*time.Second)); err != nil {
+		return fmt.Errorf("source public dir not ready (%s): %w", publicDir, err)
+	}
+
+	aclPath := filepath.Join(publicDir, "syft.pub.yaml")
+	if err := waitForFile(aclPath, "", windowsScaledTimeout(15*time.Second)); err != nil {
+		return fmt.Errorf("source public ACL not ready (%s): %w", aclPath, err)
+	}
+	aclContent, err := os.ReadFile(aclPath)
+	if err != nil {
+		return fmt.Errorf("read source public ACL (%s): %w", aclPath, err)
+	}
+
+	for _, email := range emails[1:] {
+		peerACL := filepath.Join(root, email, "datasites", src, "public", "syft.pub.yaml")
+		if err := waitForFile(peerACL, string(aclContent), windowsScaledTimeout(30*time.Second)); err != nil {
+			return fmt.Errorf("wait for public ACL from %s on %s: %w", src, email, err)
+		}
 	}
 
 	filePath := filepath.Join(publicDir, filename)
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
-		fmt.Printf("Sync probe note: write failed: %v\n", err)
-		return nil
+		return fmt.Errorf("sync probe write failed: %w", err)
 	}
 
-	// Touch the file via the server to trigger notifications
-	if err := waitForServerReady(root, 15*time.Second); err != nil {
+	// Wait for server to be ready
+	if err := waitForServerReady(root, windowsScaledTimeout(15*time.Second)); err != nil {
 		return fmt.Errorf("wait for server: %w", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+
+	// Wait for Alice's client to upload the probe file to the server
+	blobKey := fmt.Sprintf("%s/public/%s", src, filename)
+	if err := waitForBlobOnServer(root, blobKey, windowsScaledTimeout(30*time.Second)); err != nil {
+		return fmt.Errorf("wait for blob on server: %w", err)
+	}
+
+	// Trigger downloads to speed up sync
 	if err := triggerDownloadForAll(root, emails, filename); err != nil {
 		fmt.Printf("Sync probe trigger note: %v (continuing)\n", err)
 	}
 
 	for _, email := range emails[1:] {
-		// Each client syncs alice's public dir to their local datasites/alice@example.com/public/
+		// Each client syncs alice's public dir to their local <root>/<client>/<sender>/public
 		targetDir := filepath.Join(root, email, "datasites", src, "public")
 		_ = os.MkdirAll(targetDir, 0o755) // best-effort
 		target := filepath.Join(targetDir, filename)
-		if err := waitForFile(target, content, 45*time.Second); err != nil {
-			fmt.Printf("Sync probe note: %s did not see probe yet (%v)\n", email, err)
-			return nil
+		if err := waitForFile(target, content, windowsScaledTimeout(45*time.Second)); err != nil {
+			// Debug: dump client state on failure
+			debugSyncCheckFailure(root, email, src, filename)
+			return fmt.Errorf("sync probe not replicated to %s (%s): %w", email, target, err)
 		}
 	}
 
@@ -839,8 +1128,92 @@ func runSyncCheck(root string, emails []string) error {
 	return nil
 }
 
+// debugSyncCheckFailure dumps diagnostic information when a sync check fails.
+func debugSyncCheckFailure(root, email, src, filename string) {
+	fmt.Printf("\n[DEBUG] Sync check failure diagnostics for %s:\n", email)
+
+	// Check if client process is running
+	state, _, err := readState(root)
+	if err != nil {
+		fmt.Printf("[DEBUG]   Could not read state: %v\n", err)
+	} else {
+		for _, c := range state.Clients {
+			if c.Email == email {
+				fmt.Printf("[DEBUG]   Client PID: %d\n", c.PID)
+				// Check if process exists
+				if proc, err := os.FindProcess(c.PID); err == nil {
+					// On Unix, FindProcess always succeeds; need to send signal 0 to check
+					// On Windows, FindProcess returns error if process doesn't exist
+					fmt.Printf("[DEBUG]   Process found (may or may not be running): %v\n", proc)
+				}
+
+				// Dump last 50 lines of client log
+				logPath := c.LogPath
+				if logPath == "" {
+					logPath = filepath.Join(root, email, ".syftbox", "logs", "syftbox.log")
+				}
+				if logData, err := os.ReadFile(logPath); err == nil {
+					lines := strings.Split(string(logData), "\n")
+					start := len(lines) - 50
+					if start < 0 {
+						start = 0
+					}
+					fmt.Printf("[DEBUG]   Last %d log lines from %s:\n", len(lines)-start, logPath)
+					for _, line := range lines[start:] {
+						if line != "" {
+							fmt.Printf("[DEBUG]     %s\n", line)
+						}
+					}
+				} else {
+					fmt.Printf("[DEBUG]   Could not read log file %s: %v\n", logPath, err)
+				}
+				break
+			}
+		}
+	}
+
+	// List datasites directory
+	datasitesDir := filepath.Join(root, email, "datasites")
+	fmt.Printf("[DEBUG]   Datasites directory: %s\n", datasitesDir)
+	if entries, err := os.ReadDir(datasitesDir); err == nil {
+		fmt.Printf("[DEBUG]   Contains %d entries:\n", len(entries))
+		for _, e := range entries {
+			fmt.Printf("[DEBUG]     - %s\n", e.Name())
+		}
+	} else {
+		fmt.Printf("[DEBUG]   Could not read datasites dir: %v\n", err)
+	}
+
+	// Check source's public directory on this client
+	srcPublicDir := filepath.Join(root, email, "datasites", src, "public")
+	fmt.Printf("[DEBUG]   Source public dir: %s\n", srcPublicDir)
+	if entries, err := os.ReadDir(srcPublicDir); err == nil {
+		fmt.Printf("[DEBUG]   Contains %d entries:\n", len(entries))
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				fmt.Printf("[DEBUG]     - %s (size=%d, mod=%s)\n", e.Name(), info.Size(), info.ModTime().Format(time.RFC3339))
+			} else {
+				fmt.Printf("[DEBUG]     - %s\n", e.Name())
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG]   Could not read source public dir: %v\n", err)
+	}
+
+	// Check sync journal
+	journalPath := filepath.Join(root, email, ".data", "sync.db")
+	if _, err := os.Stat(journalPath); err == nil {
+		fmt.Printf("[DEBUG]   Sync journal exists at %s\n", journalPath)
+	} else {
+		fmt.Printf("[DEBUG]   Sync journal NOT found at %s: %v\n", journalPath, err)
+	}
+
+	fmt.Printf("[DEBUG] End of diagnostics for %s\n\n", email)
+}
+
 func publicPath(root, email string) string {
-	// Workspace root is <root>/<email>; actual public dir lives under datasites/<user>/public
+	// Workspace root is <root>/<email>; actual public dir lives under <root>/<email>/datasites/<email>/public
 	return filepath.Join(root, email, "datasites", email, "public")
 }
 
@@ -876,14 +1249,49 @@ func waitForDir(path string, timeout time.Duration) error {
 
 func waitForFile(path, want string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	attempts := 0
+	var lastErr error
+	var lastContent string
 	for time.Now().Before(deadline) {
+		attempts++
 		data, err := os.ReadFile(path)
-		if err == nil && string(data) == want {
+		if err == nil && (want == "" || string(data) == want) {
+			fmt.Printf("[DEBUG] waitForFile: found %s after %d attempts\n", path, attempts)
 			return nil
+		}
+		if err != nil {
+			lastErr = err
+		} else {
+			lastContent = string(data)
+		}
+		// Log every 10 attempts (5 seconds)
+		if attempts%10 == 0 {
+			if lastErr != nil {
+				fmt.Printf("[DEBUG] waitForFile: waiting for %s attempt=%d err=%v\n", path, attempts, lastErr)
+			} else {
+				fmt.Printf("[DEBUG] waitForFile: waiting for %s attempt=%d content_len=%d want_len=%d\n",
+					path, attempts, len(lastContent), len(want))
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	return fmt.Errorf("file not found or mismatched: %s", path)
+	// Final debug dump on timeout
+	parentDir := filepath.Dir(path)
+	fmt.Printf("[DEBUG] waitForFile TIMEOUT: path=%s attempts=%d\n", path, attempts)
+	if entries, err := os.ReadDir(parentDir); err == nil {
+		fmt.Printf("[DEBUG] waitForFile TIMEOUT: parent=%s contents:\n", parentDir)
+		for _, e := range entries {
+			info, _ := e.Info()
+			if info != nil {
+				fmt.Printf("[DEBUG]   - %s (size=%d)\n", e.Name(), info.Size())
+			} else {
+				fmt.Printf("[DEBUG]   - %s\n", e.Name())
+			}
+		}
+	} else {
+		fmt.Printf("[DEBUG] waitForFile TIMEOUT: parent=%s does not exist: %v\n", parentDir, err)
+	}
+	return fmt.Errorf("file not found or mismatched: %s (attempts=%d)", path, attempts)
 }
 
 func waitForServerReady(root string, timeout time.Duration) error {
@@ -1197,20 +1605,10 @@ func listActiveStacks() error {
 	return nil
 }
 
-// processExists checks if a process is running
-func processExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
-}
-
 func killProcess(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
@@ -1232,7 +1630,11 @@ func killProcess(pid int) error {
 func getFreePort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, err
+		// Some sandboxed environments disallow binding to loopback explicitly; fall back to any interface.
+		ln, err = net.Listen("tcp", ":0")
+		if err != nil {
+			return 0, err
+		}
 	}
 	defer ln.Close()
 	return ln.Addr().(*net.TCPAddr).Port, nil
@@ -1285,6 +1687,46 @@ func getWithRetry(url string, timeout time.Duration) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fmt.Errorf("server not ready at %s", url)
+}
+
+// waitForBlobOnServer polls MinIO directly until the blob exists or timeout.
+func waitForBlobOnServer(root, blobKey string, timeout time.Duration) error {
+	state, _, err := readState(root)
+	if err != nil {
+		return err
+	}
+
+	// Create S3 client pointing to MinIO
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d", state.Minio.APIPort)
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(defaultMinioAdminUser, defaultMinioAdminPassword, ""),
+		),
+		config.WithRegion(defaultRegion),
+	)
+	if err != nil {
+		return fmt.Errorf("load aws config: %w", err)
+	}
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
+	})
+
+	fmt.Printf("Waiting for blob %s in MinIO (timeout %v)...\n", blobKey, timeout)
+	start := time.Now()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		_, err := s3Client.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(defaultBucket),
+			Key:    aws.String(blobKey),
+		})
+		if err == nil {
+			fmt.Printf("Blob %s found in MinIO after %v\n", blobKey, time.Since(start))
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("blob %s not found in MinIO after %v", blobKey, timeout)
 }
 
 func copyFile(src, dst string) error {

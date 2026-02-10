@@ -1,10 +1,13 @@
 package sync
 
 import (
+	"context"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/openmined/syftbox/internal/aclspec"
 	"github.com/openmined/syftbox/internal/syftmsg"
 )
 
@@ -19,9 +22,42 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 
 	syncRelPath := SyncPath(createMsg.Path)
 
+	if !se.shouldSyncPath(createMsg.Path) {
+		slog.Info("sync", "type", SyncPriority, "op", OpSkipped, "reason", "subscription", "path", createMsg.Path)
+		return
+	}
+
+	// If content is empty, this is a push notification (not embedded content)
+	// Trigger an immediate sync to download the file
+	if len(createMsg.Content) == 0 {
+		slog.Info("push notification received, triggering immediate sync", "path", createMsg.Path, "etag", createMsg.ETag)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := se.runFullSync(ctx); err != nil {
+				slog.Error("sync after push notification failed", "path", createMsg.Path, "error", err)
+			}
+		}()
+		return
+	}
+
 	// set sync status
 	se.syncStatus.SetSyncing(syncRelPath)
 	slog.Info("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "path", createMsg.Path, "size", createMsg.Length, "etag", createMsg.ETag)
+
+	// Stage ACL for potential ordered application, but don't block the write
+	// When all ACLs arrive, onACLSetReady will re-apply them in order
+	if aclspec.IsACLFile(createMsg.Path) {
+		parts := strings.SplitN(createMsg.Path, "/", 2)
+		if len(parts) >= 1 {
+			datasite := parts[0]
+			aclDir := filepath.Dir(createMsg.Path)
+			se.aclStaging.NoteACLActivity(datasite)
+			if se.aclStaging.HasPendingManifest(datasite) {
+				se.aclStaging.StageACL(datasite, aclDir, createMsg.Content, createMsg.ETag)
+			}
+		}
+	}
 
 	// prep local path
 	localAbsPath := se.workspace.DatasiteAbsPath(createMsg.Path)
@@ -42,14 +78,29 @@ func (se *SyncEngine) handlePriorityDownload(msg *syftmsg.Message) {
 	}
 
 	// Update the sync journal
-	se.journal.Set(&FileMetadata{
+	localETag := ""
+	if et, err := calculateETag(localAbsPath); err == nil {
+		localETag = et
+	}
+	if err := se.journal.Set(&FileMetadata{
 		Path:         syncRelPath,
 		ETag:         createMsg.ETag,
+		LocalETag:    localETag,
 		Size:         createMsg.Length,
 		LastModified: time.Now(),
 		Version:      "",
-	})
+	}); err != nil {
+		se.syncStatus.SetError(syncRelPath, err)
+		slog.Error("sync", "type", SyncPriority, "op", OpWriteLocal, "msgType", msg.Type, "msgId", msg.Id, "error", err)
+		return
+	}
 
 	// mark as completed
 	se.syncStatus.SetCompleted(syncRelPath)
+
+	if latencyTraceEnabled() {
+		if ts, ok := payloadTimestampNs(createMsg.Content); ok {
+			slog.Info("latency_trace priority_download_written", "path", createMsg.Path, "msgId", msg.Id, "age_ms", (time.Now().UnixNano()-ts)/1_000_000, "size", createMsg.Length)
+		}
+	}
 }

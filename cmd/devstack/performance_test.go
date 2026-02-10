@@ -4,9 +4,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/openmined/syftbox/internal/syftmsg"
+	"github.com/openmined/syftbox/internal/wsproto"
 )
 
 // TestLargeFileTransfer tests uploading and syncing files of various sizes
@@ -21,10 +28,26 @@ func TestLargeFileTransfer(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default ACLs (required for Bob to see Alice's public files)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+
+	// Wait for ACL propagation - need more time for periodic sync to upload ACLs
+	t.Log("Waiting for ACL files to sync to server...")
+	time.Sleep(5 * time.Second)
+
 	testCases := []struct {
 		name string
 		size int
 	}{
+		{"100KB", 100 * 1024},
 		{"1MB", 1 * 1024 * 1024},
 		{"4MB", 4 * 1024 * 1024},
 		{"10MB", 10 * 1024 * 1024},
@@ -84,6 +107,17 @@ func TestWebSocketLatency(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default root and public ACLs (like real client bootstrap)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+
 	// Setup RPC endpoint for both clients
 	appName := "perftest"
 	endpoint := "latency"
@@ -95,13 +129,44 @@ func TestWebSocketLatency(t *testing.T) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Wait for ACL files to sync via periodic cycle (5s + buffer)
-	time.Sleep(6 * time.Second)
+	// Wait for initialization in fresh environment:
+	// 1. WebSocket connection (~100ms)
+	// 2. Peer discovery via adaptive periodic sync (startup phase: 100ms * ~3-5 cycles = 300-500ms)
+	// 3. Datasite subscription (~50-100ms)
+	// 4. ACL file sync via WebSocket (~70-200ms)
+	// Total: ~520-900ms for fresh environment with adaptive sync
+	time.Sleep(1 * time.Second)
+
+	t.Run("EncodingComparison", func(t *testing.T) {
+		content := GenerateRandomFile(3 * 1024 * 1024)
+		msg := syftmsg.NewFileWrite("perf/encode.request", "etag", int64(len(content)), content)
+
+		startJSON := time.Now()
+		jsonBytes, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("json marshal: %v", err)
+		}
+		jsonTime := time.Since(startJSON)
+
+		startMP := time.Now()
+		_, mpBytes, err := wsproto.Marshal(msg, wsproto.EncodingMsgPack)
+		if err != nil {
+			t.Fatalf("msgpack marshal: %v", err)
+		}
+		mpTime := time.Since(startMP)
+
+		t.Logf("JSON size=%d time=%v", len(jsonBytes), jsonTime)
+		t.Logf("MsgPack size=%d time=%v", len(mpBytes), mpTime)
+
+		if len(mpBytes) >= len(jsonBytes)*8/10 {
+			t.Errorf("expected msgpack to be at least 20%% smaller than json, got json=%d msgpack=%d", len(jsonBytes), len(mpBytes))
+		}
+	})
 
 	testCases := []struct {
-		name          string
-		size          int
-		maxLatency    time.Duration
+		name       string
+		size       int
+		maxLatency time.Duration
 	}{
 		{"1KB", 1 * 1024, 100 * time.Millisecond},
 		{"10KB", 10 * 1024, 150 * time.Millisecond},
@@ -161,6 +226,20 @@ func TestConcurrentUploads(t *testing.T) {
 	if err := h.StartProfiling("TestConcurrentUploads"); err != nil {
 		t.Fatalf("start profiling: %v", err)
 	}
+
+	// Create default ACLs (required for clients to see each other's public files)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+
+	// Wait for ACL propagation
+	time.Sleep(1 * time.Second)
 
 	numFiles := 10
 	fileSize := 1 * 1024 * 1024 // 1MB each
@@ -233,6 +312,20 @@ func TestFileModificationDuringSync(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default ACLs (required for Bob to see Alice's public files)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+
+	// Wait for ACL propagation
+	time.Sleep(1 * time.Second)
+
 	content := GenerateRandomFile(1 * 1024 * 1024) // 1MB
 	filename := "modify-test.bin"
 	md5Hash := CalculateMD5(content)
@@ -278,6 +371,17 @@ func TestManySmallFiles(t *testing.T) {
 		t.Fatalf("start profiling: %v", err)
 	}
 
+	// Create default root and public ACLs (like real client bootstrap)
+	if err := h.alice.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create alice default ACLs: %v", err)
+	}
+	if err := h.bob.CreateDefaultACLs(); err != nil {
+		t.Fatalf("create bob default ACLs: %v", err)
+	}
+	if err := h.AllowSubscriptionsBetween(h.alice, h.bob); err != nil {
+		t.Fatalf("set subscriptions: %v", err)
+	}
+
 	// Setup RPC endpoint
 	appName := "perftest"
 	endpoint := "batch"
@@ -289,68 +393,136 @@ func TestManySmallFiles(t *testing.T) {
 		t.Fatalf("setup bob RPC: %v", err)
 	}
 
-	// Wait for ACL files to sync via periodic cycle (5s + buffer)
-	time.Sleep(6 * time.Second)
+	// Wait for initialization in fresh environment:
+	// 1. WebSocket connection (~100ms)
+	// 2. Peer discovery via adaptive periodic sync (startup phase: 100ms * ~3-5 cycles = 300-500ms)
+	// 3. Datasite subscription (~50-100ms)
+	// 4. ACL file sync via WebSocket (~70-200ms)
+	// Total: ~520-900ms for fresh environment with adaptive sync
+	time.Sleep(1 * time.Second)
 
-	numFiles := 100
+	// Test batch sizes: progressive scaling to find limits
+	batchSizes := []int{1, 5, 10, 20, 50, 100}
 	fileSize := 1 * 1024 // 1KB each
 
-	t.Logf("Creating %d small files...", numFiles)
+	for _, numFiles := range batchSizes {
+		t.Logf("\n=== Testing with %d files ===", numFiles)
 
-	start := time.Now()
+		start := time.Now()
 
-	// Alice creates many small files
-	filenames := make([]string, numFiles)
-	md5Hashes := make([]string, numFiles)
+		// Alice creates many small files
+		filenames := make([]string, numFiles)
+		md5Hashes := make([]string, numFiles)
 
-	for i := 0; i < numFiles; i++ {
-		content := GenerateRandomFile(fileSize)
-		filename := fmt.Sprintf("small-%d.request", i)
-		filenames[i] = filename
-		md5Hashes[i] = CalculateMD5(content)
+		for i := 0; i < numFiles; i++ {
+			content := GenerateRandomFile(fileSize)
+			filename := fmt.Sprintf("batch%d-file%d.request", numFiles, i)
+			filenames[i] = filename
+			md5Hashes[i] = CalculateMD5(content)
 
-		if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
-			t.Fatalf("upload %d failed: %v", i, err)
+			if err := h.alice.UploadRPCRequest(appName, endpoint, filename, content); err != nil {
+				t.Fatalf("upload %d failed: %v", i, err)
+			}
 		}
+
+		uploadTime := time.Since(start)
+		h.metrics.RecordCustomMetric("upload_time", uploadTime.Seconds())
+
+		t.Logf("✅ Uploads complete: %v", uploadTime)
+
+		// Give Alice's periodic sync time to upload all files to server, and Bob's
+		// periodic sync time to discover them. With 100ms adaptive sync intervals
+		// during burst activity, files need ~10-20 sync cycles = 1-2 seconds
+		sleepTime := time.Duration(numFiles*100) * time.Millisecond
+		if sleepTime < 1*time.Second {
+			sleepTime = 1 * time.Second
+		}
+		if sleepTime > 5*time.Second {
+			sleepTime = 5 * time.Second
+		}
+		t.Logf("Waiting %v for batch upload/download to complete...", sleepTime)
+		time.Sleep(sleepTime)
+
+		// Wait for Bob to sync all files
+		syncStart := time.Now()
+		syncErrors := 0
+
+		for i, filename := range filenames {
+			timeout := 5 * time.Second
+			if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], timeout); err != nil {
+				t.Logf("Sync error for %s: %v", filename, err)
+				syncErrors++
+				h.metrics.RecordError(err)
+			}
+		}
+
+		syncTime := time.Since(syncStart)
+		totalTime := time.Since(start)
+
+		h.metrics.RecordLatency(totalTime)
+		h.metrics.RecordCustomMetric("sync_time", syncTime.Seconds())
+
+		t.Logf("✅ Batch %d files: upload=%v, sleep=%v, verify=%v, total=%v, errors=%d/%d",
+			numFiles, uploadTime, sleepTime, syncTime, totalTime, syncErrors, numFiles)
+
+		if syncErrors > 0 {
+			t.Errorf("❌ Batch %d files: %d/%d files failed to sync", numFiles, syncErrors, numFiles)
+			break // Stop testing larger batches if this one failed
+		}
+
+		// Validate reasonable performance
+		avgTimePerFile := totalTime / time.Duration(numFiles)
+		t.Logf("📊 Average time per file: %v", avgTimePerFile)
+
+		// CRITICAL: Verify no conflicts or rejected files were created
+		aliceConflicts := findFilesRecursive(h.alice.dataDir, "conflict")
+		aliceRejects := findFilesRecursive(h.alice.dataDir, "rejected")
+		bobConflicts := findFilesRecursive(h.bob.dataDir, "conflict")
+		bobRejects := findFilesRecursive(h.bob.dataDir, "rejected")
+
+		conflictCount := len(aliceConflicts) + len(bobConflicts)
+		rejectedCount := len(aliceRejects) + len(bobRejects)
+
+		if conflictCount > 0 {
+			t.Errorf("❌ Found %d conflict files after batch %d - conflicts should be ZERO", conflictCount, numFiles)
+			if len(aliceConflicts) > 0 {
+				t.Logf("Alice conflicts: %v", aliceConflicts)
+			}
+			if len(bobConflicts) > 0 {
+				t.Logf("Bob conflicts: %v", bobConflicts)
+			}
+			break
+		}
+		if rejectedCount > 0 {
+			t.Errorf("❌ Found %d rejected files after batch %d - rejections should be ZERO", rejectedCount, numFiles)
+			if len(aliceRejects) > 0 {
+				t.Logf("Alice rejected: %v", aliceRejects)
+			}
+			if len(bobRejects) > 0 {
+				t.Logf("Bob rejected: %v", bobRejects)
+			}
+			break
+		}
+
+		t.Logf("✅ Zero conflicts/rejections verified for batch %d", numFiles)
 	}
 
-	uploadTime := time.Since(start)
-	h.metrics.RecordCustomMetric("upload_time", uploadTime.Seconds())
-
-	t.Logf("✅ Uploads complete: %v", uploadTime)
-
-	// Wait for Bob to sync all files
-	syncStart := time.Now()
-	syncErrors := 0
-
-	for i, filename := range filenames {
-		timeout := 5 * time.Second
-		if err := h.bob.WaitForRPCRequest(h.alice.email, appName, endpoint, filename, md5Hashes[i], timeout); err != nil {
-			t.Logf("Sync error for %s: %v", filename, err)
-			syncErrors++
-			h.metrics.RecordError(err)
-		}
-	}
-
-	syncTime := time.Since(syncStart)
-	totalTime := time.Since(start)
-
-	h.metrics.RecordLatency(totalTime)
-	h.metrics.RecordCustomMetric("sync_time", syncTime.Seconds())
-
-	t.Logf("✅ Sync complete: upload=%v, sync=%v, total=%v, errors=%d/%d",
-		uploadTime, syncTime, totalTime, syncErrors, numFiles)
-
+	// Final report
 	report := h.metrics.GenerateReport()
 	report.Log(t)
+}
 
-	if syncErrors > numFiles/10 {
-		t.Errorf("Too many sync errors: %d/%d", syncErrors, numFiles)
-	}
-
-	// Validate reasonable performance
-	avgTimePerFile := totalTime / time.Duration(numFiles)
-	if avgTimePerFile > 500*time.Millisecond {
-		t.Logf("⚠️  Average time per file seems high: %v", avgTimePerFile)
-	}
+// findFilesRecursive recursively searches for files containing pattern in their name
+func findFilesRecursive(rootDir, pattern string) []string {
+	var matches []string
+	filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.Contains(path, pattern) {
+			matches = append(matches, path)
+		}
+		return nil
+	})
+	return matches
 }

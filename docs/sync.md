@@ -24,11 +24,13 @@ The sync system operates on the `datasites/` directory structure and maintains m
 ## Sync Algorithm
 
 ### 1. Presync Checks
+
 - Verify workspace is writable
 - Ensure minimum free disk space (5GB)
 - Check network connectivity
 
 ### 2. State Collection
+
 The sync engine collects three states for comparison:
 
 - **Remote State**: File metadata from the server via SyftSDK
@@ -42,7 +44,7 @@ The reconcile algorithm performs a three-way diff between local, remote, and jou
 ```
 Operation Types:
 - OpWriteRemote: Upload local changes to server
-- OpWriteLocal: Download remote changes locally  
+- OpWriteLocal: Download remote changes locally
 - OpDeleteRemote: Delete file from server
 - OpDeleteLocal: Delete local file
 - OpConflict: Handle conflicting changes
@@ -53,10 +55,12 @@ Operation Types:
 For each file path across all three states:
 
 **Conflicts** (require user intervention):
+
 - Local modified + Remote modified
 - Local created + Remote created
 
 **Regular Sync Operations**:
+
 - Local created/modified + Remote unchanged → Upload (`OpWriteRemote`)
 - Local unchanged + Remote created/modified → Download (`OpWriteLocal`)
 - Local deleted + Remote exists → Delete from server (`OpDeleteRemote`)
@@ -64,6 +68,7 @@ For each file path across all three states:
 - Both deleted cleanly → Cleanup journal entry
 
 **Ignored**:
+
 - Files currently syncing
 - Files matching ignore patterns
 - Empty files (0 bytes)
@@ -71,6 +76,7 @@ For each file path across all three states:
 ### 4. Parallel Execution
 
 Operations are executed in parallel batches:
+
 - Remote writes (uploads)
 - Local writes (downloads)
 - Remote deletes
@@ -85,6 +91,7 @@ Operations are executed in parallel batches:
 The sync system uses a `.gitignore`-style filtering mechanism:
 
 **Default Ignored Patterns**:
+
 ```
 syftignore
 **/*.conflict.*
@@ -106,6 +113,7 @@ __pycache__/
 ### Priority System
 
 Priority files are synced immediately upon detection:
+
 - `**/*.request` - API request files
 - `**/*.response` - API response files
 
@@ -135,12 +143,14 @@ The file watcher monitors the datasites directory for changes using OS-level fil
 These errors are automatically retried in subsequent sync cycles:
 
 **Network Errors**:
+
 - DNS resolution failures
 - TLS handshake errors
 - Connection timeouts
 - Transport errors
 
 **Disk Errors**:
+
 - Permission denied (temporary)
 - File locked by another process
 - Insufficient disk space
@@ -155,6 +165,7 @@ These errors require user intervention and create marker files:
 When upload is rejected due to insufficient permissions:
 
 1. **File Creation Rejection**:
+
    ```
    original_file.txt → original_file.rejected.TIMESTAMP
    Status: rejected
@@ -172,6 +183,7 @@ When upload is rejected due to insufficient permissions:
 When the same file is modified on multiple devices:
 
 1. **Conflict Detection**:
+
    ```
    Local ETag ≠ Remote ETag (both changed since last sync)
    ```
@@ -188,12 +200,14 @@ When the same file is modified on multiple devices:
 Each file has two status dimensions:
 
 **Sync State**:
+
 - `pending`: Queued for sync
 - `syncing`: Currently being processed
 - `completed`: Successfully synchronized
 - `error`: Failed with transient error
 
 **Conflict State**:
+
 - `none`: Normal file
 - `conflicted`: Has conflict marker file
 - `rejected`: Has rejection marker file
@@ -203,16 +217,20 @@ Each file has two status dimensions:
 The system creates timestamped marker files for human resolution:
 
 ### Marker Types
+
 - `.conflict`: Indicates conflicting changes
 - `.rejected`: Indicates permission rejections
 
 ### Marker Format
+
 ```
 original_filename.{marker_type}.YYYYMMDDHHMMSS
 ```
 
 ### Resolution Process
+
 Users resolve conflicts/rejections by:
+
 1. Reviewing the original file and marker file
 2. Making necessary changes
 3. Deleting the marker file
@@ -237,6 +255,7 @@ This tracks the last known state of each synced file for three-way comparison.
 ## Configuration
 
 ### Sync Constants
+
 - Minimum free space: 5GB
 - Full sync interval: 5 seconds
 - File watcher debounce: 50ms
@@ -244,6 +263,7 @@ This tracks the last known state of each synced file for three-way comparison.
 - Download batch size: 100 files
 
 ### File Size Limits
+
 - Empty files (0 bytes) are ignored
 - No explicit upper size limit (limited by available disk space)
 

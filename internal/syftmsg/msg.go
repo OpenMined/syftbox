@@ -59,12 +59,72 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.Data = fileDelete
+	case MsgAck:
+		var ack Ack
+		if err := json.Unmarshal(temp.Data, &ack); err != nil {
+			return err
+		}
+		m.Data = ack
+	case MsgNack:
+		var nack Nack
+		if err := json.Unmarshal(temp.Data, &nack); err != nil {
+			return err
+		}
+		m.Data = nack
 	case MsgHttp:
 		var httpMsg HttpMsg
 		if err := json.Unmarshal(temp.Data, &httpMsg); err != nil {
 			return err
 		}
 		m.Data = &httpMsg
+	case MsgFileNotify:
+		var fileNotify FileWrite
+		if err := json.Unmarshal(temp.Data, &fileNotify); err != nil {
+			return err
+		}
+		m.Data = fileNotify
+	case MsgACLManifest:
+		var manifest ACLManifest
+		if err := json.Unmarshal(temp.Data, &manifest); err != nil {
+			return err
+		}
+		m.Data = &manifest
+	case MsgHotlinkOpen:
+		var open HotlinkOpen
+		if err := json.Unmarshal(temp.Data, &open); err != nil {
+			return err
+		}
+		m.Data = open
+	case MsgHotlinkAccept:
+		var accept HotlinkAccept
+		if err := json.Unmarshal(temp.Data, &accept); err != nil {
+			return err
+		}
+		m.Data = accept
+	case MsgHotlinkReject:
+		var reject HotlinkReject
+		if err := json.Unmarshal(temp.Data, &reject); err != nil {
+			return err
+		}
+		m.Data = reject
+	case MsgHotlinkData:
+		var data HotlinkData
+		if err := json.Unmarshal(temp.Data, &data); err != nil {
+			return err
+		}
+		m.Data = data
+	case MsgHotlinkClose:
+		var close HotlinkClose
+		if err := json.Unmarshal(temp.Data, &close); err != nil {
+			return err
+		}
+		m.Data = close
+	case MsgHotlinkSignal:
+		var signal HotlinkSignal
+		if err := json.Unmarshal(temp.Data, &signal); err != nil {
+			return err
+		}
+		m.Data = signal
 	default:
 		return fmt.Errorf("unknown message type: %d", m.Type)
 	}

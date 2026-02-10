@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/openmined/syftbox/internal/syftsdk"
 )
@@ -245,46 +246,46 @@ func cleanupEmptyParentDirs(initialDirToCleanup string, workspaceRoot string) {
 
 	for {
 		if currentDir == workspaceRoot {
-			break // Stop: reached workspace/filesystem boundary or root itself
+			break
 		}
 
-		// Stat the directory to ensure it exists and is a directory.
 		if statInfo, statErr := os.Stat(currentDir); errors.Is(statErr, os.ErrNotExist) || !statInfo.IsDir() {
 			break
 		}
 
-		// Directory exists and is a directory, check if it's empty.
 		dirEntries, err := os.ReadDir(currentDir)
 		if err != nil {
 			slog.Warn("sync", "type", SyncStandard, "op", OpDeleteLocal, "path", currentDir, "error", err)
 			break
 		}
 
-		// delete all os garbage files
+		remaining := 0
 		for _, entry := range dirEntries {
 			if entry.Name() == ".DS_Store" || entry.Name() == "Thumbs.db" {
-				if err := os.RemoveAll(filepath.Join(currentDir, entry.Name())); err != nil {
-					slog.Warn("sync", "type", SyncStandard, "op", OpDeleteLocal, "path", currentDir, "error", err)
-				}
+				_ = os.RemoveAll(filepath.Join(currentDir, entry.Name()))
+			} else {
+				remaining++
 			}
 		}
 
-		if len(dirEntries) > 0 {
-			// Directory is not empty. Stop the cleanup for this particular upward chain.
+		if remaining > 0 {
 			break
 		}
 
-		// Directory is empty, try to remove it.
-		err = os.Remove(currentDir)
-		if err != nil {
-			slog.Warn("sync", "type", SyncStandard, "op", OpDeleteLocal, "path", currentDir, "error", err)
-			break
-		} else {
-			// Successfully removed the directory.
-			// Matching your requested debug log for successful removal.
-			slog.Info("sync", "type", SyncStandard, "op", "Cleanup", "path", currentDir, "reason", "empty parent dir")
-			// Move to the parent directory for the next iteration.
-			currentDir = filepath.Dir(currentDir)
+		// Directory is empty (or only had garbage files), try to remove it.
+		// Retry briefly on failure — Windows can hold handles after file deletion.
+		var rmErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if rmErr = os.Remove(currentDir); rmErr == nil {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
+		if rmErr != nil {
+			slog.Warn("sync", "type", SyncStandard, "op", OpDeleteLocal, "path", currentDir, "error", rmErr)
+			break
+		}
+		slog.Info("sync", "type", SyncStandard, "op", "Cleanup", "path", currentDir, "reason", "empty parent dir")
+		currentDir = filepath.Dir(currentDir)
 	}
 }

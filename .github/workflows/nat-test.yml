@@ -1,0 +1,56 @@
+name: NAT Traversal Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, madhava/biovault, madhava/hotlink ]
+    paths:
+      - 'rust/src/hotlink*.rs'
+      - 'docker/docker-compose-nat-test.yml'
+      - 'docker/Dockerfile.client.rust'
+      - 'docker/nat-test.sh'
+      - 'docker/entrypoint-nat-test.sh'
+  pull_request:
+    branches: [ main, madhava/biovault, madhava/hotlink ]
+    paths:
+      - 'rust/src/hotlink*.rs'
+      - 'docker/docker-compose-nat-test.yml'
+      - 'docker/Dockerfile.client.rust'
+      - 'docker/nat-test.sh'
+      - 'docker/entrypoint-nat-test.sh'
+
+jobs:
+  nat-traversal:
+    name: WebRTC NAT traversal (Docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Run NAT traversal test
+      run: bash docker/nat-test.sh
+      env:
+        NAT_TEST_TIMEOUT: 90
+
+    - name: Collect logs on failure
+      if: failure()
+      run: |
+        echo "=== Alice logs ==="
+        docker logs nat-alice 2>&1 | tail -50 || true
+        echo ""
+        echo "=== Bob logs ==="
+        docker logs nat-bob 2>&1 | tail -50 || true
+        echo ""
+        echo "=== Server logs ==="
+        docker logs nat-server 2>&1 | tail -30 || true
+        echo ""
+        echo "=== TURN logs ==="
+        docker logs nat-turn 2>&1 | tail -20 || true
+
+    - name: Cleanup
+      if: always()
+      run: docker compose -f docker/docker-compose-nat-test.yml down -v --remove-orphans 2>/dev/null || true

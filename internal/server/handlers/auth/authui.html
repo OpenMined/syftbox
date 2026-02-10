@@ -1,988 +1,1017 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>SyftBox Auth - Access Tokens</title>
-	<link rel="preconnect" href="https://fonts.googleapis.com">
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link rel="stylesheet"
-		href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..500;1,14..32,300..500&family=Rubik:ital,wght@0,400;1,400&display=swap">
-	<style>
-		* {
-			margin: 0;
-			padding: 0;
-			box-sizing: border-box;
-		}
-
-		body {
-			font-family: 'Inter', 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
-			background-color: #fafafa;
-			color: #272532;
-			line-height: 1.6;
-			min-height: 100vh;
-		}
-
-		.header {
-			background-color: white;
-			border-bottom: 1px solid #e5e7eb;
-			padding: 16px 32px;
-			display: flex;
-			align-items: center;
-			justify-content: space-between;
-			position: sticky;
-			top: 0;
-			z-index: 100;
-			box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-		}
-
-		.header-left {
-			display: flex;
-			align-items: center;
-			gap: 16px;
-		}
-
-		.logo {
-			height: 32px;
-		}
-
-		.breadcrumb {
-			font-size: 14px;
-			color: #6b7280;
-		}
-
-		.breadcrumb-current {
-			color: #272532;
-			font-weight: 500;
-		}
-
-		.main-content {
-			max-width: 640px;
-			margin: 0 auto;
-			padding: 32px;
-		}
-
-		.page-header {
-			margin-bottom: 32px;
-		}
-
-		.page-title {
-			font-size: 28px;
-			font-weight: 600;
-			color: #272532;
-			margin-bottom: 8px;
-		}
-
-		.page-description {
-			font-size: 16px;
-			color: #6b7280;
-			margin-bottom: 24px;
-		}
-
-		.step-indicator {
-			display: flex;
-			align-items: center;
-			gap: 16px;
-			margin-bottom: 32px;
-			padding: 16px 0;
-		}
-
-		.step-item {
-			display: flex;
-			align-items: center;
-			gap: 8px;
-			font-size: 14px;
-			color: #6b7280;
-		}
-
-		.step-item.active {
-			color: #3C9F8B;
-			font-weight: 500;
-		}
-
-		.step-item.completed {
-			color: #10b981;
-		}
-
-		.step-number {
-			width: 24px;
-			height: 24px;
-			border-radius: 50%;
-			background-color: #e5e7eb;
-			color: #6b7280;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			font-size: 12px;
-			font-weight: 600;
-		}
-
-		.step-item.active .step-number {
-			background-color: #3C9F8B;
-			color: white;
-		}
-
-		.step-item.completed .step-number {
-			background-color: #10b981;
-			color: white;
-		}
-
-		.step-separator {
-			height: 1px;
-			width: 40px;
-			background-color: #e5e7eb;
-		}
-
-		.card {
-			background-color: white;
-			border: 1px solid #e5e7eb;
-			border-radius: 8px;
-			overflow: hidden;
-			box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-		}
-
-		.card-header {
-			padding: 24px 24px 16px;
-			border-bottom: 1px solid #f3f4f6;
-		}
-
-		.card-title {
-			font-size: 18px;
-			font-weight: 600;
-			color: #272532;
-			margin-bottom: 4px;
-		}
-
-		.card-subtitle {
-			font-size: 14px;
-			color: #6b7280;
-		}
-
-		.card-content {
-			padding: 24px;
-		}
-
-		.step {
-			display: none;
-		}
-
-		.step.active {
-			display: block;
-		}
-
-		.form-group {
-			margin-bottom: 24px;
-		}
-
-		.form-label {
-			display: block;
-			margin-bottom: 8px;
-			font-weight: 500;
-			font-size: 14px;
-			color: #374151;
-		}
-
-		.form-control {
-			width: 100%;
-			max-width: 400px;
-			padding: 12px 16px;
-			border: 1px solid #d1d5db;
-			border-radius: 6px;
-			font-size: 14px;
-			font-family: inherit;
-			background-color: white;
-			transition: all 0.2s ease;
-		}
-
-		.form-control:focus {
-			outline: none;
-			border-color: #3C9F8B;
-			box-shadow: 0 0 0 3px rgba(60, 159, 139, 0.1);
-		}
-
-		.form-control.error {
-			border-color: #dc2626;
-			box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
-		}
-
-		.form-error {
-			color: #dc2626;
-			font-size: 12px;
-			margin-top: 4px;
-			display: none;
-		}
-
-		.form-error.show {
-			display: block;
-		}
-
-		.otp-container {
-			display: flex;
-			gap: 8px;
-			margin: 24px 0;
-			max-width: 400px;
-		}
-
-		.otp-input {
-			width: 48px;
-			height: 48px;
-			border: 1px solid #d1d5db;
-			border-radius: 6px;
-			text-align: center;
-			font-size: 18px;
-			font-family: 'Rubik', monospace;
-			font-weight: 400;
-			background-color: white;
-			transition: all 0.2s ease;
-		}
-
-		.otp-input:focus {
-			outline: none;
-			border-color: #3C9F8B;
-			box-shadow: 0 0 0 3px rgba(60, 159, 139, 0.1);
-		}
-
-		.otp-input.error {
-			border-color: #dc2626;
-			box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
-		}
-
-		.btn {
-			padding: 12px 24px;
-			border: none;
-			border-radius: 6px;
-			font-size: 14px;
-			font-weight: 500;
-			font-family: inherit;
-			cursor: pointer;
-			transition: all 0.2s ease;
-			position: relative;
-			overflow: hidden;
-			display: inline-flex;
-			align-items: center;
-			justify-content: center;
-			gap: 8px;
-			text-align: center;
-		}
-
-		.btn-primary {
-			background-color: #3C9F8B;
-			color: white;
-		}
-
-		.btn-primary:hover:not(:disabled) {
-			background-color: #2d7a6b;
-		}
-
-		.btn-secondary {
-			background-color: white;
-			color: #3C9F8B;
-			border: 1px solid #3C9F8B;
-		}
-
-		.btn-secondary:hover:not(:disabled) {
-			background-color: #f0fdfa;
-		}
-
-		.btn-ghost {
-			background-color: transparent;
-			color: #6b7280;
-			border: none;
-			text-decoration: underline;
-			padding: 8px 0;
-		}
-
-		.btn-ghost:hover:not(:disabled) {
-			color: #3C9F8B;
-		}
-
-		.btn:disabled {
-			opacity: 0.5;
-			cursor: not-allowed;
-			background-color: #e5e7eb !important;
-			color: #9ca3af !important;
-			border-color: #e5e7eb !important;
-		}
-
-		.spinner {
-			display: inline-block;
-			width: 16px;
-			height: 16px;
-			border: 2px solid transparent;
-			border-top: 2px solid currentColor;
-			border-radius: 50%;
-			animation: spin 1s linear infinite;
-		}
-
-		@keyframes spin {
-			to {
-				transform: rotate(360deg);
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>SyftBox Auth - Access Tokens</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			rel="stylesheet"
+			href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300..500;1,14..32,300..500&family=Rubik:ital,wght@0,400;1,400&display=swap"
+		/>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
 			}
-		}
 
-		.alert {
-			padding: 12px 16px;
-			border-radius: 6px;
-			margin-bottom: 24px;
-			font-size: 14px;
-		}
-
-		.alert-success {
-			background-color: #f0fdf4;
-			border: 1px solid #bbf7d0;
-			color: #166534;
-		}
-
-		.info-grid {
-			display: grid;
-			gap: 24px;
-		}
-
-		.info-card {
-			background-color: #f9fafb;
-			border: 1px solid #e5e7eb;
-			border-radius: 6px;
-			padding: 20px;
-		}
-
-		.info-card-title {
-			font-size: 14px;
-			font-weight: 600;
-			color: #374151;
-			margin-bottom: 12px;
-		}
-
-		.info-row {
-			display: grid;
-			grid-template-columns: 120px 1fr;
-			gap: 16px;
-			align-items: center;
-			margin-bottom: 12px;
-			padding: 8px 0;
-			border-bottom: 1px solid #f3f4f6;
-		}
-
-		.info-row:last-child {
-			border-bottom: none;
-			margin-bottom: 0;
-		}
-
-		.info-label {
-			font-weight: 500;
-			color: #6b7280;
-			font-size: 13px;
-		}
-
-		.info-value {
-			font-family: 'Rubik', monospace;
-			color: #272532;
-			font-size: 13px;
-			word-break: break-all;
-		}
-
-		.token-expires {
-			color: #059669;
-			font-weight: 500;
-		}
-
-		.action-buttons {
-			display: grid;
-			grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-			gap: 16px;
-			margin: 24px 0;
-		}
-
-		.code-block {
-			background-color: #f1f5f9;
-			border: 1px solid #e2e8f0;
-			border-radius: 6px;
-			padding: 16px;
-			margin: 16px 0;
-			font-family: 'Rubik', monospace;
-			font-size: 12px;
-			overflow-x: auto;
-		}
-
-		.instructions {
-			background-color: #f8fafc;
-			border: 1px solid #e2e8f0;
-			border-radius: 6px;
-			padding: 20px;
-			margin-top: 24px;
-		}
-
-		.instructions h4 {
-			font-size: 14px;
-			font-weight: 600;
-			margin-bottom: 8px;
-			color: #374151;
-		}
-
-		.instructions p {
-			font-size: 13px;
-			color: #6b7280;
-			margin-bottom: 8px;
-		}
-
-		.instructions code {
-			background-color: #f1f5f9;
-			padding: 2px 6px;
-			border-radius: 4px;
-			font-family: 'Rubik', monospace;
-			font-size: 12px;
-		}
-
-		.instructions ul {
-			margin: 8px 0;
-			padding-left: 20px;
-		}
-
-		.instructions li {
-			font-size: 13px;
-			color: #6b7280;
-			margin-bottom: 4px;
-		}
-
-		@media (max-width: 768px) {
-			.main-content {
-				padding: 16px;
+			body {
+				font-family: 'Inter', 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
+				background-color: #fafafa;
+				color: #272532;
+				line-height: 1.6;
+				min-height: 100vh;
 			}
 
 			.header {
-				padding: 12px 16px;
+				background-color: white;
+				border-bottom: 1px solid #e5e7eb;
+				padding: 16px 32px;
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				position: sticky;
+				top: 0;
+				z-index: 100;
+				box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
 			}
 
-			.otp-container {
-				gap: 6px;
+			.header-left {
+				display: flex;
+				align-items: center;
+				gap: 16px;
 			}
 
-			.otp-input {
-				width: 40px;
-				height: 40px;
+			.logo {
+				height: 32px;
+			}
+
+			.breadcrumb {
+				font-size: 14px;
+				color: #6b7280;
+			}
+
+			.breadcrumb-current {
+				color: #272532;
+				font-weight: 500;
+			}
+
+			.main-content {
+				max-width: 640px;
+				margin: 0 auto;
+				padding: 32px;
+			}
+
+			.page-header {
+				margin-bottom: 32px;
+			}
+
+			.page-title {
+				font-size: 28px;
+				font-weight: 600;
+				color: #272532;
+				margin-bottom: 8px;
+			}
+
+			.page-description {
 				font-size: 16px;
-			}
-
-			.action-buttons {
-				grid-template-columns: 1fr;
+				color: #6b7280;
+				margin-bottom: 24px;
 			}
 
 			.step-indicator {
-				overflow-x: auto;
+				display: flex;
+				align-items: center;
+				gap: 16px;
+				margin-bottom: 32px;
 				padding: 16px 0;
 			}
-		}
 
-		.hidden {
-			display: none !important;
-		}
-	</style>
-</head>
+			.step-item {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				font-size: 14px;
+				color: #6b7280;
+			}
 
-<body>
-	<div class="header">
-		<div class="header-left">
-			<img
-				src="http://cdn.mcauto-images-production.sendgrid.net/1c6e1c643fada6dc/29746c0b-c040-459b-92dd-b35cae93cae2/321x96.png"
-				alt="SyftBox" class="logo">
-			<div class="breadcrumb">
-				<span>Auth / </span>
-				<span class="breadcrumb-current">Access Tokens</span>
-			</div>
-		</div>
-	</div>
-	<div class="main-content">
-		<div class="page-header">
-			<h1 class="page-title">Access Tokens</h1>
-			<p class="page-description">Generate and configure access tokens for SyftBox clients.</p>
-		</div>
-		<div class="step-indicator">
-			<div class="step-item active" data-step="1">
-				<div class="step-number">1</div>
-				<span>Datasite</span>
-			</div>
-			<div class="step-separator"></div>
-			<div class="step-item" data-step="2">
-				<div class="step-number">2</div>
-				<span>Verification</span>
-			</div>
-			<div class="step-separator"></div>
-			<div class="step-item" data-step="3">
-				<div class="step-number">3</div>
-				<span>Generate Configuration</span>
-			</div>
-		</div>
-		<div class="step active" id="step-1">
-			<div class="card">
-				<div class="card-header">
-					<h2 class="card-title">SyftBox Datasite</h2>
-					<p class="card-subtitle">Enter your datasite email address to receive a verification code</p>
+			.step-item.active {
+				color: #3c9f8b;
+				font-weight: 500;
+			}
+
+			.step-item.completed {
+				color: #10b981;
+			}
+
+			.step-number {
+				width: 24px;
+				height: 24px;
+				border-radius: 50%;
+				background-color: #e5e7eb;
+				color: #6b7280;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				font-size: 12px;
+				font-weight: 600;
+			}
+
+			.step-item.active .step-number {
+				background-color: #3c9f8b;
+				color: white;
+			}
+
+			.step-item.completed .step-number {
+				background-color: #10b981;
+				color: white;
+			}
+
+			.step-separator {
+				height: 1px;
+				width: 40px;
+				background-color: #e5e7eb;
+			}
+
+			.card {
+				background-color: white;
+				border: 1px solid #e5e7eb;
+				border-radius: 8px;
+				overflow: hidden;
+				box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+			}
+
+			.card-header {
+				padding: 24px 24px 16px;
+				border-bottom: 1px solid #f3f4f6;
+			}
+
+			.card-title {
+				font-size: 18px;
+				font-weight: 600;
+				color: #272532;
+				margin-bottom: 4px;
+			}
+
+			.card-subtitle {
+				font-size: 14px;
+				color: #6b7280;
+			}
+
+			.card-content {
+				padding: 24px;
+			}
+
+			.step {
+				display: none;
+			}
+
+			.step.active {
+				display: block;
+			}
+
+			.form-group {
+				margin-bottom: 24px;
+			}
+
+			.form-label {
+				display: block;
+				margin-bottom: 8px;
+				font-weight: 500;
+				font-size: 14px;
+				color: #374151;
+			}
+
+			.form-control {
+				width: 100%;
+				max-width: 400px;
+				padding: 12px 16px;
+				border: 1px solid #d1d5db;
+				border-radius: 6px;
+				font-size: 14px;
+				font-family: inherit;
+				background-color: white;
+				transition: all 0.2s ease;
+			}
+
+			.form-control:focus {
+				outline: none;
+				border-color: #3c9f8b;
+				box-shadow: 0 0 0 3px rgba(60, 159, 139, 0.1);
+			}
+
+			.form-control.error {
+				border-color: #dc2626;
+				box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+			}
+
+			.form-error {
+				color: #dc2626;
+				font-size: 12px;
+				margin-top: 4px;
+				display: none;
+			}
+
+			.form-error.show {
+				display: block;
+			}
+
+			.otp-container {
+				display: flex;
+				gap: 8px;
+				margin: 24px 0;
+				max-width: 400px;
+			}
+
+			.otp-input {
+				width: 48px;
+				height: 48px;
+				border: 1px solid #d1d5db;
+				border-radius: 6px;
+				text-align: center;
+				font-size: 18px;
+				font-family: 'Rubik', monospace;
+				font-weight: 400;
+				background-color: white;
+				transition: all 0.2s ease;
+			}
+
+			.otp-input:focus {
+				outline: none;
+				border-color: #3c9f8b;
+				box-shadow: 0 0 0 3px rgba(60, 159, 139, 0.1);
+			}
+
+			.otp-input.error {
+				border-color: #dc2626;
+				box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+			}
+
+			.btn {
+				padding: 12px 24px;
+				border: none;
+				border-radius: 6px;
+				font-size: 14px;
+				font-weight: 500;
+				font-family: inherit;
+				cursor: pointer;
+				transition: all 0.2s ease;
+				position: relative;
+				overflow: hidden;
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				gap: 8px;
+				text-align: center;
+			}
+
+			.btn-primary {
+				background-color: #3c9f8b;
+				color: white;
+			}
+
+			.btn-primary:hover:not(:disabled) {
+				background-color: #2d7a6b;
+			}
+
+			.btn-secondary {
+				background-color: white;
+				color: #3c9f8b;
+				border: 1px solid #3c9f8b;
+			}
+
+			.btn-secondary:hover:not(:disabled) {
+				background-color: #f0fdfa;
+			}
+
+			.btn-ghost {
+				background-color: transparent;
+				color: #6b7280;
+				border: none;
+				text-decoration: underline;
+				padding: 8px 0;
+			}
+
+			.btn-ghost:hover:not(:disabled) {
+				color: #3c9f8b;
+			}
+
+			.btn:disabled {
+				opacity: 0.5;
+				cursor: not-allowed;
+				background-color: #e5e7eb !important;
+				color: #9ca3af !important;
+				border-color: #e5e7eb !important;
+			}
+
+			.spinner {
+				display: inline-block;
+				width: 16px;
+				height: 16px;
+				border: 2px solid transparent;
+				border-top: 2px solid currentColor;
+				border-radius: 50%;
+				animation: spin 1s linear infinite;
+			}
+
+			@keyframes spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			.alert {
+				padding: 12px 16px;
+				border-radius: 6px;
+				margin-bottom: 24px;
+				font-size: 14px;
+			}
+
+			.alert-success {
+				background-color: #f0fdf4;
+				border: 1px solid #bbf7d0;
+				color: #166534;
+			}
+
+			.info-grid {
+				display: grid;
+				gap: 24px;
+			}
+
+			.info-card {
+				background-color: #f9fafb;
+				border: 1px solid #e5e7eb;
+				border-radius: 6px;
+				padding: 20px;
+			}
+
+			.info-card-title {
+				font-size: 14px;
+				font-weight: 600;
+				color: #374151;
+				margin-bottom: 12px;
+			}
+
+			.info-row {
+				display: grid;
+				grid-template-columns: 120px 1fr;
+				gap: 16px;
+				align-items: center;
+				margin-bottom: 12px;
+				padding: 8px 0;
+				border-bottom: 1px solid #f3f4f6;
+			}
+
+			.info-row:last-child {
+				border-bottom: none;
+				margin-bottom: 0;
+			}
+
+			.info-label {
+				font-weight: 500;
+				color: #6b7280;
+				font-size: 13px;
+			}
+
+			.info-value {
+				font-family: 'Rubik', monospace;
+				color: #272532;
+				font-size: 13px;
+				word-break: break-all;
+			}
+
+			.token-expires {
+				color: #059669;
+				font-weight: 500;
+			}
+
+			.action-buttons {
+				display: grid;
+				grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+				gap: 16px;
+				margin: 24px 0;
+			}
+
+			.code-block {
+				background-color: #f1f5f9;
+				border: 1px solid #e2e8f0;
+				border-radius: 6px;
+				padding: 16px;
+				margin: 16px 0;
+				font-family: 'Rubik', monospace;
+				font-size: 12px;
+				overflow-x: auto;
+			}
+
+			.instructions {
+				background-color: #f8fafc;
+				border: 1px solid #e2e8f0;
+				border-radius: 6px;
+				padding: 20px;
+				margin-top: 24px;
+			}
+
+			.instructions h4 {
+				font-size: 14px;
+				font-weight: 600;
+				margin-bottom: 8px;
+				color: #374151;
+			}
+
+			.instructions p {
+				font-size: 13px;
+				color: #6b7280;
+				margin-bottom: 8px;
+			}
+
+			.instructions code {
+				background-color: #f1f5f9;
+				padding: 2px 6px;
+				border-radius: 4px;
+				font-family: 'Rubik', monospace;
+				font-size: 12px;
+			}
+
+			.instructions ul {
+				margin: 8px 0;
+				padding-left: 20px;
+			}
+
+			.instructions li {
+				font-size: 13px;
+				color: #6b7280;
+				margin-bottom: 4px;
+			}
+
+			@media (max-width: 768px) {
+				.main-content {
+					padding: 16px;
+				}
+
+				.header {
+					padding: 12px 16px;
+				}
+
+				.otp-container {
+					gap: 6px;
+				}
+
+				.otp-input {
+					width: 40px;
+					height: 40px;
+					font-size: 16px;
+				}
+
+				.action-buttons {
+					grid-template-columns: 1fr;
+				}
+
+				.step-indicator {
+					overflow-x: auto;
+					padding: 16px 0;
+				}
+			}
+
+			.hidden {
+				display: none !important;
+			}
+		</style>
+	</head>
+
+	<body>
+		<div class="header">
+			<div class="header-left">
+				<img
+					src="http://cdn.mcauto-images-production.sendgrid.net/1c6e1c643fada6dc/29746c0b-c040-459b-92dd-b35cae93cae2/321x96.png"
+					alt="SyftBox"
+					class="logo"
+				/>
+				<div class="breadcrumb">
+					<span>Auth / </span>
+					<span class="breadcrumb-current">Access Tokens</span>
 				</div>
-				<div class="card-content">
-					<div class="form-group">
-						<label for="email" class="form-label">Datasite Email Address</label>
-						<input type="email" id="email" class="form-control" placeholder="your@email.com" required>
-						<div class="form-error" id="email-error">Please enter a valid datasite email address</div>
+			</div>
+		</div>
+		<div class="main-content">
+			<div class="page-header">
+				<h1 class="page-title">Access Tokens</h1>
+				<p class="page-description">Generate and configure access tokens for SyftBox clients.</p>
+			</div>
+			<div class="step-indicator">
+				<div class="step-item active" data-step="1">
+					<div class="step-number">1</div>
+					<span>Datasite</span>
+				</div>
+				<div class="step-separator"></div>
+				<div class="step-item" data-step="2">
+					<div class="step-number">2</div>
+					<span>Verification</span>
+				</div>
+				<div class="step-separator"></div>
+				<div class="step-item" data-step="3">
+					<div class="step-number">3</div>
+					<span>Generate Configuration</span>
+				</div>
+			</div>
+			<div class="step active" id="step-1">
+				<div class="card">
+					<div class="card-header">
+						<h2 class="card-title">SyftBox Datasite</h2>
+						<p class="card-subtitle">
+							Enter your datasite email address to receive a verification code
+						</p>
 					</div>
-					<button class="btn btn-primary" id="send-otp-btn">
-						<span class="btn-text">Send Code</span>
-					</button>
-				</div>
-			</div>
-		</div>
-		<div class="step" id="step-2">
-			<div class="card">
-				<div class="card-header">
-					<h2 class="card-title">Verify Your Email</h2>
-					<p class="card-subtitle">Code sent to <strong id="user-email"></strong></p>
-				</div>
-				<div class="card-content">
-					<div id="otp-success-message"></div>
-					<div class="form-group">
-						<label class="form-label">Verification Code</label>
-						<div class="otp-container">
-							<input type="text" class="otp-input" maxlength="1" data-index="0">
-							<input type="text" class="otp-input" maxlength="1" data-index="1">
-							<input type="text" class="otp-input" maxlength="1" data-index="2">
-							<input type="text" class="otp-input" maxlength="1" data-index="3">
-							<input type="text" class="otp-input" maxlength="1" data-index="4">
-							<input type="text" class="otp-input" maxlength="1" data-index="5">
-							<input type="text" class="otp-input" maxlength="1" data-index="6">
-							<input type="text" class="otp-input" maxlength="1" data-index="7">
+					<div class="card-content">
+						<div class="form-group">
+							<label for="email" class="form-label">Datasite Email Address</label>
+							<input
+								type="email"
+								id="email"
+								class="form-control"
+								placeholder="your@email.com"
+								required
+							/>
+							<div class="form-error" id="email-error">
+								Please enter a valid datasite email address
+							</div>
 						</div>
-						<div class="form-error" id="otp-error">Please enter the complete 8-digit code</div>
+						<button class="btn btn-primary" id="send-otp-btn">
+							<span class="btn-text">Send Code</span>
+						</button>
 					</div>
-					<button class="btn btn-primary" id="verify-otp-btn">
-						<span class="btn-text">Verify Code</span>
-					</button>
-					<button class="btn btn-secondary" id="resend-otp-btn" style="margin-left: 12px;">
-						Resend Code
-					</button>
-					<br><br>
-					<button class="btn btn-ghost" id="back-to-email">← Go Back</button>
 				</div>
 			</div>
-		</div>
-		<!-- Step 3: Success -->
-		<div class="step" id="step-3">
-			<div class="card">
-				<div class="card-header">
-					<h2 class="card-title">Token Generated Successfully</h2>
-					<p class="card-subtitle">Your API token has been generated and is ready for deployment</p>
+			<div class="step" id="step-2">
+				<div class="card">
+					<div class="card-header">
+						<h2 class="card-title">Verify Your Email</h2>
+						<p class="card-subtitle">Code sent to <strong id="user-email"></strong></p>
+					</div>
+					<div class="card-content">
+						<div id="otp-success-message"></div>
+						<div class="form-group">
+							<label class="form-label">Verification Code</label>
+							<div class="otp-container">
+								<input type="text" class="otp-input" maxlength="1" data-index="0" />
+								<input type="text" class="otp-input" maxlength="1" data-index="1" />
+								<input type="text" class="otp-input" maxlength="1" data-index="2" />
+								<input type="text" class="otp-input" maxlength="1" data-index="3" />
+								<input type="text" class="otp-input" maxlength="1" data-index="4" />
+								<input type="text" class="otp-input" maxlength="1" data-index="5" />
+								<input type="text" class="otp-input" maxlength="1" data-index="6" />
+								<input type="text" class="otp-input" maxlength="1" data-index="7" />
+							</div>
+							<div class="form-error" id="otp-error">Please enter the complete 8-digit code</div>
+						</div>
+						<button class="btn btn-primary" id="verify-otp-btn">
+							<span class="btn-text">Verify Code</span>
+						</button>
+						<button class="btn btn-secondary" id="resend-otp-btn" style="margin-left: 12px">
+							Resend Code
+						</button>
+						<br /><br />
+						<button class="btn btn-ghost" id="back-to-email">← Go Back</button>
+					</div>
 				</div>
-				<div class="card-content">
-					<div class="info-grid">
-						<div class="info-card">
-							<h3 class="info-card-title">Configuration Details</h3>
-							<div class="info-row">
-								<span class="info-label">Email</span>
-								<span class="info-value" id="final-email"></span>
-							</div>
-							<div class="info-row">
-								<span class="info-label">Server URL</span>
-								<span class="info-value" id="server-url"></span>
-							</div>
-							<div class="info-row">
-								<span class="info-label">Token Expires</span>
-								<span class="info-value token-expires" id="token-expiry"></span>
+			</div>
+			<!-- Step 3: Success -->
+			<div class="step" id="step-3">
+				<div class="card">
+					<div class="card-header">
+						<h2 class="card-title">Token Generated Successfully</h2>
+						<p class="card-subtitle">
+							Your API token has been generated and is ready for deployment
+						</p>
+					</div>
+					<div class="card-content">
+						<div class="info-grid">
+							<div class="info-card">
+								<h3 class="info-card-title">Configuration Details</h3>
+								<div class="info-row">
+									<span class="info-label">Email</span>
+									<span class="info-value" id="final-email"></span>
+								</div>
+								<div class="info-row">
+									<span class="info-label">Server URL</span>
+									<span class="info-value" id="server-url"></span>
+								</div>
+								<div class="info-row">
+									<span class="info-label">Token Expires</span>
+									<span class="info-value token-expires" id="token-expiry"></span>
+								</div>
 							</div>
 						</div>
-					</div>
-					<div class="action-buttons">
-						<button class="btn btn-primary" id="copy-config-btn">
-							Copy Config JSON
-						</button>
-						<button class="btn btn-primary" id="copy-env-btn">
-							Copy Environment Vars
-						</button>
-					</div>
-					<div class="instructions">
-						<h4>Config JSON Setup</h4>
-						<ul>
-							<li>Place the configuration file at: <code>~/.syftbox/config.json</code></li>
-							<li>Then run <code>syftbox</code></li>
-						</ul>
-						<h4 style="margin-top: 16px;">Environment Variables</h4>
-						<ul>
-							<li>Add them to a .env file</li>
-							<li>Export them directly in the terminal session and run <code>syftbox</code></li>
-							<li>Provide them during provisioning when deploying the SyftBox binary in Docker or
-								Kubernetes environments</li>
-						</ul>
-					</div>
-					<div style="margin-top: 24px;">
-						<button class="btn btn-ghost" id="generate-new-token">← Generate New Token</button>
+						<div class="action-buttons">
+							<button class="btn btn-primary" id="copy-config-btn">Copy Config JSON</button>
+							<button class="btn btn-primary" id="copy-env-btn">Copy Environment Vars</button>
+						</div>
+						<div class="instructions">
+							<h4>Config JSON Setup</h4>
+							<ul>
+								<li>Place the configuration file at: <code>~/.syftbox/config.json</code></li>
+								<li>Then run <code>syftbox</code></li>
+							</ul>
+							<h4 style="margin-top: 16px">Environment Variables</h4>
+							<ul>
+								<li>Add them to a .env file</li>
+								<li>Export them directly in the terminal session and run <code>syftbox</code></li>
+								<li>
+									Provide them during provisioning when deploying the SyftBox binary in Docker or
+									Kubernetes environments
+								</li>
+							</ul>
+						</div>
+						<div style="margin-top: 24px">
+							<button class="btn btn-ghost" id="generate-new-token">← Generate New Token</button>
+						</div>
 					</div>
 				</div>
 			</div>
 		</div>
-	</div>
-	<script>
-		class SyftBoxAuthUI {
-			constructor() {
-				this.currentStep = 1;
-				this.email = '';
-				this.serverUrl = window.location.origin;
-				this.refreshToken = '';
-				this.timeoutId = null;
-				this.timeoutSeconds = 300; // 5 minutes
-				this.resendCooldownId = null;
-				this.resendCooldownSeconds = 30;
-				this.initializeEventListeners();
-				this.startTimeoutTimer();
-			}
-			initializeEventListeners() {
-				// Email step
-				document.getElementById('send-otp-btn').addEventListener('click', () => this.sendOTP());
-				document.getElementById('email').addEventListener('keypress', (e) => {
-					if (e.key === 'Enter') this.sendOTP();
-				});
-				document.getElementById('email').addEventListener('input', () => this.clearEmailError());
-				// OTP step
-				document.getElementById('verify-otp-btn').addEventListener('click', () => this.verifyOTP());
-				document.getElementById('resend-otp-btn').addEventListener('click', () => this.resendOTP());
-				document.getElementById('back-to-email').addEventListener('click', (e) => {
-					e.preventDefault();
-					this.goToStep(1);
-				});
-				// OTP input handling
-				this.setupOTPInputs();
-				// Success step
-				document.getElementById('copy-config-btn').addEventListener('click', () => this.copyConfig());
-				document.getElementById('copy-env-btn').addEventListener('click', () => this.copyEnvVars());
-				document.getElementById('generate-new-token').addEventListener('click', () => this.reset());
-			}
-			setupOTPInputs() {
-				const inputs = document.querySelectorAll('.otp-input');
-				inputs.forEach((input, index) => {
-					input.addEventListener('input', (e) => {
-						// Only allow digits
-						e.target.value = e.target.value.replace(/[^0-9]/g, '');
-						// Clear errors
-						this.clearOTPError();
-						// Move to next input
-						if (e.target.value && index < inputs.length - 1) {
-							inputs[index + 1].focus();
-						}
-					});
-					input.addEventListener('keydown', (e) => {
-						// Handle backspace
-						if (e.key === 'Backspace' && !e.target.value && index > 0) {
-							inputs[index - 1].focus();
-						}
-						// Handle Enter key
-						if (e.key === 'Enter') {
-							this.verifyOTP();
-						}
-					});
-					input.addEventListener('paste', (e) => {
-						e.preventDefault();
-						const paste = (e.clipboardData || window.clipboardData).getData('text');
-						const digits = paste.replace(/[^0-9]/g, '').slice(0, 8);
-						inputs.forEach((inp, idx) => {
-							inp.value = digits[idx] || '';
-						});
-						// DO NOT auto-progress on paste - let user click Verify Code button
-						this.clearOTPError();
-					});
-				});
-			}
-			async sendOTP() {
-				const emailInput = document.getElementById('email');
-				const email = emailInput.value.trim();
-				if (!this.validateEmail(email)) {
-					this.showEmailError();
-					return;
+		<script>
+			class SyftBoxAuthUI {
+				constructor() {
+					this.currentStep = 1
+					this.email = ''
+					this.serverUrl = window.location.origin
+					this.refreshToken = ''
+					this.timeoutId = null
+					this.timeoutSeconds = 300 // 5 minutes
+					this.resendCooldownId = null
+					this.resendCooldownSeconds = 30
+					this.initializeEventListeners()
+					this.startTimeoutTimer()
 				}
-				this.clearEmailError();
-				this.email = email;
-				this.setLoading('send-otp-btn', true);
-				try {
-					const response = await fetch('/auth/otp/request', {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({ email: this.email })
-					});
-					if (!response.ok) {
-						const error = await response.json();
-						throw new Error(error.message || 'Failed to send OTP');
-					}
-					document.getElementById('user-email').textContent = this.email;
-					this.goToStep(2);
-				} catch (error) {
-					this.showEmailError(error.message);
-				} finally {
-					this.setLoading('send-otp-btn', false);
+				initializeEventListeners() {
+					// Email step
+					document.getElementById('send-otp-btn').addEventListener('click', () => this.sendOTP())
+					document.getElementById('email').addEventListener('keypress', (e) => {
+						if (e.key === 'Enter') this.sendOTP()
+					})
+					document.getElementById('email').addEventListener('input', () => this.clearEmailError())
+					// OTP step
+					document
+						.getElementById('verify-otp-btn')
+						.addEventListener('click', () => this.verifyOTP())
+					document
+						.getElementById('resend-otp-btn')
+						.addEventListener('click', () => this.resendOTP())
+					document.getElementById('back-to-email').addEventListener('click', (e) => {
+						e.preventDefault()
+						this.goToStep(1)
+					})
+					// OTP input handling
+					this.setupOTPInputs()
+					// Success step
+					document
+						.getElementById('copy-config-btn')
+						.addEventListener('click', () => this.copyConfig())
+					document
+						.getElementById('copy-env-btn')
+						.addEventListener('click', () => this.copyEnvVars())
+					document
+						.getElementById('generate-new-token')
+						.addEventListener('click', () => this.reset())
 				}
-			}
-			async resendOTP() {
-				// Start cooldown immediately
-				this.startResendCooldown();
-				try {
-					const response = await fetch('/auth/otp/request', {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({ email: this.email })
-					});
-					if (!response.ok) {
-						const error = await response.json();
-						throw new Error(error.message || 'Failed to resend OTP');
-					}
-					this.showOTPSuccess('Code resent');
-				} catch (error) {
-					this.showOTPError(error.message);
-				}
-			}
-			startResendCooldown() {
-				const resendBtn = document.getElementById('resend-otp-btn');
-				let remainingSeconds = this.resendCooldownSeconds;
-				resendBtn.disabled = true;
-				const updateCooldown = () => {
-					if (remainingSeconds <= 0) {
-						resendBtn.disabled = false;
-						resendBtn.textContent = 'Resend Code';
-						this.clearResendCooldown();
-						return;
-					}
-					resendBtn.textContent = `Resend Code (${remainingSeconds}s)`;
-					remainingSeconds--;
-				};
-				updateCooldown();
-				this.resendCooldownId = setInterval(updateCooldown, 1000);
-			}
-			clearResendCooldown() {
-				if (this.resendCooldownId) {
-					clearInterval(this.resendCooldownId);
-					this.resendCooldownId = null;
-				}
-			}
-			async verifyOTP() {
-				const otpInputs = document.querySelectorAll('.otp-input');
-				const code = Array.from(otpInputs).map(input => input.value).join('');
-				if (code.length !== 8) {
-					this.showOTPError();
-					return;
-				}
-				this.clearOTPError();
-				this.setLoading('verify-otp-btn', true);
-				try {
-					const response = await fetch('/auth/otp/verify', {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({
-							email: this.email,
-							code: code
+				setupOTPInputs() {
+					const inputs = document.querySelectorAll('.otp-input')
+					inputs.forEach((input, index) => {
+						input.addEventListener('input', (e) => {
+							// Only allow digits
+							e.target.value = e.target.value.replace(/[^0-9]/g, '')
+							// Clear errors
+							this.clearOTPError()
+							// Move to next input
+							if (e.target.value && index < inputs.length - 1) {
+								inputs[index + 1].focus()
+							}
 						})
-					});
-					if (!response.ok) {
-						const error = await response.json();
-						throw new Error(error.message || 'Invalid code');
-					}
-					const data = await response.json();
-					this.refreshToken = data.refreshToken;
-					document.getElementById('final-email').textContent = this.email;
-					document.getElementById('server-url').textContent = this.serverUrl;
-					// Parse JWT to get expiration
-					this.setTokenExpiry(this.refreshToken);
-					this.goToStep(3);
-					this.clearTimeout();
-					this.clearResendCooldown(); // Clear resend cooldown on success
-					this.startTimeoutTimer(); // Start new timer for success page
-				} catch (error) {
-					this.showOTPError(error.message);
-				} finally {
-					this.setLoading('verify-otp-btn', false);
+						input.addEventListener('keydown', (e) => {
+							// Handle backspace
+							if (e.key === 'Backspace' && !e.target.value && index > 0) {
+								inputs[index - 1].focus()
+							}
+							// Handle Enter key
+							if (e.key === 'Enter') {
+								this.verifyOTP()
+							}
+						})
+						input.addEventListener('paste', (e) => {
+							e.preventDefault()
+							const paste = (e.clipboardData || window.clipboardData).getData('text')
+							const digits = paste.replace(/[^0-9]/g, '').slice(0, 8)
+							inputs.forEach((inp, idx) => {
+								inp.value = digits[idx] || ''
+							})
+							// DO NOT auto-progress on paste - let user click Verify Code button
+							this.clearOTPError()
+						})
+					})
 				}
-			}
-			setTokenExpiry(token) {
-				try {
-					// Parse JWT payload
-					const payload = JSON.parse(atob(token.split('.')[1]));
-					const expDate = new Date(payload.exp * 1000);
-					const now = new Date();
+				async sendOTP() {
+					const emailInput = document.getElementById('email')
+					const email = emailInput.value.trim()
+					if (!this.validateEmail(email)) {
+						this.showEmailError()
+						return
+					}
+					this.clearEmailError()
+					this.email = email
+					this.setLoading('send-otp-btn', true)
+					try {
+						const response = await fetch('/auth/otp/request', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({ email: this.email }),
+						})
+						if (!response.ok) {
+							const error = await response.json()
+							throw new Error(error.message || 'Failed to send OTP')
+						}
+						document.getElementById('user-email').textContent = this.email
+						this.goToStep(2)
+					} catch (error) {
+						this.showEmailError(error.message)
+					} finally {
+						this.setLoading('send-otp-btn', false)
+					}
+				}
+				async resendOTP() {
+					// Start cooldown immediately
+					this.startResendCooldown()
+					try {
+						const response = await fetch('/auth/otp/request', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({ email: this.email }),
+						})
+						if (!response.ok) {
+							const error = await response.json()
+							throw new Error(error.message || 'Failed to resend OTP')
+						}
+						this.showOTPSuccess('Code resent')
+					} catch (error) {
+						this.showOTPError(error.message)
+					}
+				}
+				startResendCooldown() {
+					const resendBtn = document.getElementById('resend-otp-btn')
+					let remainingSeconds = this.resendCooldownSeconds
+					resendBtn.disabled = true
+					const updateCooldown = () => {
+						if (remainingSeconds <= 0) {
+							resendBtn.disabled = false
+							resendBtn.textContent = 'Resend Code'
+							this.clearResendCooldown()
+							return
+						}
+						resendBtn.textContent = `Resend Code (${remainingSeconds}s)`
+						remainingSeconds--
+					}
+					updateCooldown()
+					this.resendCooldownId = setInterval(updateCooldown, 1000)
+				}
+				clearResendCooldown() {
+					if (this.resendCooldownId) {
+						clearInterval(this.resendCooldownId)
+						this.resendCooldownId = null
+					}
+				}
+				async verifyOTP() {
+					const otpInputs = document.querySelectorAll('.otp-input')
+					const code = Array.from(otpInputs)
+						.map((input) => input.value)
+						.join('')
+					if (code.length !== 8) {
+						this.showOTPError()
+						return
+					}
+					this.clearOTPError()
+					this.setLoading('verify-otp-btn', true)
+					try {
+						const response = await fetch('/auth/otp/verify', {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+							body: JSON.stringify({
+								email: this.email,
+								code: code,
+							}),
+						})
+						if (!response.ok) {
+							const error = await response.json()
+							throw new Error(error.message || 'Invalid code')
+						}
+						const data = await response.json()
+						this.refreshToken = data.refreshToken
+						document.getElementById('final-email').textContent = this.email
+						document.getElementById('server-url').textContent = this.serverUrl
+						// Parse JWT to get expiration
+						this.setTokenExpiry(this.refreshToken)
+						this.goToStep(3)
+						this.clearTimeout()
+						this.clearResendCooldown() // Clear resend cooldown on success
+						this.startTimeoutTimer() // Start new timer for success page
+					} catch (error) {
+						this.showOTPError(error.message)
+					} finally {
+						this.setLoading('verify-otp-btn', false)
+					}
+				}
+				setTokenExpiry(token) {
+					try {
+						// Parse JWT payload
+						const payload = JSON.parse(atob(token.split('.')[1]))
+						const expDate = new Date(payload.exp * 1000)
+						const now = new Date()
 
-					if (expDate > now) {
-						const options = {
-							year: 'numeric',
-							month: 'short',
-							day: 'numeric',
-							hour: '2-digit',
-							minute: '2-digit'
-						};
-						document.getElementById('token-expiry').textContent = expDate.toLocaleDateString('en-US', options);
-					} else {
-						document.getElementById('token-expiry').textContent = 'Expired';
-						document.getElementById('token-expiry').classList.remove('token-expires');
-						document.getElementById('token-expiry').style.color = '#dc2626';
+						if (expDate > now) {
+							const options = {
+								year: 'numeric',
+								month: 'short',
+								day: 'numeric',
+								hour: '2-digit',
+								minute: '2-digit',
+							}
+							document.getElementById('token-expiry').textContent = expDate.toLocaleDateString(
+								'en-US',
+								options,
+							)
+						} else {
+							document.getElementById('token-expiry').textContent = 'Expired'
+							document.getElementById('token-expiry').classList.remove('token-expires')
+							document.getElementById('token-expiry').style.color = '#dc2626'
+						}
+					} catch (e) {
+						document.getElementById('token-expiry').textContent = 'Unknown'
 					}
-				} catch (e) {
-					document.getElementById('token-expiry').textContent = 'Unknown';
 				}
-			}
-			copyConfig() {
-				const config = {
-					email: this.email,
-					server_url: this.serverUrl,
-					refresh_token: this.refreshToken
-				};
-				const configText = JSON.stringify(config, null, 2);
-				this.copyToClipboard(configText, 'copy-config-btn', 'Copied');
-			}
-			copyEnvVars() {
-				const envVars = `SYFTBOX_EMAIL=${this.email}
+				copyConfig() {
+					const config = {
+						email: this.email,
+						server_url: this.serverUrl,
+						refresh_token: this.refreshToken,
+					}
+					const configText = JSON.stringify(config, null, 2)
+					this.copyToClipboard(configText, 'copy-config-btn', 'Copied')
+				}
+				copyEnvVars() {
+					const envVars = `SYFTBOX_EMAIL=${this.email}
 SYFTBOX_SERVER_URL=${this.serverUrl}
-SYFTBOX_REFRESH_TOKEN=${this.refreshToken}`;
-				this.copyToClipboard(envVars, 'copy-env-btn', 'Copied');
-			}
-			async copyToClipboard(text, buttonId, successText) {
-				try {
-					await navigator.clipboard.writeText(text);
-
-					const button = document.getElementById(buttonId);
-					const originalText = button.innerHTML;
-					button.innerHTML = successText;
-					button.style.backgroundColor = '#10b981';
-
-					setTimeout(() => {
-						button.innerHTML = originalText;
-						button.style.backgroundColor = '';
-					}, 2000);
-				} catch (err) {
-					// Fallback for older browsers
-					const textArea = document.createElement('textarea');
-					textArea.value = text;
-					document.body.appendChild(textArea);
-					textArea.select();
-					document.execCommand('copy');
-					document.body.removeChild(textArea);
+SYFTBOX_REFRESH_TOKEN=${this.refreshToken}`
+					this.copyToClipboard(envVars, 'copy-env-btn', 'Copied')
 				}
-			}
-			validateEmail(email) {
-				const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-				return emailRegex.test(email);
-			}
-			goToStep(step) {
-				// Hide all steps
-				document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
-				// Show target step
-				document.getElementById(`step-${step}`).classList.add('active');
-				// Update step indicators
-				document.querySelectorAll('.step-item').forEach((item, index) => {
-					item.classList.remove('active', 'completed');
-					if (index + 1 < step) {
-						item.classList.add('completed');
-					} else if (index + 1 === step) {
-						item.classList.add('active');
-					}
-				});
-				this.currentStep = step;
-				// Clear form data when going back
-				if (step === 1) {
-					this.clearFormData();
-				}
-			}
-			clearFormData() {
-				document.getElementById('email').value = '';
-				document.querySelectorAll('.otp-input').forEach(input => {
-					input.value = '';
-				});
-				this.clearEmailError();
-				this.clearOTPError();
-				this.clearOTPSuccess();
-				this.clearResendCooldown();
+				async copyToClipboard(text, buttonId, successText) {
+					try {
+						await navigator.clipboard.writeText(text)
 
-				// Reset resend button text
-				const resendBtn = document.getElementById('resend-otp-btn');
-				resendBtn.disabled = false;
-				resendBtn.textContent = 'Resend Code';
-			}
-			showEmailError(message = 'Please enter a valid email address') {
-				const emailInput = document.getElementById('email');
-				const errorEl = document.getElementById('email-error');
-				emailInput.classList.add('error');
-				errorEl.textContent = message;
-				errorEl.classList.add('show');
-			}
-			clearEmailError() {
-				const emailInput = document.getElementById('email');
-				const errorEl = document.getElementById('email-error');
-				emailInput.classList.remove('error');
-				errorEl.classList.remove('show');
-			}
-			showOTPError(message = 'Please enter the complete 8-digit code') {
-				const otpInputs = document.querySelectorAll('.otp-input');
-				const errorEl = document.getElementById('otp-error');
-				otpInputs.forEach(input => input.classList.add('error'));
-				errorEl.textContent = message;
-				errorEl.classList.add('show');
-			}
-			clearOTPError() {
-				const otpInputs = document.querySelectorAll('.otp-input');
-				const errorEl = document.getElementById('otp-error');
-				otpInputs.forEach(input => input.classList.remove('error'));
-				errorEl.classList.remove('show');
-			}
-			showOTPSuccess(message) {
-				const container = document.getElementById('otp-success-message');
-				container.innerHTML = `<div class="alert alert-success">${message}</div>`;
-			}
-			clearOTPSuccess() {
-				const container = document.getElementById('otp-success-message');
-				container.innerHTML = '';
-			}
-			setLoading(buttonId, loading) {
-				const button = document.getElementById(buttonId);
-				const textSpan = button.querySelector('.btn-text');
-				if (loading) {
-					button.disabled = true;
-					if (buttonId === 'send-otp-btn') {
-						textSpan.innerHTML = '<span class="spinner"></span>Sending...';
-					} else if (buttonId === 'verify-otp-btn') {
-						textSpan.innerHTML = '<span class="spinner"></span>Authenticating...';
-					}
-				} else {
-					button.disabled = false;
-					if (buttonId === 'send-otp-btn') {
-						textSpan.innerHTML = 'Send Verification Code';
-					} else if (buttonId === 'verify-otp-btn') {
-						textSpan.innerHTML = 'Authenticate';
+						const button = document.getElementById(buttonId)
+						const originalText = button.innerHTML
+						button.innerHTML = successText
+						button.style.backgroundColor = '#10b981'
+
+						setTimeout(() => {
+							button.innerHTML = originalText
+							button.style.backgroundColor = ''
+						}, 2000)
+					} catch (err) {
+						// Fallback for older browsers
+						const textArea = document.createElement('textarea')
+						textArea.value = text
+						document.body.appendChild(textArea)
+						textArea.select()
+						document.execCommand('copy')
+						document.body.removeChild(textArea)
 					}
 				}
-			}
-			startTimeoutTimer() {
-				// Don't start timer on step 1
-				if (this.currentStep === 1) return;
-				this.clearTimeout();
-				// Just refresh after 5 minutes without any warning
-				this.timeoutId = setTimeout(() => {
-					window.location.reload();
-				}, this.timeoutSeconds * 1000);
-			}
-			clearTimeout() {
-				if (this.timeoutId) {
-					clearTimeout(this.timeoutId);
-					this.timeoutId = null;
+				validateEmail(email) {
+					const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+					return emailRegex.test(email)
+				}
+				goToStep(step) {
+					// Hide all steps
+					document.querySelectorAll('.step').forEach((s) => s.classList.remove('active'))
+					// Show target step
+					document.getElementById(`step-${step}`).classList.add('active')
+					// Update step indicators
+					document.querySelectorAll('.step-item').forEach((item, index) => {
+						item.classList.remove('active', 'completed')
+						if (index + 1 < step) {
+							item.classList.add('completed')
+						} else if (index + 1 === step) {
+							item.classList.add('active')
+						}
+					})
+					this.currentStep = step
+					// Clear form data when going back
+					if (step === 1) {
+						this.clearFormData()
+					}
+				}
+				clearFormData() {
+					document.getElementById('email').value = ''
+					document.querySelectorAll('.otp-input').forEach((input) => {
+						input.value = ''
+					})
+					this.clearEmailError()
+					this.clearOTPError()
+					this.clearOTPSuccess()
+					this.clearResendCooldown()
+
+					// Reset resend button text
+					const resendBtn = document.getElementById('resend-otp-btn')
+					resendBtn.disabled = false
+					resendBtn.textContent = 'Resend Code'
+				}
+				showEmailError(message = 'Please enter a valid email address') {
+					const emailInput = document.getElementById('email')
+					const errorEl = document.getElementById('email-error')
+					emailInput.classList.add('error')
+					errorEl.textContent = message
+					errorEl.classList.add('show')
+				}
+				clearEmailError() {
+					const emailInput = document.getElementById('email')
+					const errorEl = document.getElementById('email-error')
+					emailInput.classList.remove('error')
+					errorEl.classList.remove('show')
+				}
+				showOTPError(message = 'Please enter the complete 8-digit code') {
+					const otpInputs = document.querySelectorAll('.otp-input')
+					const errorEl = document.getElementById('otp-error')
+					otpInputs.forEach((input) => input.classList.add('error'))
+					errorEl.textContent = message
+					errorEl.classList.add('show')
+				}
+				clearOTPError() {
+					const otpInputs = document.querySelectorAll('.otp-input')
+					const errorEl = document.getElementById('otp-error')
+					otpInputs.forEach((input) => input.classList.remove('error'))
+					errorEl.classList.remove('show')
+				}
+				showOTPSuccess(message) {
+					const container = document.getElementById('otp-success-message')
+					container.innerHTML = `<div class="alert alert-success">${message}</div>`
+				}
+				clearOTPSuccess() {
+					const container = document.getElementById('otp-success-message')
+					container.innerHTML = ''
+				}
+				setLoading(buttonId, loading) {
+					const button = document.getElementById(buttonId)
+					const textSpan = button.querySelector('.btn-text')
+					if (loading) {
+						button.disabled = true
+						if (buttonId === 'send-otp-btn') {
+							textSpan.innerHTML = '<span class="spinner"></span>Sending...'
+						} else if (buttonId === 'verify-otp-btn') {
+							textSpan.innerHTML = '<span class="spinner"></span>Authenticating...'
+						}
+					} else {
+						button.disabled = false
+						if (buttonId === 'send-otp-btn') {
+							textSpan.innerHTML = 'Send Verification Code'
+						} else if (buttonId === 'verify-otp-btn') {
+							textSpan.innerHTML = 'Authenticate'
+						}
+					}
+				}
+				startTimeoutTimer() {
+					// Don't start timer on step 1
+					if (this.currentStep === 1) return
+					this.clearTimeout()
+					// Just refresh after 5 minutes without any warning
+					this.timeoutId = setTimeout(() => {
+						window.location.reload()
+					}, this.timeoutSeconds * 1000)
+				}
+				clearTimeout() {
+					if (this.timeoutId) {
+						clearTimeout(this.timeoutId)
+						this.timeoutId = null
+					}
+				}
+				reset() {
+					this.clearTimeout()
+					this.clearResendCooldown()
+					this.email = ''
+					this.refreshToken = ''
+					this.currentStep = 1
+					this.clearFormData()
+					this.goToStep(1)
 				}
 			}
-			reset() {
-				this.clearTimeout();
-				this.clearResendCooldown();
-				this.email = '';
-				this.refreshToken = '';
-				this.currentStep = 1;
-				this.clearFormData();
-				this.goToStep(1);
-			}
-		}
-		// Initialize the application
-		document.addEventListener('DOMContentLoaded', () => { new SyftBoxAuthUI(); });
-	</script>
-</body>
-
+			// Initialize the application
+			document.addEventListener('DOMContentLoaded', () => {
+				new SyftBoxAuthUI()
+			})
+		</script>
+	</body>
 </html>

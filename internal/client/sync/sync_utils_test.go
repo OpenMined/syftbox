@@ -3,9 +3,11 @@ package sync
 import (
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +16,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// isFileLockError checks if an error is a file locking/sharing violation.
+// On Windows, this occurs when a file is being renamed/moved by another process.
+func isFileLockError(err error) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	// Windows error codes for sharing violations and lock violations:
+	// ERROR_SHARING_VIOLATION (32) - "The process cannot access the file because it is being used by another process."
+	// ERROR_LOCK_VIOLATION (33) - "The process cannot access the file because another process has locked a portion of the file."
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		// The error message from Windows contains this text
+		errMsg := pathErr.Err.Error()
+		return errMsg == "The process cannot access the file because it is being used by another process." ||
+			errMsg == "The process cannot access the file because another process has locked a portion of the file."
+	}
+	return false
+}
 
 func TestWriteFileWithIntegrityCheck(t *testing.T) {
 	t.Run("successful write", func(t *testing.T) {
@@ -208,13 +229,15 @@ func TestWriteFileWithIntegrityCheckRaceCondition(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				fileContent, err := os.ReadFile(filePath)
 				if err != nil {
-					if !os.IsNotExist(err) {
-						readerError = err
-						break
+					// On Windows, file may be locked during atomic rename.
+					// Check for both "not exist" and access/sharing errors.
+					if os.IsNotExist(err) || isFileLockError(err) {
+						// File doesn't exist yet or is being renamed, that's expected
+						time.Sleep(1 * time.Millisecond)
+						continue
 					}
-					// File doesn't exist yet, that's expected
-					time.Sleep(1 * time.Millisecond)
-					continue
+					readerError = err
+					break
 				}
 
 				// If file exists, it should be complete (not partial)
